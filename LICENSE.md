@@ -4,7 +4,7 @@ Copyright © 2025 Cameron Carlyon. All rights reserved.
 
 ---
 
-## 1. Software Nature
+## License Terms
 ClearComms is distributed as **freeware**.  
 - You may download, install, and use ClearComms free of charge.  
 - You may access the source code on GitHub for **educational and reference purposes**.  
@@ -12,7 +12,7 @@ ClearComms is distributed as **freeware**.
 
 ---
 
-## 2. Permissions
+## Permissions
 You are granted permission to:
 - Run and use ClearComms for both **personal and commercial purposes**.  
 - Access and study the source code for learning and reference.  
@@ -20,7 +20,7 @@ You are granted permission to:
 
 ---
 
-## 3. Restrictions
+## Restrictions
 You are **not permitted** to:
 - Sell or resell ClearComms, either in binary or source form.  
 - Redistribute ClearComms (modified or unmodified) without prior written permission.  
@@ -29,26 +29,26 @@ You are **not permitted** to:
 
 ---
 
-## 4. Ownership
+## Ownership
 All rights, title, and interest in ClearComms and its source code remain the property of **Cameron Carlyon**.  
 Access to the source code does not grant you ownership, copyright, or any other rights beyond those explicitly stated in this license.  
 
 ---
 
-## 5. Warranty Disclaimer
+## Warranty Disclaimer
 ClearComms is provided "as is," without warranty of any kind, express or implied.  
 The author shall not be held liable for any damages arising from the use of this software.  
 
 ---
 
-## 6. Termination
+## Termination
 Any breach of these terms will result in termination of your rights under this license.  
 Upon termination, you must delete all copies of ClearComms in your possession.  
 
 ---
 
-## 7. Contact
+## Contact
 For licensing inquiries, redistribution requests, or commercial discussions, please contact:  
 
 **Cameron Carlyon**  
-Email: chat@cameroncarlyon.com
+*Email: chat@cameroncarlyon.com*
