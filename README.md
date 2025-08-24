@@ -26,15 +26,14 @@ ClearComms bridges this gap by connecting **in-sim controls**, **hardware device
   Use throttle quadrant knobs or dedicated sliders to adjust app volume, while keeping SimVars updated.
 
 - 🔊 **Per-application audio control**  
-  Adjust ATC clients like **vPilot** or utility apps like **GSX Pro** independently, using Windows Core Audio APIs.
+  Adjust ATC clients like **vPilot** or utility applications such as **GSX Pro** independently, using Windows Core Audio APIs.
 
 - 🪶 **Lightweight by design**  
   Built with Tauri, Svelte, and Rust for minimal CPU and memory impact while MSFS is running.
 
-- 📡 **Future-ready** *(planned)*  
-  - Ambient ATC chatter for offline flights.  
-  - Configurable profiles by aircraft or phase of flight.  
-  - Cross-sim support (e.g., X-Plane).  
+- 📡 **Stretch Goals** *(planned)*  
+- **ACARS integration** for aircraft without native support (such as the A380X)
+- **Automated in-flight announcements** on PA channel
 
 ---
 
@@ -44,12 +43,12 @@ ClearComms bridges this gap by connecting **in-sim controls**, **hardware device
 - **Shell:** [Tauri](https://tauri.app/) 2.x  
 - **Backend:** [Rust](https://www.rust-lang.org/)  
 - **Integrations:**  
-  - [SimConnect](https://docs.flightsimulator.com/html/Programming_Tools/SimConnect/SimConnect_API_Reference.htm) → MSFS SimVars  
-  - [DirectInput](https://learn.microsoft.com/en-us/previous-versions/windows/desktop/ee418273(v=vs.85)) → Hardware axis/knobs  
-  - [Windows Core Audio API](https://learn.microsoft.com/en-us/windows/win32/coreaudio/core-audio-apis-in-windows) → Per-app volume  
+  - [SimConnect](https://docs.flightsimulator.com/html/Programming_Tools/SimConnect/SimConnect_API_Reference.htm) → MSFS SimVars
+  - [DirectInput](https://learn.microsoft.com/en-us/previous-versions/windows/desktop/ee418273(v=vs.85)) → Hardware axis/knobs
+  - [Windows Core Audio API](https://learn.microsoft.com/en-us/windows/win32/coreaudio/about-the-windows-core-audio-apis) → Application volume
 
 ---
 
 ## Project Structure
 
-*WIP*
+*wip*
