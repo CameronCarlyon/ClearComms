@@ -1,6 +1,7 @@
 # ClearComms
 
-**ClearComms** is a lightweight companion application for **Microsoft Flight Simulator**, built with **Tauri** and **Svelte**, and powered by **Rust**.  
+**ClearComms** is a lightweight companion application for **Microsoft Flight Simulator**, built with **Tauri** and **Svelte**, and powered by **Rust**. 
+
 Optimised for performance, ClearComms leverages **SimVars**, **DirectInput**, and the **Windows Core Audio API** to provide synchronised **radio-stack volume control** through both flightdeck audio controls and external hardware inputs.
 
 ---
