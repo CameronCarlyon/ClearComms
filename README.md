@@ -31,9 +31,9 @@ ClearComms bridges this gap by connecting **in-sim controls**, **hardware device
 - 🪶 **Lightweight by design**  
   Built with Tauri, Svelte, and Rust for minimal CPU and memory impact while MSFS is running.
 
-- 📡 **Stretch Goals** *(planned)*  
-- **ACARS integration** for aircraft without native support (such as the A380X)
-- **Automated in-flight announcements** on PA channel
+- 🎯 **Stretch Goals**
+  ACARS integration for aircraft without native support (such as the A380X).
+  Automated in-flight announcements on PA channel.
 
 ---
 
