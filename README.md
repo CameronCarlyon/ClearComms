@@ -37,7 +37,7 @@ ClearComms bridges this gap by connecting **in-sim controls**, **hardware device
 
 ---
 
-## Technology Stack
+## Tech Stack
 
 - **Frontend:** [Svelte](https://svelte.dev/) + TypeScript  
 - **Shell:** [Tauri](https://tauri.app/) 2.x  
