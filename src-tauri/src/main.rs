@@ -8,6 +8,8 @@ fn main() {
     tauri::Builder::default()
         .invoke_handler(tauri::generate_handler![
             hardware_input::init_direct_input,
+            hardware_input::get_direct_input_status,
+            hardware_input::enumerate_input_devices,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
