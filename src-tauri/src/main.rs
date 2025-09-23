@@ -10,6 +10,8 @@ fn main() {
             hardware_input::init_direct_input,
             hardware_input::get_direct_input_status,
             hardware_input::enumerate_input_devices,
+            hardware_input::get_all_axis_values,
+            hardware_input::update_test_axis_value,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

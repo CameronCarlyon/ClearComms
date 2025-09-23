@@ -6,6 +6,20 @@
   let rawInputStatus = $state("");
   let devices = $state<string[]>([]);
   let errorMsg = $state("");
+  
+  // Axis data types
+  interface AxisData {
+    device_handle: string;
+    device_name: string;
+    manufacturer: string;
+    product_id: number;
+    vendor_id: number;
+    axes: Record<string, number>;
+  }
+  
+  let axisData = $state<AxisData[]>([]);
+  let pollingInterval: number | null = null;
+  let isPolling = $state(false);
 
   async function greet(event: Event) {
     event.preventDefault();
@@ -43,6 +57,53 @@
       errorMsg = `Error: ${error}`;
     }
   }
+  
+  async function getAxisValues() {
+    try {
+      errorMsg = "";
+      const data = await invoke<AxisData[]>("get_all_axis_values");
+      axisData = data;
+    } catch (error) {
+      errorMsg = `Error: ${error}`;
+      axisData = [];
+    }
+  }
+  
+  function startPolling() {
+    if (pollingInterval) return;
+    
+    isPolling = true;
+    // Poll every 50ms (20Hz) for responsive real-time tracking
+    pollingInterval = setInterval(async () => {
+      try {
+        await getAxisValues();
+      } catch (error) {
+        console.error("Polling error:", error);
+        // Don't stop polling on individual errors
+      }
+    }, 50);
+  }
+  
+  function stopPolling() {
+    if (pollingInterval) {
+      clearInterval(pollingInterval);
+      pollingInterval = null;
+    }
+    isPolling = false;
+  }
+  
+  async function updateTestAxis(deviceHandle: string, axisName: string, value: number) {
+    try {
+      await invoke("update_test_axis_value", {
+        deviceHandle,
+        axisName,
+        value
+      });
+      await getAxisValues(); // Refresh display
+    } catch (error) {
+      errorMsg = `Error: ${error}`;
+    }
+  }
 </script>
 
 <main class="container">
@@ -73,6 +134,46 @@
           {/each}
         </ul>
       </div>
+    {/if}
+  </div>
+
+  <div class="test-section">
+    <h2>Axis Values (Real-time Hardware Data)</h2>
+    <div class="button-row">
+      <button onclick={getAxisValues}>Get Axis Values</button>
+      <button onclick={startPolling} disabled={isPolling}>Start Polling</button>
+      <button onclick={stopPolling} disabled={!isPolling}>Stop Polling</button>
+    </div>
+
+    {#if axisData.length > 0}
+      <div class="axis-display">
+        {#each axisData as device (device.device_handle)}
+          <div class="device-axes">
+            <h3>{device.device_name}</h3>
+            {#if device.manufacturer}
+              <p class="device-manufacturer">{device.manufacturer}</p>
+            {/if}
+            <p class="device-handle">VID:{device.vendor_id.toString(16).toUpperCase().padStart(4, '0')} PID:{device.product_id.toString(16).toUpperCase().padStart(4, '0')}</p>
+            <div class="axes-grid">
+              {#each Object.entries(device.axes).sort((a, b) => a[0].localeCompare(b[0])) as [axisName, value] (axisName)}
+                <div class="axis-item">
+                  <div class="axis-header">
+                    <span class="axis-name">{axisName}</span>
+                    <span class="axis-value">{value.toFixed(3)}</span>
+                  </div>
+                  <div class="axis-bar">
+                    <div class="axis-fill" style="width: {value * 100}%"></div>
+                  </div>
+                </div>
+              {/each}
+            </div>
+          </div>
+        {/each}
+      </div>
+    {:else if isPolling}
+      <p class="status">Waiting for axis data...</p>
+    {:else}
+      <p class="status">No axis data available. Enumerate devices and start polling.</p>
     {/if}
   </div>
 
@@ -173,6 +274,91 @@
   border-radius: 4px;
 }
 
+.axis-display {
+  margin-top: 1rem;
+}
+
+.device-axes {
+  background: rgba(0, 0, 0, 0.05);
+  padding: 1rem;
+  margin: 1rem 0;
+  border-radius: 6px;
+}
+
+.device-axes h3 {
+  margin-top: 0;
+  margin-bottom: 0.5rem;
+  color: #24c8db;
+}
+
+.device-manufacturer {
+  font-size: 0.9rem;
+  opacity: 0.8;
+  margin: 0.25rem 0;
+  font-weight: 500;
+}
+
+.device-handle {
+  font-size: 0.85rem;
+  opacity: 0.7;
+  margin: 0.25rem 0 1rem 0;
+}
+
+.axes-grid {
+  display: grid;
+  gap: 1rem;
+}
+
+.axis-item {
+  background: rgba(255, 255, 255, 0.5);
+  padding: 0.75rem;
+  border-radius: 4px;
+}
+
+.axis-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 0.5rem;
+}
+
+.axis-name {
+  font-weight: 600;
+  color: #333;
+}
+
+.axis-value {
+  font-family: monospace;
+  font-size: 0.95rem;
+  color: #24c8db;
+  font-weight: 600;
+}
+
+.axis-bar {
+  width: 100%;
+  height: 8px;
+  background: rgba(0, 0, 0, 0.1);
+  border-radius: 4px;
+  overflow: hidden;
+  margin-top: 0.5rem;
+}
+
+.axis-fill {
+  height: 100%;
+  background: linear-gradient(90deg, #24c8db, #396cd8);
+  transition: width 0.1s ease;
+  border-radius: 4px;
+}
+
+button:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+button:disabled:hover {
+  border-color: transparent;
+}
+
 .logo {
   height: 4em;
   padding: 1em;
@@ -266,6 +452,18 @@ button {
 
   .devices li {
     background: rgba(255, 255, 255, 0.05);
+  }
+
+  .axis-item {
+    background: rgba(0, 0, 0, 0.3);
+  }
+
+  .axis-name {
+    color: #f6f6f6;
+  }
+
+  .axis-bar {
+    background: rgba(255, 255, 255, 0.1);
   }
 
   input,
