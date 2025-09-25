@@ -1,6 +1,7 @@
 use std::sync::Mutex;
 use std::collections::HashMap;
 use serde::{Serialize, Deserialize};
+use hidapi::HidApi;
 
 #[cfg(windows)]
 use windows::Win32::Media::Multimedia::{
@@ -24,6 +25,9 @@ pub struct AxisData {
 pub struct DeviceInfo {
     pub id: u32,
     pub name: String,
+    pub manufacturer: String,
+    pub vendor_id: u16,
+    pub product_id: u16,
     pub num_axes: u32,
     pub num_buttons: u32,
 }
@@ -31,30 +35,60 @@ pub struct DeviceInfo {
 impl DeviceInfo {
     /// Convert device info to a human-readable string
     pub fn to_display_string(&self) -> String {
-        format!("{} ({} axes, {} buttons)", 
-            self.name, self.num_axes, self.num_buttons)
+        if !self.manufacturer.is_empty() {
+            format!("{} {} (VID:{:04X} PID:{:04X})", 
+                self.manufacturer, self.name, self.vendor_id, self.product_id)
+        } else {
+            format!("{} (VID:{:04X} PID:{:04X})", 
+                self.name, self.vendor_id, self.product_id)
+        }
     }
 }
 
-/// Manages game controller input using Windows Joystick API
+/// Manages game controller input using Windows Joystick API + HID for device names
 pub struct HidInputManager {
     devices: Vec<DeviceInfo>,
     axis_cache: HashMap<u32, HashMap<String, f32>>,
+    hid_api: HidApi,
 }
 
 #[cfg(windows)]
 impl HidInputManager {
     /// Create a new input manager instance
     pub fn new() -> Result<Self, String> {
+        let hid_api = HidApi::new()
+            .map_err(|e| format!("Failed to initialise HID API: {}", e))?;
+        
         Ok(Self {
             devices: Vec::new(),
             axis_cache: HashMap::new(),
+            hid_api,
         })
     }
 
     /// Enumerate all connected game controllers
     pub fn enumerate_devices(&mut self) -> Result<(), String> {
         self.devices.clear();
+        
+        // Refresh HID device list
+        self.hid_api.refresh_devices()
+            .map_err(|e| format!("Failed to refresh HID devices: {}", e))?;
+        
+        // Build a map of joystick devices from HID (for names)
+        let mut hid_devices: HashMap<(u16, u16), (String, String)> = HashMap::new();
+        for device in self.hid_api.device_list() {
+            // Filter for game controllers (Usage Page 0x01, Usage 0x04/0x05/0x08)
+            if device.usage_page() == 0x01 {
+                let usage = device.usage();
+                if usage == 0x04 || usage == 0x05 || usage == 0x08 {
+                    let name = device.product_string().unwrap_or("Unknown Device").to_string();
+                    let manufacturer = device.manufacturer_string().unwrap_or("").to_string();
+                    let vid = device.vendor_id();
+                    let pid = device.product_id();
+                    hid_devices.insert((vid, pid), (name, manufacturer));
+                }
+            }
+        }
         
         // Windows supports up to 16 joysticks (JOYSTICKID1 through JOYSTICKID16)
         for joy_id in 0..16u32 {
@@ -67,15 +101,29 @@ impl HidInputManager {
                 );
                 
                 if result == JOYERR_NOERROR {
-                    // Device exists - copy the name to avoid unaligned reference
-                    let name_buf = caps.szPname;
-                    let name = String::from_utf16_lossy(&name_buf)
-                        .trim_end_matches('\0')
-                        .to_string();
+                    // Get VID/PID from capabilities
+                    let vendor_id = caps.wMid;
+                    let product_id = caps.wPid;
+                    
+                    // Try to get real device name from HID
+                    let (name, manufacturer) = hid_devices
+                        .get(&(vendor_id, product_id))
+                        .cloned()
+                        .unwrap_or_else(|| {
+                            // Fallback to caps name if not found in HID
+                            let name_buf = caps.szPname;
+                            let fallback_name = String::from_utf16_lossy(&name_buf)
+                                .trim_end_matches('\0')
+                                .to_string();
+                            (fallback_name, String::new())
+                        });
                     
                     self.devices.push(DeviceInfo {
                         id: joy_id,
                         name,
+                        manufacturer,
+                        vendor_id,
+                        product_id,
                         num_axes: caps.wNumAxes as u32,
                         num_buttons: caps.wNumButtons as u32,
                     });
@@ -137,9 +185,9 @@ impl HidInputManager {
                     all_axes.push(AxisData {
                         device_handle: format!("{}", device.id),
                         device_name: device.name.clone(),
-                        manufacturer: String::new(),
-                        product_id: 0,
-                        vendor_id: 0,
+                        manufacturer: device.manufacturer.clone(),
+                        product_id: device.product_id,
+                        vendor_id: device.vendor_id,
                         axes,
                     });
                 } else if let Some(cached) = self.axis_cache.get(&device.id) {
@@ -147,9 +195,9 @@ impl HidInputManager {
                     all_axes.push(AxisData {
                         device_handle: format!("{}", device.id),
                         device_name: device.name.clone(),
-                        manufacturer: String::new(),
-                        product_id: 0,
-                        vendor_id: 0,
+                        manufacturer: device.manufacturer.clone(),
+                        product_id: device.product_id,
+                        vendor_id: device.vendor_id,
                         axes: cached.clone(),
                     });
                 }
