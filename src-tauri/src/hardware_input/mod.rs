@@ -9,7 +9,7 @@ use windows::Win32::Media::Multimedia::{
     JOY_USEDEADZONE, JOYERR_NOERROR,
 };
 
-/// Axis data from a hardware device
+/// Axis and button data from a hardware device
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AxisData {
     pub device_handle: String,
@@ -18,6 +18,7 @@ pub struct AxisData {
     pub product_id: u16,
     pub vendor_id: u16,
     pub axes: HashMap<String, f32>, // axis name -> normalized value (0.0-1.0)
+    pub buttons: HashMap<String, bool>, // button name -> pressed state
 }
 
 /// Information about a discovered input device
@@ -49,6 +50,7 @@ impl DeviceInfo {
 pub struct HidInputManager {
     devices: Vec<DeviceInfo>,
     axis_cache: HashMap<u32, HashMap<String, f32>>,
+    button_cache: HashMap<u32, HashMap<String, bool>>,
     hid_api: HidApi,
 }
 
@@ -62,6 +64,7 @@ impl HidInputManager {
         Ok(Self {
             devices: Vec::new(),
             axis_cache: HashMap::new(),
+            button_cache: HashMap::new(),
             hid_api,
         })
     }
@@ -133,6 +136,7 @@ impl HidInputManager {
 
         eprintln!("[Input] Found {} joystick devices", self.devices.len());
         self.axis_cache.clear();
+        self.button_cache.clear();
         
         Ok(())
     }
@@ -156,6 +160,7 @@ impl HidInputManager {
                 
                 if result == JOYERR_NOERROR {
                     let mut axes = HashMap::new();
+                    let mut buttons = HashMap::new();
                     
                     // Windows Joystick API provides raw values (typically 0-65535)
                     // Normalize to 0.0-1.0
@@ -179,8 +184,33 @@ impl HidInputManager {
                     // V axis
                     axes.insert("V".to_string(), (joy_info.dwVpos as f32 / max_val).clamp(0.0, 1.0));
                     
+                    // Read button states (up to 32 buttons)
+                    let button_mask = joy_info.dwButtons;
+                    for btn_num in 0..32 {
+                        let is_pressed = (button_mask & (1 << btn_num)) != 0;
+                        if is_pressed || btn_num < device.num_buttons {
+                            // Only include buttons that exist or are currently pressed
+                            buttons.insert(format!("Button{}", btn_num + 1), is_pressed);
+                        }
+                    }
+                    
+                    // POV Hat switch (returns angle in hundredths of degrees, 0-35900, or 0xFFFF for centered)
+                    if joy_info.dwPOV != 0xFFFF {
+                        let pov_angle = joy_info.dwPOV as f32 / 100.0; // Convert to degrees
+                        axes.insert("POV".to_string(), pov_angle / 360.0); // Normalize to 0.0-1.0
+                        
+                        // Also provide discrete POV directions as buttons for convenience
+                        buttons.insert("POV_Up".to_string(), pov_angle >= 315.0 || pov_angle <= 45.0);
+                        buttons.insert("POV_Right".to_string(), pov_angle >= 45.0 && pov_angle <= 135.0);
+                        buttons.insert("POV_Down".to_string(), pov_angle >= 135.0 && pov_angle <= 225.0);
+                        buttons.insert("POV_Left".to_string(), pov_angle >= 225.0 && pov_angle <= 315.0);
+                    } else {
+                        buttons.insert("POV_Centered".to_string(), true);
+                    }
+                    
                     // Cache and add to results
                     self.axis_cache.insert(device.id, axes.clone());
+                    self.button_cache.insert(device.id, buttons.clone());
                     
                     all_axes.push(AxisData {
                         device_handle: format!("{}", device.id),
@@ -189,16 +219,19 @@ impl HidInputManager {
                         product_id: device.product_id,
                         vendor_id: device.vendor_id,
                         axes,
+                        buttons,
                     });
-                } else if let Some(cached) = self.axis_cache.get(&device.id) {
+                } else if let Some(cached_axes) = self.axis_cache.get(&device.id) {
                     // Use cached values if read failed
+                    let cached_buttons = self.button_cache.get(&device.id).cloned().unwrap_or_default();
                     all_axes.push(AxisData {
                         device_handle: format!("{}", device.id),
                         device_name: device.name.clone(),
                         manufacturer: device.manufacturer.clone(),
                         product_id: device.product_id,
                         vendor_id: device.vendor_id,
-                        axes: cached.clone(),
+                        axes: cached_axes.clone(),
+                        buttons: cached_buttons,
                     });
                 }
             }

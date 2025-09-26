@@ -1,5 +1,6 @@
 <script lang="ts">
   import { invoke } from "@tauri-apps/api/core";
+  import { onMount, onDestroy } from "svelte";
 
   let name = $state("");
   let greetMsg = $state("");
@@ -15,11 +16,63 @@
     product_id: number;
     vendor_id: number;
     axes: Record<string, number>;
+    buttons: Record<string, boolean>;
   }
   
   let axisData = $state<AxisData[]>([]);
   let pollingInterval: number | null = null;
   let isPolling = $state(false);
+  let initStatus = $state("Initialising...");
+
+  // Auto-initialise on component mount
+  onMount(async () => {
+    console.log("[ClearComms] Starting automatic initialisation...");
+    await autoInitialise();
+  });
+
+  // Clean up polling on component destroy
+  onDestroy(() => {
+    stopPolling();
+  });
+
+  async function autoInitialise() {
+    try {
+      // Step 1: Initialise input system
+      initStatus = "Initialising input system...";
+      console.log("[ClearComms] Step 1: Initialising input system");
+      const initResult = await invoke<string>("init_direct_input");
+      rawInputStatus = initResult;
+      console.log("[ClearComms] ✓ Input system initialised:", initResult);
+
+      // Step 2: Enumerate devices
+      initStatus = "Enumerating devices...";
+      console.log("[ClearComms] Step 2: Enumerating devices");
+      const deviceList = await invoke<string[]>("enumerate_input_devices");
+      devices = deviceList;
+      console.log(`[ClearComms] ✓ Found ${deviceList.length} device(s):`, deviceList);
+
+      // Step 3: Get initial axis values
+      initStatus = "Reading axis values...";
+      console.log("[ClearComms] Step 3: Getting initial axis values");
+      await getAxisValues();
+      console.log("[ClearComms] ✓ Axis values retrieved");
+
+      // Step 4: Start polling
+      initStatus = "Starting real-time polling...";
+      console.log("[ClearComms] Step 4: Starting real-time polling (20Hz)");
+      startPolling();
+      console.log("[ClearComms] ✓ Polling started");
+
+      initStatus = "Ready";
+      console.log("[ClearComms] === Initialisation complete ===");
+      errorMsg = "";
+    } catch (error) {
+      const errorMessage = `Initialisation failed: ${error}`;
+      errorMsg = errorMessage;
+      initStatus = "Failed";
+      console.error("[ClearComms] ✗ Initialisation error:", error);
+    }
+  }
 
   async function greet(event: Event) {
     event.preventDefault();
@@ -60,10 +113,10 @@
   
   async function getAxisValues() {
     try {
-      errorMsg = "";
       const data = await invoke<AxisData[]>("get_all_axis_values");
       axisData = data;
     } catch (error) {
+      console.error("[ClearComms] Error getting axis values:", error);
       errorMsg = `Error: ${error}`;
       axisData = [];
     }
@@ -78,7 +131,7 @@
       try {
         await getAxisValues();
       } catch (error) {
-        console.error("Polling error:", error);
+        console.error("[ClearComms] Polling error:", error);
         // Don't stop polling on individual errors
       }
     }, 50);
@@ -88,6 +141,7 @@
     if (pollingInterval) {
       clearInterval(pollingInterval);
       pollingInterval = null;
+      console.log("[ClearComms] Polling stopped");
     }
     isPolling = false;
   }
@@ -108,6 +162,13 @@
 
 <main class="container">
   <h1>ClearComms - Raw Input Test</h1>
+
+  <!-- Initialisation Status -->
+  <div class="init-status">
+    <p class:ready={initStatus === 'Ready'} class:failed={initStatus === 'Failed'}>
+      Status: {initStatus}
+    </p>
+  </div>
 
   <div class="test-section">
     <h2>Raw Input Status</h2>
@@ -154,6 +215,9 @@
               <p class="device-manufacturer">{device.manufacturer}</p>
             {/if}
             <p class="device-handle">VID:{device.vendor_id.toString(16).toUpperCase().padStart(4, '0')} PID:{device.product_id.toString(16).toUpperCase().padStart(4, '0')}</p>
+            
+            <!-- Axes Section -->
+            <h4>Axes</h4>
             <div class="axes-grid">
               {#each Object.entries(device.axes).sort((a, b) => a[0].localeCompare(b[0])) as [axisName, value] (axisName)}
                 <div class="axis-item">
@@ -167,6 +231,19 @@
                 </div>
               {/each}
             </div>
+            
+            <!-- Buttons Section -->
+            {#if Object.keys(device.buttons).length > 0}
+              <h4>Buttons</h4>
+              <div class="buttons-grid">
+                {#each Object.entries(device.buttons).sort((a, b) => a[0].localeCompare(b[0])) as [buttonName, pressed] (buttonName)}
+                  <div class="button-item" class:pressed={pressed}>
+                    <span class="button-name">{buttonName}</span>
+                    <span class="button-state">{pressed ? 'PRESSED' : 'Released'}</span>
+                  </div>
+                {/each}
+              </div>
+            {/if}
           </div>
         {/each}
       </div>
@@ -229,6 +306,30 @@
   display: flex;
   flex-direction: column;
   gap: 1rem;
+}
+
+.init-status {
+  text-align: center;
+  padding: 0.75rem;
+  background: rgba(255, 255, 255, 0.1);
+  border-radius: 6px;
+  border: 2px solid rgba(0, 0, 0, 0.1);
+  margin-bottom: 1rem;
+}
+
+.init-status p {
+  margin: 0;
+  font-weight: 600;
+  font-size: 1.1rem;
+  color: #666;
+}
+
+.init-status p.ready {
+  color: #24c8db;
+}
+
+.init-status p.failed {
+  color: #ff3e00;
 }
 
 .test-section {
@@ -350,6 +451,61 @@
   border-radius: 4px;
 }
 
+.buttons-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
+  gap: 0.5rem;
+  margin-top: 1rem;
+}
+
+.button-item {
+  background: rgba(255, 255, 255, 0.5);
+  padding: 0.5rem 0.75rem;
+  border-radius: 4px;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  transition: all 0.15s ease;
+  border: 2px solid transparent;
+}
+
+.button-item.pressed {
+  background: linear-gradient(135deg, #24c8db, #396cd8);
+  border-color: #396cd8;
+  transform: scale(1.05);
+  box-shadow: 0 0 10px rgba(36, 200, 219, 0.5);
+}
+
+.button-name {
+  font-weight: 600;
+  font-size: 0.9rem;
+}
+
+.button-item.pressed .button-name {
+  color: white;
+}
+
+.button-state {
+  font-size: 0.75rem;
+  font-weight: 600;
+  opacity: 0.7;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+.button-item.pressed .button-state {
+  color: white;
+  opacity: 1;
+}
+
+h4 {
+  margin: 1.5rem 0 0.5rem 0;
+  color: #666;
+  font-size: 0.9rem;
+  text-transform: uppercase;
+  letter-spacing: 1px;
+}
+
 button:disabled {
   opacity: 0.5;
   cursor: not-allowed;
@@ -464,6 +620,27 @@ button {
 
   .axis-bar {
     background: rgba(255, 255, 255, 0.1);
+  }
+  
+  .init-status {
+    background: rgba(0, 0, 0, 0.2);
+    border-color: rgba(255, 255, 255, 0.1);
+  }
+  
+  .init-status p {
+    color: #aaa;
+  }
+  
+  .button-item {
+    background: rgba(0, 0, 0, 0.3);
+  }
+  
+  .button-item.pressed {
+    background: linear-gradient(135deg, #24c8db, #396cd8);
+  }
+  
+  h4 {
+    color: #aaa;
   }
 
   input,
