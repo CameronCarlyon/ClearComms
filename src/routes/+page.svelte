@@ -18,11 +18,22 @@
     axes: Record<string, number>;
     buttons: Record<string, boolean>;
   }
+
+  // Audio session types
+  interface AudioSession {
+    session_id: string;
+    display_name: string;
+    process_id: number;
+    volume: number; // 0.0 to 1.0
+    is_muted: boolean;
+  }
   
   let axisData = $state<AxisData[]>([]);
+  let audioSessions = $state<AudioSession[]>([]);
   let pollingInterval: number | null = null;
   let isPolling = $state(false);
   let initStatus = $state("Initialising...");
+  let audioInitialised = $state(false);
 
   // Auto-initialise on component mount
   onMount(async () => {
@@ -158,6 +169,59 @@
       errorMsg = `Error: ${error}`;
     }
   }
+
+  // Audio management functions
+  async function initAudioManager() {
+    try {
+      console.log("[ClearComms] Initialising audio manager...");
+      const result = await invoke<string>("init_audio_manager");
+      console.log("[ClearComms]", result);
+      audioInitialised = true;
+      await refreshAudioSessions();
+    } catch (error) {
+      console.error("[ClearComms] Error initialising audio manager:", error);
+      errorMsg = `Audio error: ${error}`;
+    }
+  }
+
+  async function refreshAudioSessions() {
+    try {
+      const sessions = await invoke<AudioSession[]>("get_audio_sessions");
+      audioSessions = sessions;
+      console.log(`[ClearComms] Found ${sessions.length} audio session(s)`);
+    } catch (error) {
+      console.error("[ClearComms] Error getting audio sessions:", error);
+      errorMsg = `Audio error: ${error}`;
+    }
+  }
+
+  async function setSessionVolume(sessionId: string, volume: number) {
+    try {
+      await invoke("set_session_volume", {
+        sessionId,
+        volume
+      });
+      console.log(`[ClearComms] Set volume for ${sessionId} to ${volume.toFixed(2)}`);
+      await refreshAudioSessions(); // Update display
+    } catch (error) {
+      console.error("[ClearComms] Error setting volume:", error);
+      errorMsg = `Audio error: ${error}`;
+    }
+  }
+
+  async function setSessionMute(sessionId: string, muted: boolean) {
+    try {
+      await invoke("set_session_mute", {
+        sessionId,
+        muted
+      });
+      console.log(`[ClearComms] Set mute for ${sessionId} to ${muted}`);
+      await refreshAudioSessions(); // Update display
+    } catch (error) {
+      console.error("[ClearComms] Error setting mute:", error);
+      errorMsg = `Audio error: ${error}`;
+    }
+  }
 </script>
 
 <main class="container">
@@ -251,6 +315,56 @@
       <p class="status">Waiting for axis data...</p>
     {:else}
       <p class="status">No axis data available. Enumerate devices and start polling.</p>
+    {/if}
+  </div>
+
+  <!-- Audio Management Section -->
+  <div class="test-section">
+    <h2>Audio Session Management</h2>
+    <div class="button-row">
+      <button onclick={initAudioManager} disabled={audioInitialised}>Initialise Audio</button>
+      <button onclick={refreshAudioSessions} disabled={!audioInitialised}>Refresh Sessions</button>
+    </div>
+
+    {#if audioInitialised}
+      {#if audioSessions.length > 0}
+        <div class="audio-sessions">
+          <h3>Active Audio Applications:</h3>
+          {#each audioSessions as session (session.session_id)}
+            <div class="audio-session-card">
+              <div class="audio-session-header">
+                <h4>{session.display_name}</h4>
+                <span class="process-id">PID: {session.process_id}</span>
+              </div>
+              
+              <div class="audio-controls">
+                <label class="volume-control">
+                  <span>Volume: {(session.volume * 100).toFixed(0)}%</span>
+                  <input
+                    type="range"
+                    min="0"
+                    max="1"
+                    step="0.01"
+                    value={session.volume}
+                    onchange={(e) => setSessionVolume(session.session_id, parseFloat((e.target as HTMLInputElement).value))}
+                  />
+                </label>
+                
+                <button
+                  class:muted={session.is_muted}
+                  onclick={() => setSessionMute(session.session_id, !session.is_muted)}
+                >
+                  {session.is_muted ? 'Unmute' : 'Mute'}
+                </button>
+              </div>
+            </div>
+          {/each}
+        </div>
+      {:else}
+        <p class="status">No active audio sessions found.</p>
+      {/if}
+    {:else}
+      <p class="status">Initialise audio manager to view and control application volumes.</p>
     {/if}
   </div>
 
@@ -654,6 +768,125 @@ button {
 
   hr {
     border-top-color: rgba(255, 255, 255, 0.1);
+  }
+}
+
+/* Audio session styling */
+.audio-sessions {
+  margin-top: 1rem;
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+}
+
+.audio-session-card {
+  background: rgba(255, 255, 255, 0.05);
+  border: 1px solid rgba(36, 200, 219, 0.2);
+  border-radius: 8px;
+  padding: 1rem;
+  transition: all 0.2s ease;
+}
+
+.audio-session-card:hover {
+  background: rgba(255, 255, 255, 0.08);
+  border-color: rgba(36, 200, 219, 0.4);
+}
+
+.audio-session-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 0.75rem;
+}
+
+.audio-session-header h4 {
+  margin: 0;
+  color: #24c8db;
+  font-size: 1rem;
+}
+
+.process-id {
+  color: #888;
+  font-size: 0.85rem;
+  font-family: monospace;
+}
+
+.audio-controls {
+  display: flex;
+  gap: 1rem;
+  align-items: center;
+}
+
+.volume-control {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+}
+
+.volume-control span {
+  font-size: 0.9rem;
+  color: #aaa;
+}
+
+.volume-control input[type="range"] {
+  width: 100%;
+  height: 6px;
+  border-radius: 3px;
+  background: rgba(255, 255, 255, 0.1);
+  outline: none;
+  -webkit-appearance: none;
+}
+
+.volume-control input[type="range"]::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  background: #24c8db;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.volume-control input[type="range"]::-webkit-slider-thumb:hover {
+  background: #396cd8;
+  transform: scale(1.1);
+}
+
+.volume-control input[type="range"]::-moz-range-thumb {
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  background: #24c8db;
+  cursor: pointer;
+  border: none;
+  transition: all 0.2s ease;
+}
+
+.volume-control input[type="range"]::-moz-range-thumb:hover {
+  background: #396cd8;
+  transform: scale(1.1);
+}
+
+button.muted {
+  background: #ff3e00;
+  color: white;
+}
+
+button.muted:hover {
+  background: #ff5722;
+}
+
+@media (prefers-color-scheme: dark) {
+  .audio-session-card {
+    background: rgba(0, 0, 0, 0.3);
+    border-color: rgba(36, 200, 219, 0.3);
+  }
+
+  .audio-session-card:hover {
+    background: rgba(0, 0, 0, 0.4);
+    border-color: rgba(36, 200, 219, 0.5);
   }
 }
 </style>

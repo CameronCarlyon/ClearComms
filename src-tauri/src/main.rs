@@ -12,6 +12,10 @@ fn main() {
             hardware_input::enumerate_input_devices,
             hardware_input::get_all_axis_values,
             hardware_input::update_test_axis_value,
+            audio_management::init_audio_manager,
+            audio_management::get_audio_sessions,
+            audio_management::set_session_volume,
+            audio_management::set_session_mute,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
