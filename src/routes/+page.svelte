@@ -27,16 +27,30 @@
     volume: number; // 0.0 to 1.0
     is_muted: boolean;
   }
+
+  // Axis-to-audio mapping types
+  interface AxisMapping {
+    deviceHandle: string;
+    deviceName: string;
+    axisName: string;
+    sessionId: string;
+    sessionName: string;
+  }
   
   let axisData = $state<AxisData[]>([]);
   let audioSessions = $state<AudioSession[]>([]);
+  let axisMappings = $state<AxisMapping[]>([]);
   let pollingInterval: number | null = null;
   let isPolling = $state(false);
   let initStatus = $state("Initialising...");
   let audioInitialised = $state(false);
+  let isBindingMode = $state(false);
+  let pendingBinding: { sessionId: string; sessionName: string } | null = null;
+  let previousAxisValues: Map<string, Record<string, number>> = new Map();
 
   // Auto-initialise on component mount
   onMount(async () => {
+    loadMappings();
     console.log("[ClearComms] Starting automatic initialisation...");
     await autoInitialise();
   });
@@ -141,6 +155,8 @@
     pollingInterval = setInterval(async () => {
       try {
         await getAxisValues();
+        // Apply axis-to-volume mappings
+        await applyAxisMappings();
       } catch (error) {
         console.error("[ClearComms] Polling error:", error);
         // Don't stop polling on individual errors
@@ -222,6 +238,153 @@
       errorMsg = `Audio error: ${error}`;
     }
   }
+
+  // Axis-to-volume mapping functions
+  function startAxisBinding(sessionId: string, sessionName: string) {
+    isBindingMode = true;
+    pendingBinding = { sessionId, sessionName };
+    
+    // Snapshot current axis values
+    previousAxisValues.clear();
+    for (const device of axisData) {
+      previousAxisValues.set(device.device_handle, { ...device.axes });
+    }
+    
+    console.log(`[ClearComms] Binding mode activated for ${sessionName}. Move an axis to bind it...`);
+  }
+
+  function cancelBinding() {
+    isBindingMode = false;
+    pendingBinding = null;
+    previousAxisValues.clear();
+    console.log("[ClearComms] Binding mode cancelled");
+  }
+
+  function detectAxisMovement(): { deviceHandle: string; deviceName: string; axisName: string } | null {
+    // Look for axis with significant movement compared to previous snapshot (>5% change)
+    for (const device of axisData) {
+      const previousValues = previousAxisValues.get(device.device_handle);
+      if (!previousValues) continue;
+
+      for (const [axisName, currentValue] of Object.entries(device.axes)) {
+        const previousValue = previousValues[axisName];
+        if (previousValue === undefined) continue;
+
+        const change = Math.abs(currentValue - previousValue);
+        if (change > 0.05) { // 5% threshold for movement detection
+          console.log(`[ClearComms] Detected movement on ${device.device_name} ${axisName}: ${previousValue.toFixed(3)} → ${currentValue.toFixed(3)} (Δ ${change.toFixed(3)})`);
+          return {
+            deviceHandle: device.device_handle,
+            deviceName: device.device_name,
+            axisName
+          };
+        }
+      }
+    }
+    return null;
+  }
+
+  function createMapping(deviceHandle: string, deviceName: string, axisName: string, sessionId: string, sessionName: string) {
+    // Remove any existing mapping for this session
+    axisMappings = axisMappings.filter(m => m.sessionId !== sessionId);
+    
+    // Add new mapping
+    const newMapping: AxisMapping = {
+      deviceHandle,
+      deviceName,
+      axisName,
+      sessionId,
+      sessionName
+    };
+    axisMappings = [...axisMappings, newMapping];
+    
+    console.log(`[ClearComms] ✓ Mapped ${deviceName} ${axisName} → ${sessionName}`);
+    
+    // Save to localStorage
+    saveMappings();
+  }
+
+  function removeMapping(sessionId: string) {
+    const mapping = axisMappings.find(m => m.sessionId === sessionId);
+    if (mapping) {
+      console.log(`[ClearComms] Removed mapping: ${mapping.deviceName} ${mapping.axisName} → ${mapping.sessionName}`);
+    }
+    axisMappings = axisMappings.filter(m => m.sessionId !== sessionId);
+    saveMappings();
+  }
+
+  async function applyAxisMappings() {
+    // Check if we're in binding mode FIRST (before early return)
+    if (isBindingMode && pendingBinding) {
+      const movement = detectAxisMovement();
+      if (movement) {
+        createMapping(
+          movement.deviceHandle,
+          movement.deviceName,
+          movement.axisName,
+          pendingBinding.sessionId,
+          pendingBinding.sessionName
+        );
+        isBindingMode = false;
+        pendingBinding = null;
+      }
+      return;
+    }
+
+    // Only return early for mapping application, not for binding detection
+    if (!audioInitialised || axisMappings.length === 0) return;
+
+    // Apply all mappings
+    for (const mapping of axisMappings) {
+      const device = axisData.find(d => d.device_handle === mapping.deviceHandle);
+      if (device && device.axes[mapping.axisName] !== undefined) {
+        const axisValue = device.axes[mapping.axisName];
+        
+        // Find the corresponding session
+        const session = audioSessions.find(s => s.session_id === mapping.sessionId);
+        
+        // Only update if volume has changed by more than 1% to avoid excessive API calls
+        if (session && Math.abs(session.volume - axisValue) > 0.01) {
+          try {
+            await invoke("set_session_volume", {
+              sessionId: mapping.sessionId,
+              volume: axisValue
+            });
+            
+            // Update local state
+            const sessionIndex = audioSessions.findIndex(s => s.session_id === mapping.sessionId);
+            if (sessionIndex !== -1) {
+              audioSessions[sessionIndex].volume = axisValue;
+            }
+          } catch (error) {
+            console.error(`[ClearComms] Error applying mapping for ${mapping.sessionName}:`, error);
+          }
+        }
+      }
+    }
+  }
+
+  function saveMappings() {
+    try {
+      localStorage.setItem('clearcomms_axis_mappings', JSON.stringify(axisMappings));
+      console.log("[ClearComms] Mappings saved");
+    } catch (error) {
+      console.error("[ClearComms] Error saving mappings:", error);
+    }
+  }
+
+  function loadMappings() {
+    try {
+      const saved = localStorage.getItem('clearcomms_axis_mappings');
+      if (saved) {
+        axisMappings = JSON.parse(saved);
+        console.log(`[ClearComms] Loaded ${axisMappings.length} mapping(s) from storage`);
+      }
+    } catch (error) {
+      console.error("[ClearComms] Error loading mappings:", error);
+    }
+  }
+
 </script>
 
 <main class="container">
@@ -331,11 +494,34 @@
         <div class="audio-sessions">
           <h3>Active Audio Applications:</h3>
           {#each audioSessions as session (session.session_id)}
-            <div class="audio-session-card">
+            {@const mapping = axisMappings.find(m => m.sessionId === session.session_id)}
+            <div class="audio-session-card" class:has-mapping={!!mapping}>
               <div class="audio-session-header">
                 <h4>{session.display_name}</h4>
                 <span class="process-id">PID: {session.process_id}</span>
               </div>
+
+              {#if mapping}
+                <div class="mapping-indicator">
+                  <span class="mapping-icon">🎮</span>
+                  <span class="mapping-text">
+                    {mapping.deviceName} → {mapping.axisName}
+                  </span>
+                  <button class="remove-mapping-btn" onclick={() => removeMapping(session.session_id)}>
+                    ✕
+                  </button>
+                </div>
+              {:else if isBindingMode && pendingBinding?.sessionId === session.session_id}
+                <div class="binding-indicator">
+                  <span class="binding-pulse">⏺</span>
+                  <span>Move an axis to bind...</span>
+                  <button onclick={cancelBinding}>Cancel</button>
+                </div>
+              {:else}
+                <button class="bind-axis-btn" onclick={() => startAxisBinding(session.session_id, session.display_name)}>
+                  Bind Axis
+                </button>
+              {/if}
               
               <div class="audio-controls">
                 <label class="volume-control">
@@ -346,6 +532,7 @@
                     max="1"
                     step="0.01"
                     value={session.volume}
+                    disabled={!!mapping}
                     onchange={(e) => setSessionVolume(session.session_id, parseFloat((e.target as HTMLInputElement).value))}
                   />
                 </label>
@@ -878,6 +1065,120 @@ button.muted:hover {
   background: #ff5722;
 }
 
+/* Axis mapping styling */
+.audio-session-card.has-mapping {
+  border-color: rgba(36, 200, 219, 0.6);
+  box-shadow: 0 0 10px rgba(36, 200, 219, 0.2);
+}
+
+.mapping-indicator {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.5rem;
+  background: rgba(36, 200, 219, 0.1);
+  border: 1px solid rgba(36, 200, 219, 0.3);
+  border-radius: 6px;
+  margin-bottom: 0.75rem;
+  font-size: 0.9rem;
+}
+
+.mapping-icon {
+  font-size: 1.2rem;
+}
+
+.mapping-text {
+  flex: 1;
+  color: #24c8db;
+  font-weight: 500;
+}
+
+.remove-mapping-btn {
+  padding: 0.25rem 0.5rem;
+  background: rgba(255, 62, 0, 0.2);
+  border: 1px solid rgba(255, 62, 0, 0.4);
+  color: #ff3e00;
+  font-size: 1rem;
+  font-weight: bold;
+  transition: all 0.2s ease;
+}
+
+.remove-mapping-btn:hover {
+  background: rgba(255, 62, 0, 0.3);
+  border-color: rgba(255, 62, 0, 0.6);
+}
+
+.binding-indicator {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.5rem;
+  background: rgba(57, 108, 216, 0.1);
+  border: 1px solid rgba(57, 108, 216, 0.4);
+  border-radius: 6px;
+  margin-bottom: 0.75rem;
+  font-size: 0.9rem;
+  color: #396cd8;
+  animation: pulse 1.5s ease-in-out infinite;
+}
+
+.binding-pulse {
+  font-size: 1.2rem;
+  color: #ff3e00;
+  animation: pulse-icon 1s ease-in-out infinite;
+}
+
+@keyframes pulse {
+  0%, 100% {
+    background: rgba(57, 108, 216, 0.1);
+  }
+  50% {
+    background: rgba(57, 108, 216, 0.2);
+  }
+}
+
+@keyframes pulse-icon {
+  0%, 100% {
+    opacity: 1;
+    transform: scale(1);
+  }
+  50% {
+    opacity: 0.6;
+    transform: scale(1.2);
+  }
+}
+
+.bind-axis-btn {
+  width: 100%;
+  padding: 0.5rem;
+  background: rgba(36, 200, 219, 0.1);
+  border: 1px solid rgba(36, 200, 219, 0.3);
+  color: #24c8db;
+  margin-bottom: 0.75rem;
+  transition: all 0.2s ease;
+}
+
+.bind-axis-btn:hover {
+  background: rgba(36, 200, 219, 0.2);
+  border-color: rgba(36, 200, 219, 0.5);
+  transform: translateY(-1px);
+}
+
+.volume-control input[type="range"]:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.volume-control input[type="range"]:disabled::-webkit-slider-thumb {
+  cursor: not-allowed;
+  background: #888;
+}
+
+.volume-control input[type="range"]:disabled::-moz-range-thumb {
+  cursor: not-allowed;
+  background: #888;
+}
+
 @media (prefers-color-scheme: dark) {
   .audio-session-card {
     background: rgba(0, 0, 0, 0.3);
@@ -887,6 +1188,11 @@ button.muted:hover {
   .audio-session-card:hover {
     background: rgba(0, 0, 0, 0.4);
     border-color: rgba(36, 200, 219, 0.5);
+  }
+
+  .audio-session-card.has-mapping {
+    background: rgba(0, 0, 0, 0.4);
+    border-color: rgba(36, 200, 219, 0.7);
   }
 }
 </style>
