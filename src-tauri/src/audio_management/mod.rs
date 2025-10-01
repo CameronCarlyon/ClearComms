@@ -8,6 +8,7 @@ use windows::{
     Win32::System::Com::*,
     Win32::Media::Audio::*,
     Win32::Foundation::*,
+    Win32::System::Threading::*,
 };
 
 /// Information about an audio session (application)
@@ -16,6 +17,7 @@ pub struct AudioSession {
     pub session_id: String,
     pub display_name: String,
     pub process_id: u32,
+    pub process_name: String, // e.g., "Discord.exe"
     pub volume: f32, // 0.0 to 1.0
     pub is_muted: bool,
 }
@@ -23,6 +25,57 @@ pub struct AudioSession {
 /// Manages Windows Core Audio API for application volume control
 pub struct AudioManager {
     sessions: HashMap<String, AudioSession>,
+}
+
+#[cfg(windows)]
+/// Get the executable name from a process ID
+fn get_process_name(process_id: u32) -> String {
+    if process_id == 0 {
+        return "System".to_string();
+    }
+
+    unsafe {
+        // Open process with query limited information rights
+        let process_handle = OpenProcess(
+            PROCESS_QUERY_LIMITED_INFORMATION,
+            false,
+            process_id,
+        );
+
+        match process_handle {
+            Ok(handle) => {
+                // Buffer for the executable path
+                let mut buffer = vec![0u16; 260]; // MAX_PATH
+                let mut size = buffer.len() as u32;
+
+                // Get the full executable path
+                let result = QueryFullProcessImageNameW(
+                    handle,
+                    PROCESS_NAME_WIN32,
+                    PWSTR(buffer.as_mut_ptr()),
+                    &mut size,
+                );
+
+                let _ = CloseHandle(handle);
+
+                if result.is_ok() && size > 0 {
+                    // Convert to String
+                    let path = String::from_utf16_lossy(&buffer[0..size as usize]);
+                    
+                    // Extract just the filename from the full path
+                    if let Some(filename) = path.split('\\').last() {
+                        return filename.to_string();
+                    }
+                    
+                    return path;
+                }
+            }
+            Err(_) => {}
+        }
+    }
+
+    // Fallback if we can't get the process name
+    format!("Process {}", process_id)
 }
 
 #[cfg(windows)]
@@ -92,6 +145,9 @@ impl AudioManager {
                             .and_then(|s| s.to_string().ok())
                             .unwrap_or_else(|| format!("Process {}", process_id));
 
+                        // Get the actual process executable name
+                        let process_name = get_process_name(process_id);
+
                         // Get volume control
                         if let Ok(simple_volume) = session_control.cast::<ISimpleAudioVolume>() {
                             let volume = simple_volume.GetMasterVolume().unwrap_or(1.0);
@@ -101,6 +157,7 @@ impl AudioManager {
                                 session_id: session_id.clone(),
                                 display_name,
                                 process_id,
+                                process_name: process_name.clone(),
                                 volume,
                                 is_muted,
                             };
