@@ -15,9 +15,10 @@ fn main() {
             // Create tray menu
             let show_i = MenuItem::with_id(app, "show", "Show ClearComms", true, None::<&str>)?;
             let hide_i = MenuItem::with_id(app, "hide", "Hide ClearComms", true, None::<&str>)?;
+            let pin_i = MenuItem::with_id(app, "pin", "Pin on top", true, None::<&str>)?;
             let quit_i = MenuItem::with_id(app, "quit", "Quit", true, None::<&str>)?;
             
-            let menu = Menu::with_items(app, &[&show_i, &hide_i, &quit_i])?;
+            let menu = Menu::with_items(app, &[&show_i, &hide_i, &pin_i, &quit_i])?;
             
             // Build tray icon
             let _tray = TrayIconBuilder::new()
@@ -36,6 +37,18 @@ fn main() {
                         "hide" => {
                             if let Some(window) = app.get_webview_window("main") {
                                 let _ = window.hide();
+                            }
+                        }
+                        "pin" => {
+                            if let Some(window) = app.get_webview_window("main") {
+                                // Show and position window
+                                position_window_bottom_right(&window);
+                                let _ = window.show();
+                                let _ = window.set_focus();
+                                
+                                // Toggle always_on_top state
+                                let current_state = window.is_always_on_top().unwrap_or(false);
+                                let _ = window.set_always_on_top(!current_state);
                             }
                         }
                         "quit" => {
