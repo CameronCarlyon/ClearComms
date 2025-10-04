@@ -389,6 +389,7 @@
     min-height: 100vh;
     max-width: 100%;
     overflow-y: auto;
+    background: var(--bg-primary);
   }
 
   .app-header {
@@ -404,7 +405,7 @@
     margin: 0;
     font-size: 1.4rem;
     font-weight: 600;
-    color: #24c8db;
+    color: var(--accent-primary);
   }
 
   .status-indicator {
@@ -413,17 +414,17 @@
     font-size: 0.75rem;
     font-weight: 500;
     background: rgba(136, 136, 136, 0.2);
-    color: #888;
+    color: var(--text-muted);
   }
 
   .status-indicator.ready {
     background: rgba(36, 200, 219, 0.2);
-    color: #24c8db;
+    color: var(--accent-primary);
   }
 
   .status-indicator.failed {
     background: rgba(255, 62, 0, 0.2);
-    color: #ff3e00;
+    color: var(--status-error);
   }
 
   .error-banner {
@@ -432,7 +433,7 @@
     background: rgba(255, 62, 0, 0.1);
     border: 1px solid rgba(255, 62, 0, 0.3);
     border-radius: 6px;
-    color: #ff3e00;
+    color: var(--status-error);
     font-size: 0.85rem;
   }
 
@@ -451,7 +452,7 @@
     margin: 0;
     font-size: 1rem;
     font-weight: 600;
-    color: #f6f6f6;
+    color: var(--text-primary);
   }
 
   .icon-btn {
@@ -475,7 +476,7 @@
 
   .status-text {
     text-align: center;
-    color: #888;
+    color: var(--text-muted);
     font-size: 0.9rem;
     padding: 20px;
   }
@@ -487,7 +488,7 @@
   }
 
   .audio-session-card {
-    background: rgba(255, 255, 255, 0.03);
+    background: var(--bg-card);
     border: 1px solid rgba(36, 200, 219, 0.2);
     border-radius: 8px;
     padding: 10px;
@@ -495,11 +496,12 @@
   }
 
   .audio-session-card:hover {
-    background: rgba(255, 255, 255, 0.05);
+    background: var(--bg-card-hover);
     border-color: rgba(36, 200, 219, 0.4);
   }
 
   .audio-session-card.has-mapping {
+    background: var(--bg-card-mapped);
     border-color: rgba(36, 200, 219, 0.6);
     box-shadow: 0 0 10px rgba(36, 200, 219, 0.1);
   }
@@ -516,13 +518,13 @@
 
   .app-name {
     font-weight: 600;
-    color: #24c8db;
+    color: var(--accent-primary);
     font-size: 0.95rem;
   }
 
   .session-subtitle {
     font-size: 0.75rem;
-    color: #888;
+    color: var(--text-muted);
     font-style: italic;
   }
 
@@ -544,7 +546,7 @@
 
   .mapping-text {
     flex: 1;
-    color: #24c8db;
+    color: var(--accent-primary);
     font-weight: 500;
   }
 
@@ -552,7 +554,7 @@
     padding: 2px 6px;
     background: rgba(255, 62, 0, 0.2);
     border: 1px solid rgba(255, 62, 0, 0.4);
-    color: #ff3e00;
+    color: var(--status-error);
     font-size: 0.9rem;
     font-weight: bold;
     border-radius: 4px;
@@ -574,13 +576,13 @@
     border-radius: 6px;
     margin-bottom: 8px;
     font-size: 0.85rem;
-    color: #396cd8;
+    color: var(--accent-secondary);
     animation: pulse 1.5s ease-in-out infinite;
   }
 
   .binding-pulse {
     font-size: 1rem;
-    color: #ff3e00;
+    color: var(--status-error);
     animation: pulse-icon 1s ease-in-out infinite;
   }
 
@@ -596,12 +598,17 @@
 
   .small-btn {
     padding: 2px 8px;
-    background: rgba(255, 255, 255, 0.1);
-    border: 1px solid rgba(255, 255, 255, 0.2);
+    background: var(--button-bg);
+    border: 1px solid var(--border-color-strong);
     border-radius: 4px;
-    color: #f6f6f6;
+    color: var(--text-primary);
     font-size: 0.75rem;
     cursor: pointer;
+    transition: all 0.2s;
+  }
+
+  .small-btn:hover {
+    background: var(--button-hover);
   }
 
   .bind-btn {
@@ -609,7 +616,7 @@
     padding: 6px;
     background: rgba(36, 200, 219, 0.1);
     border: 1px solid rgba(36, 200, 219, 0.3);
-    color: #24c8db;
+    color: var(--accent-primary);
     margin-bottom: 8px;
     border-radius: 6px;
     cursor: pointer;
@@ -637,7 +644,7 @@
 
   .volume-label {
     font-size: 0.8rem;
-    color: #aaa;
+    color: var(--text-secondary);
     font-weight: 500;
   }
 
@@ -645,7 +652,7 @@
     width: 100%;
     height: 4px;
     border-radius: 2px;
-    background: rgba(255, 255, 255, 0.1);
+    background: var(--slider-bg);
     outline: none;
     -webkit-appearance: none;
     appearance: none;
@@ -657,13 +664,13 @@
     width: 14px;
     height: 14px;
     border-radius: 50%;
-    background: #24c8db;
+    background: var(--accent-primary);
     cursor: pointer;
     transition: all 0.2s;
   }
 
   .volume-control input[type="range"]::-webkit-slider-thumb:hover {
-    background: #396cd8;
+    background: var(--accent-secondary);
     transform: scale(1.1);
   }
 
@@ -671,14 +678,14 @@
     width: 14px;
     height: 14px;
     border-radius: 50%;
-    background: #24c8db;
+    background: var(--accent-primary);
     cursor: pointer;
     border: none;
     transition: all 0.2s;
   }
 
   .volume-control input[type="range"]::-moz-range-thumb:hover {
-    background: #396cd8;
+    background: var(--accent-secondary);
     transform: scale(1.1);
   }
 
@@ -689,18 +696,18 @@
 
   .volume-control input[type="range"]:disabled::-webkit-slider-thumb {
     cursor: not-allowed;
-    background: #888;
+    background: var(--text-muted);
   }
 
   .volume-control input[type="range"]:disabled::-moz-range-thumb {
     cursor: not-allowed;
-    background: #888;
+    background: var(--text-muted);
   }
 
   .mute-btn {
     padding: 8px;
-    background: rgba(255, 255, 255, 0.05);
-    border: 1px solid rgba(255, 255, 255, 0.2);
+    background: var(--button-bg);
+    border: 1px solid var(--border-color-strong);
     border-radius: 6px;
     font-size: 1.2rem;
     cursor: pointer;
@@ -709,7 +716,7 @@
   }
 
   .mute-btn:hover {
-    background: rgba(255, 255, 255, 0.1);
+    background: var(--button-hover);
   }
 
   .mute-btn.muted {
@@ -721,13 +728,6 @@
     background: rgba(255, 62, 0, 0.3);
   }
 
-  @media (prefers-color-scheme: dark) {
-    .audio-session-card {
-      background: rgba(0, 0, 0, 0.3);
-    }
+  /* Remove old dark mode override since we're using variables now */
 
-    .audio-session-card.has-mapping {
-      background: rgba(0, 0, 0, 0.4);
-    }
-  }
 </style>
