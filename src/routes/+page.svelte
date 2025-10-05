@@ -21,6 +21,15 @@
     sessionName: string;
   }
 
+  // Button-to-mute mapping types
+  interface ButtonMapping {
+    deviceHandle: string;
+    deviceName: string;
+    buttonName: string;
+    sessionId: string;
+    sessionName: string;
+  }
+
   interface AxisData {
     device_handle: string;
     device_name: string;
@@ -34,18 +43,23 @@
   let axisData = $state<AxisData[]>([]);
   let audioSessions = $state<AudioSession[]>([]);
   let axisMappings = $state<AxisMapping[]>([]);
+  let buttonMappings = $state<ButtonMapping[]>([]);
   let pollingInterval: number | null = null;
   let isPolling = $state(false);
   let initStatus = $state("Initialising...");
   let audioInitialised = $state(false);
   let isBindingMode = $state(false);
+  let isButtonBindingMode = $state(false);
   let pendingBinding = $state<{ sessionId: string; sessionName: string } | null>(null);
+  let pendingButtonBinding = $state<{ sessionId: string; sessionName: string } | null>(null);
   let previousAxisValues: Map<string, Record<string, number>> = new Map();
+  let previousButtonStates: Map<string, Record<string, boolean>> = new Map();
   let errorMsg = $state("");
 
   // Auto-initialise on component mount
   onMount(async () => {
     loadMappings();
+    loadButtonMappings();
     console.log("[ClearComms] Starting automatic initialisation...");
     await autoInitialise();
   });
@@ -125,6 +139,7 @@
       try {
         await getAxisValues();
         await applyAxisMappings();
+        await applyButtonMappings();
       } catch (error) {
         console.error("[ClearComms] Polling error:", error);
       }
@@ -195,6 +210,26 @@
     console.log("[ClearComms] Binding mode cancelled");
   }
 
+  function startButtonBinding(sessionId: string, sessionName: string) {
+    isButtonBindingMode = true;
+    pendingButtonBinding = { sessionId, sessionName };
+    
+    // Store current button states
+    previousButtonStates.clear();
+    for (const device of axisData) {
+      previousButtonStates.set(device.device_handle, { ...device.buttons });
+    }
+    
+    console.log(`[ClearComms] Button binding mode activated for ${sessionName}. Press a button to bind it...`);
+  }
+
+  function cancelButtonBinding() {
+    isButtonBindingMode = false;
+    pendingButtonBinding = null;
+    previousButtonStates.clear();
+    console.log("[ClearComms] Button binding mode cancelled");
+  }
+
   function detectAxisMovement(): { deviceHandle: string; deviceName: string; axisName: string } | null {
     for (const device of axisData) {
       const previousValues = previousAxisValues.get(device.device_handle);
@@ -208,6 +243,25 @@
         if (change > 0.05) {
           console.log(`[ClearComms] Detected movement on ${device.device_name} ${axisName}: ${previousValue.toFixed(3)} → ${currentValue.toFixed(3)} (Δ ${change.toFixed(3)})`);
           return { deviceHandle: device.device_handle, deviceName: device.device_name, axisName };
+        }
+      }
+    }
+    return null;
+  }
+
+  function detectButtonPress(): { deviceHandle: string; deviceName: string; buttonName: string } | null {
+    for (const device of axisData) {
+      const previousStates = previousButtonStates.get(device.device_handle);
+      if (!previousStates) continue;
+
+      for (const [buttonName, currentState] of Object.entries(device.buttons)) {
+        const previousState = previousStates[buttonName];
+        if (previousState === undefined) continue;
+
+        // Detect button press (false → true transition)
+        if (!previousState && currentState) {
+          console.log(`[ClearComms] Detected button press on ${device.device_name} ${buttonName}`);
+          return { deviceHandle: device.device_handle, deviceName: device.device_name, buttonName };
         }
       }
     }
@@ -231,6 +285,26 @@
     }
     axisMappings = axisMappings.filter(m => m.sessionId !== sessionId);
     saveMappings();
+  }
+
+  function createButtonMapping(deviceHandle: string, deviceName: string, buttonName: string, sessionId: string, sessionName: string) {
+    // Remove existing button mapping for this session (one button per session)
+    buttonMappings = buttonMappings.filter(m => m.sessionId !== sessionId);
+    
+    const newMapping: ButtonMapping = { deviceHandle, deviceName, buttonName, sessionId, sessionName };
+    buttonMappings = [...buttonMappings, newMapping];
+    
+    console.log(`[ClearComms] ✓ Mapped ${deviceName} ${buttonName} → Mute ${sessionName}`);
+    saveButtonMappings();
+  }
+
+  function removeButtonMapping(sessionId: string) {
+    const mapping = buttonMappings.find(m => m.sessionId === sessionId);
+    if (mapping) {
+      console.log(`[ClearComms] Removed button mapping: ${mapping.deviceName} ${mapping.buttonName} → Mute ${mapping.sessionName}`);
+    }
+    buttonMappings = buttonMappings.filter(m => m.sessionId !== sessionId);
+    saveButtonMappings();
   }
 
   async function applyAxisMappings() {
@@ -267,6 +341,57 @@
     }
   }
 
+  async function applyButtonMappings() {
+    // Handle button binding mode
+    if (isButtonBindingMode && pendingButtonBinding) {
+      const buttonPress = detectButtonPress();
+      if (buttonPress) {
+        createButtonMapping(buttonPress.deviceHandle, buttonPress.deviceName, buttonPress.buttonName, pendingButtonBinding.sessionId, pendingButtonBinding.sessionName);
+        isButtonBindingMode = false;
+        pendingButtonBinding = null;
+      }
+      // Update previous button states for next poll
+      for (const device of axisData) {
+        previousButtonStates.set(device.device_handle, { ...device.buttons });
+      }
+      return;
+    }
+
+    if (!audioInitialised || buttonMappings.length === 0) return;
+
+    // Check for button presses and toggle mute
+    for (const mapping of buttonMappings) {
+      const device = axisData.find(d => d.device_handle === mapping.deviceHandle);
+      if (device && device.buttons[mapping.buttonName] !== undefined) {
+        const currentState = device.buttons[mapping.buttonName];
+        const previousState = previousButtonStates.get(device.device_handle)?.[mapping.buttonName];
+        
+        // Detect button press (false → true transition)
+        if (!previousState && currentState) {
+          const session = audioSessions.find(s => s.session_id === mapping.sessionId);
+          if (session) {
+            const newMuteState = !session.is_muted;
+            try {
+              await invoke("set_session_mute", { sessionId: mapping.sessionId, muted: newMuteState });
+              const sessionIndex = audioSessions.findIndex(s => s.session_id === mapping.sessionId);
+              if (sessionIndex !== -1) {
+                audioSessions[sessionIndex].is_muted = newMuteState;
+              }
+              console.log(`[ClearComms] Button ${mapping.buttonName} toggled mute for ${mapping.sessionName}: ${newMuteState ? 'MUTED' : 'UNMUTED'}`);
+            } catch (error) {
+              console.error(`[ClearComms] Error toggling mute for ${mapping.sessionName}:`, error);
+            }
+          }
+        }
+      }
+    }
+
+    // Update previous button states for next poll
+    for (const device of axisData) {
+      previousButtonStates.set(device.device_handle, { ...device.buttons });
+    }
+  }
+
   function saveMappings() {
     try {
       localStorage.setItem('clearcomms_axis_mappings', JSON.stringify(axisMappings));
@@ -281,10 +406,31 @@
       const saved = localStorage.getItem('clearcomms_axis_mappings');
       if (saved) {
         axisMappings = JSON.parse(saved);
-        console.log(`[ClearComms] Loaded ${axisMappings.length} mapping(s) from storage`);
+        console.log(`[ClearComms] Loaded ${axisMappings.length} axis mapping(s) from storage`);
       }
     } catch (error) {
       console.error("[ClearComms] Error loading mappings:", error);
+    }
+  }
+
+  function saveButtonMappings() {
+    try {
+      localStorage.setItem('clearcomms_button_mappings', JSON.stringify(buttonMappings));
+      console.log("[ClearComms] Button mappings saved");
+    } catch (error) {
+      console.error("[ClearComms] Error saving button mappings:", error);
+    }
+  }
+
+  function loadButtonMappings() {
+    try {
+      const saved = localStorage.getItem('clearcomms_button_mappings');
+      if (saved) {
+        buttonMappings = JSON.parse(saved);
+        console.log(`[ClearComms] Loaded ${buttonMappings.length} button mapping(s) from storage`);
+      }
+    } catch (error) {
+      console.error("[ClearComms] Error loading button mappings:", error);
     }
   }
 </script>
@@ -315,7 +461,8 @@
         <div class="audio-sessions">
           {#each audioSessions as session (session.session_id)}
             {@const mapping = axisMappings.find(m => m.sessionId === session.session_id)}
-            <div class="audio-session-card" class:has-mapping={!!mapping}>
+            {@const buttonMapping = buttonMappings.find(m => m.sessionId === session.session_id)}
+            <div class="audio-session-card" class:has-mapping={!!mapping || !!buttonMapping}>
               <div class="session-info">
                 <div class="session-title">
                   <span class="app-name">{session.process_name}</span>
@@ -328,7 +475,7 @@
               {#if mapping}
                 <div class="mapping-indicator">
                   <span class="mapping-icon">🎮</span>
-                  <span class="mapping-text">{mapping.axisName}</span>
+                  <span class="mapping-text">Volume: {mapping.axisName}</span>
                   <button class="remove-mapping-btn" onclick={() => removeMapping(session.session_id)}>✕</button>
                 </div>
               {:else if isBindingMode && pendingBinding?.sessionId === session.session_id}
@@ -338,7 +485,23 @@
                   <button class="small-btn" onclick={cancelBinding}>Cancel</button>
                 </div>
               {:else}
-                <button class="bind-btn" onclick={() => startAxisBinding(session.session_id, session.display_name)}>Bind</button>
+                <button class="bind-btn" onclick={() => startAxisBinding(session.session_id, session.display_name)}>Bind Volume</button>
+              {/if}
+
+              {#if buttonMapping}
+                <div class="mapping-indicator button-mapping">
+                  <span class="mapping-icon">🔘</span>
+                  <span class="mapping-text">Mute: {buttonMapping.buttonName}</span>
+                  <button class="remove-mapping-btn" onclick={() => removeButtonMapping(session.session_id)}>✕</button>
+                </div>
+              {:else if isButtonBindingMode && pendingButtonBinding?.sessionId === session.session_id}
+                <div class="binding-indicator">
+                  <span class="binding-pulse">⏺</span>
+                  <span>Press button...</span>
+                  <button class="small-btn" onclick={cancelButtonBinding}>Cancel</button>
+                </div>
+              {:else}
+                <button class="bind-btn button-bind" onclick={() => startButtonBinding(session.session_id, session.display_name)}>Bind Mute</button>
               {/if}
               
               <div class="audio-controls">
@@ -540,6 +703,15 @@
     font-size: 0.85rem;
   }
 
+  .mapping-indicator.button-mapping {
+    background: rgba(147, 51, 234, 0.1);
+    border-color: rgba(147, 51, 234, 0.3);
+  }
+
+  .mapping-indicator.button-mapping .mapping-text {
+    color: #9333ea;
+  }
+
   .mapping-icon {
     font-size: 1rem;
   }
@@ -627,6 +799,16 @@
   .bind-btn:hover {
     background: rgba(36, 200, 219, 0.2);
     transform: translateY(-1px);
+  }
+
+  .bind-btn.button-bind {
+    background: rgba(147, 51, 234, 0.1);
+    border-color: rgba(147, 51, 234, 0.3);
+    color: #9333ea;
+  }
+
+  .bind-btn.button-bind:hover {
+    background: rgba(147, 51, 234, 0.2);
   }
 
   .audio-controls {
