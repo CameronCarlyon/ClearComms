@@ -450,7 +450,7 @@
   <!-- Audio Management Section -->
   <section class="audio-section">
     <div class="section-header">
-      <h2>Audio Control</h2>
+      <h2>Audio Mixer</h2>
       <button class="icon-btn" onclick={refreshAudioSessions} disabled={!audioInitialised} title="Refresh Sessions">
         🔄
       </button>
@@ -458,74 +458,78 @@
 
     {#if audioInitialised}
       {#if audioSessions.length > 0}
-        <div class="audio-sessions">
+        <div class="mixer-container">
           {#each audioSessions as session (session.session_id)}
             {@const mapping = axisMappings.find(m => m.sessionId === session.session_id)}
             {@const buttonMapping = buttonMappings.find(m => m.sessionId === session.session_id)}
-            <div class="audio-session-card" class:has-mapping={!!mapping || !!buttonMapping}>
-              <div class="session-info">
-                <div class="session-title">
-                  <span class="app-name">{session.process_name}</span>
-                  {#if session.display_name !== session.process_name && session.display_name !== `Process ${session.process_id}`}
-                    <span class="session-subtitle">{session.display_name}</span>
-                  {/if}
-                </div>
+            
+            <div class="channel-strip" class:has-mapping={!!mapping || !!buttonMapping}>
+              <!-- Application Name -->
+              <div class="channel-name">
+                <span class="app-name" title={session.display_name}>{session.process_name}</span>
               </div>
 
-              {#if mapping}
-                <div class="mapping-indicator">
-                  <span class="mapping-icon">🎮</span>
-                  <span class="mapping-text">Volume: {mapping.axisName}</span>
-                  <button class="remove-mapping-btn" onclick={() => removeMapping(session.session_id)}>✕</button>
-                </div>
-              {:else if isBindingMode && pendingBinding?.sessionId === session.session_id}
-                <div class="binding-indicator">
-                  <span class="binding-pulse">⏺</span>
-                  <span>Move axis...</span>
-                  <button class="small-btn" onclick={cancelBinding}>Cancel</button>
-                </div>
-              {:else}
-                <button class="bind-btn" onclick={() => startAxisBinding(session.session_id, session.display_name)}>Bind Volume</button>
-              {/if}
+              <!-- Vertical Volume Slider -->
+              <div class="fader-container">
+                <input
+                  type="range"
+                  class="vertical-slider"
+                  min="0"
+                  max="1"
+                  step="0.01"
+                  value={session.volume}
+                  disabled={!!mapping}
+                  onchange={(e) => setSessionVolume(session.session_id, parseFloat((e.target as HTMLInputElement).value))}
+                />
+                <span class="volume-readout">{(session.volume * 100).toFixed(0)}%</span>
+              </div>
 
-              {#if buttonMapping}
-                <div class="mapping-indicator button-mapping">
-                  <span class="mapping-icon">🔘</span>
-                  <span class="mapping-text">Mute: {buttonMapping.buttonName}</span>
-                  <button class="remove-mapping-btn" onclick={() => removeButtonMapping(session.session_id)}>✕</button>
-                </div>
-              {:else if isButtonBindingMode && pendingButtonBinding?.sessionId === session.session_id}
-                <div class="binding-indicator">
-                  <span class="binding-pulse">⏺</span>
-                  <span>Press button...</span>
-                  <button class="small-btn" onclick={cancelButtonBinding}>Cancel</button>
-                </div>
-              {:else}
-                <button class="bind-btn button-bind" onclick={() => startButtonBinding(session.session_id, session.display_name)}>Bind Mute</button>
-              {/if}
-              
-              <div class="audio-controls">
-                <label class="volume-control">
-                  <span class="volume-label">{(session.volume * 100).toFixed(0)}%</span>
-                  <input
-                    type="range"
-                    min="0"
-                    max="1"
-                    step="0.01"
-                    value={session.volume}
-                    disabled={!!mapping}
-                    onchange={(e) => setSessionVolume(session.session_id, parseFloat((e.target as HTMLInputElement).value))}
-                  />
-                </label>
-                
-                <button
-                  class="mute-btn"
-                  class:muted={session.is_muted}
-                  onclick={() => setSessionMute(session.session_id, !session.is_muted)}
-                  title={session.is_muted ? 'Unmute' : 'Mute'}
-                >
-                  {session.is_muted ? '🔇' : '🔊'}
-                </button>
+              <!-- Mute Button -->
+              <button
+                class="channel-mute-btn"
+                class:muted={session.is_muted}
+                onclick={() => setSessionMute(session.session_id, !session.is_muted)}
+                title={session.is_muted ? 'Unmute' : 'Mute'}
+              >
+                {session.is_muted ? '🔇' : '🔊'}
+              </button>
+
+              <!-- Axis Binding Control -->
+              <div class="channel-binding">
+                {#if mapping}
+                  <div class="mapping-badge" title="Volume: {mapping.axisName}">
+                    <span>🎮</span>
+                    <button class="remove-badge-btn" onclick={() => removeMapping(session.session_id)}>✕</button>
+                  </div>
+                {:else if isBindingMode && pendingBinding?.sessionId === session.session_id}
+                  <div class="binding-active">
+                    <span class="pulse">⏺</span>
+                    <button class="cancel-badge-btn" onclick={cancelBinding}>✕</button>
+                  </div>
+                {:else}
+                  <button class="bind-badge-btn" onclick={() => startAxisBinding(session.session_id, session.display_name)} title="Bind Volume Axis">
+                    🎮
+                  </button>
+                {/if}
+              </div>
+
+              <!-- Button Binding Control -->
+              <div class="channel-binding">
+                {#if buttonMapping}
+                  <div class="mapping-badge button" title="Mute: {buttonMapping.buttonName}">
+                    <span>🔘</span>
+                    <button class="remove-badge-btn" onclick={() => removeButtonMapping(session.session_id)}>✕</button>
+                  </div>
+                {:else if isButtonBindingMode && pendingButtonBinding?.sessionId === session.session_id}
+                  <div class="binding-active">
+                    <span class="pulse">⏺</span>
+                    <button class="cancel-badge-btn" onclick={cancelButtonBinding}>✕</button>
+                  </div>
+                {:else}
+                  <button class="bind-badge-btn button" onclick={() => startButtonBinding(session.session_id, session.display_name)} title="Bind Mute Button">
+                    🔘
+                  </button>
+                {/if}
               </div>
             </div>
           {/each}
@@ -644,272 +648,329 @@
     padding: 20px;
   }
 
-  .audio-sessions {
+  /* ===== MIXER LAYOUT ===== */
+  .mixer-container {
     display: flex;
-    flex-direction: column;
-    gap: 8px;
+    flex-direction: row;
+    gap: 12px;
+    padding: 8px;
+    overflow-x: auto;
+    overflow-y: visible;
   }
 
-  .audio-session-card {
+  /* ===== CHANNEL STRIP (Vertical Layout) ===== */
+  .channel-strip {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 10px;
+    padding: 12px 10px;
+    min-width: 80px;
+    max-width: 90px;
     background: var(--bg-card);
-    border: 1px solid rgba(36, 200, 219, 0.2);
-    border-radius: 8px;
-    padding: 10px;
+    border: 1px solid var(--border-color);
+    border-radius: 12px;
     transition: all 0.2s;
   }
 
-  .audio-session-card:hover {
+  .channel-strip:hover {
     background: var(--bg-card-hover);
-    border-color: rgba(36, 200, 219, 0.4);
+    transform: translateY(-2px);
   }
 
-  .audio-session-card.has-mapping {
+  .channel-strip.has-mapping {
     background: var(--bg-card-mapped);
-    border-color: rgba(36, 200, 219, 0.6);
-    box-shadow: 0 0 10px rgba(36, 200, 219, 0.1);
+    border-color: rgba(36, 200, 219, 0.4);
+    box-shadow: 0 0 12px rgba(36, 200, 219, 0.15);
   }
 
-  .session-info {
-    margin-bottom: 8px;
+  /* ===== CHANNEL NAME ===== */
+  .channel-name {
+    width: 100%;
+    text-align: center;
+    margin-bottom: 4px;
   }
 
-  .session-title {
-    display: flex;
-    flex-direction: column;
-    gap: 2px;
-  }
-
-  .app-name {
+  .channel-name .app-name {
+    font-size: 0.75rem;
     font-weight: 600;
     color: var(--accent-primary);
-    font-size: 0.95rem;
+    display: block;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
   }
 
-  .session-subtitle {
-    font-size: 0.75rem;
-    color: var(--text-muted);
-    font-style: italic;
+  /* ===== VERTICAL SLIDER (Fader) ===== */
+  .fader-container {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 8px;
+    margin: 8px 0;
   }
 
-  .mapping-indicator {
+  .vertical-slider {
+    -webkit-appearance: slider-vertical;
+    appearance: slider-vertical;
+    writing-mode: bt-lr; /* For Firefox */
+    width: 8px;
+    height: 180px;
+    background: var(--slider-bg);
+    border-radius: 999px; /* Pill shape */
+    outline: none;
+    cursor: pointer;
+    position: relative;
+  }
+
+  /* Chrome/Safari/Edge Vertical Slider */
+  .vertical-slider::-webkit-slider-runnable-track {
+    width: 8px;
+    height: 180px;
+    background: var(--slider-bg);
+    border-radius: 999px;
+  }
+
+  .vertical-slider::-webkit-slider-thumb {
+    -webkit-appearance: none;
+    appearance: none;
+    width: 20px;
+    height: 20px;
+    border-radius: 50%; /* Circle */
+    background: var(--accent-primary);
+    cursor: pointer;
+    box-shadow: 0 2px 4px rgba(0, 0, 0, 0.2);
+    transition: all 0.2s;
+    margin-left: -6px; /* Center the thumb */
+  }
+
+  .vertical-slider::-webkit-slider-thumb:hover {
+    background: var(--accent-secondary);
+    transform: scale(1.15);
+    box-shadow: 0 3px 6px rgba(0, 0, 0, 0.3);
+  }
+
+  .vertical-slider::-webkit-slider-thumb:active {
+    transform: scale(1.05);
+  }
+
+  /* Firefox Vertical Slider */
+  .vertical-slider::-moz-range-track {
+    width: 8px;
+    height: 180px;
+    background: var(--slider-bg);
+    border-radius: 999px;
+    border: none;
+  }
+
+  .vertical-slider::-moz-range-thumb {
+    width: 20px;
+    height: 20px;
+    border-radius: 50%;
+    background: var(--accent-primary);
+    cursor: pointer;
+    border: none;
+    box-shadow: 0 2px 4px rgba(0, 0, 0, 0.2);
+    transition: all 0.2s;
+  }
+
+  .vertical-slider::-moz-range-thumb:hover {
+    background: var(--accent-secondary);
+    transform: scale(1.15);
+  }
+
+  .vertical-slider:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+  }
+
+  .vertical-slider:disabled::-webkit-slider-thumb {
+    background: var(--text-muted);
+    cursor: not-allowed;
+  }
+
+  .vertical-slider:disabled::-moz-range-thumb {
+    background: var(--text-muted);
+    cursor: not-allowed;
+  }
+
+  .volume-readout {
+    font-size: 0.7rem;
+    font-weight: 600;
+    color: var(--text-secondary);
+    text-align: center;
+    min-width: 35px;
+  }
+
+  /* ===== MUTE BUTTON ===== */
+  .channel-mute-btn {
+    width: 42px;
+    height: 42px;
+    padding: 0;
+    background: var(--button-bg);
+    border: 2px solid var(--border-color-strong);
+    border-radius: 8px;
+    font-size: 1.3rem;
+    cursor: pointer;
+    transition: all 0.2s;
     display: flex;
     align-items: center;
-    gap: 6px;
-    padding: 6px 8px;
-    background: rgba(36, 200, 219, 0.1);
-    border: 1px solid rgba(36, 200, 219, 0.3);
-    border-radius: 6px;
-    margin-bottom: 8px;
-    font-size: 0.85rem;
+    justify-content: center;
   }
 
-  .mapping-indicator.button-mapping {
+  .channel-mute-btn:hover {
+    background: var(--button-hover);
+    transform: scale(1.05);
+  }
+
+  .channel-mute-btn.muted {
+    background: rgba(255, 62, 0, 0.2);
+    border-color: rgba(255, 62, 0, 0.5);
+  }
+
+  .channel-mute-btn.muted:hover {
+    background: rgba(255, 62, 0, 0.3);
+  }
+
+  /* ===== BINDING BADGES ===== */
+  .channel-binding {
+    width: 42px;
+    height: 42px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+
+  .bind-badge-btn {
+    width: 100%;
+    height: 100%;
+    padding: 0;
+    background: rgba(36, 200, 219, 0.1);
+    border: 2px solid rgba(36, 200, 219, 0.3);
+    border-radius: 8px;
+    font-size: 1.2rem;
+    cursor: pointer;
+    transition: all 0.2s;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+
+  .bind-badge-btn:hover {
+    background: rgba(36, 200, 219, 0.2);
+    transform: scale(1.05);
+  }
+
+  .bind-badge-btn.button {
     background: rgba(147, 51, 234, 0.1);
     border-color: rgba(147, 51, 234, 0.3);
   }
 
-  .mapping-indicator.button-mapping .mapping-text {
-    color: #9333ea;
+  .bind-badge-btn.button:hover {
+    background: rgba(147, 51, 234, 0.2);
   }
 
-  .mapping-icon {
-    font-size: 1rem;
+  .mapping-badge {
+    width: 100%;
+    height: 100%;
+    position: relative;
+    background: rgba(36, 200, 219, 0.2);
+    border: 2px solid rgba(36, 200, 219, 0.5);
+    border-radius: 8px;
+    font-size: 1.2rem;
+    display: flex;
+    align-items: center;
+    justify-content: center;
   }
 
-  .mapping-text {
-    flex: 1;
-    color: var(--accent-primary);
-    font-weight: 500;
+  .mapping-badge.button {
+    background: rgba(147, 51, 234, 0.2);
+    border-color: rgba(147, 51, 234, 0.5);
   }
 
-  .remove-mapping-btn {
-    padding: 2px 6px;
-    background: rgba(255, 62, 0, 0.2);
-    border: 1px solid rgba(255, 62, 0, 0.4);
-    color: var(--status-error);
-    font-size: 0.9rem;
+  .remove-badge-btn {
+    position: absolute;
+    top: -6px;
+    right: -6px;
+    width: 18px;
+    height: 18px;
+    padding: 0;
+    background: rgba(255, 62, 0, 0.9);
+    border: 1px solid rgba(255, 62, 0, 1);
+    border-radius: 50%;
+    color: white;
+    font-size: 0.7rem;
     font-weight: bold;
-    border-radius: 4px;
     cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
     transition: all 0.2s;
   }
 
-  .remove-mapping-btn:hover {
-    background: rgba(255, 62, 0, 0.3);
+  .remove-badge-btn:hover {
+    background: rgba(255, 62, 0, 1);
+    transform: scale(1.1);
   }
 
-  .binding-indicator {
+  .binding-active {
+    width: 100%;
+    height: 100%;
+    position: relative;
+    background: rgba(57, 108, 216, 0.2);
+    border: 2px solid rgba(57, 108, 216, 0.5);
+    border-radius: 8px;
+    font-size: 1.2rem;
     display: flex;
     align-items: center;
-    gap: 6px;
-    padding: 6px 8px;
-    background: rgba(57, 108, 216, 0.1);
-    border: 1px solid rgba(57, 108, 216, 0.4);
-    border-radius: 6px;
-    margin-bottom: 8px;
-    font-size: 0.85rem;
-    color: var(--accent-secondary);
-    animation: pulse 1.5s ease-in-out infinite;
+    justify-content: center;
+    animation: pulse-border 1.5s ease-in-out infinite;
   }
 
-  .binding-pulse {
-    font-size: 1rem;
+  .binding-active .pulse {
     color: var(--status-error);
     animation: pulse-icon 1s ease-in-out infinite;
   }
 
-  @keyframes pulse {
-    0%, 100% { background: rgba(57, 108, 216, 0.1); }
-    50% { background: rgba(57, 108, 216, 0.2); }
+  .cancel-badge-btn {
+    position: absolute;
+    top: -6px;
+    right: -6px;
+    width: 18px;
+    height: 18px;
+    padding: 0;
+    background: rgba(136, 136, 136, 0.9);
+    border: 1px solid rgba(136, 136, 136, 1);
+    border-radius: 50%;
+    color: white;
+    font-size: 0.7rem;
+    font-weight: bold;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition: all 0.2s;
+  }
+
+  .cancel-badge-btn:hover {
+    background: rgba(136, 136, 136, 1);
+    transform: scale(1.1);
+  }
+
+  @keyframes pulse-border {
+    0%, 100% { 
+      border-color: rgba(57, 108, 216, 0.3);
+      box-shadow: 0 0 0 rgba(57, 108, 216, 0);
+    }
+    50% { 
+      border-color: rgba(57, 108, 216, 0.8);
+      box-shadow: 0 0 8px rgba(57, 108, 216, 0.4);
+    }
   }
 
   @keyframes pulse-icon {
     0%, 100% { opacity: 1; transform: scale(1); }
     50% { opacity: 0.6; transform: scale(1.2); }
   }
-
-  .small-btn {
-    padding: 2px 8px;
-    background: var(--button-bg);
-    border: 1px solid var(--border-color-strong);
-    border-radius: 4px;
-    color: var(--text-primary);
-    font-size: 0.75rem;
-    cursor: pointer;
-    transition: all 0.2s;
-  }
-
-  .small-btn:hover {
-    background: var(--button-hover);
-  }
-
-  .bind-btn {
-    width: 100%;
-    padding: 6px;
-    background: rgba(36, 200, 219, 0.1);
-    border: 1px solid rgba(36, 200, 219, 0.3);
-    color: var(--accent-primary);
-    margin-bottom: 8px;
-    border-radius: 6px;
-    cursor: pointer;
-    font-size: 0.85rem;
-    transition: all 0.2s;
-  }
-
-  .bind-btn:hover {
-    background: rgba(36, 200, 219, 0.2);
-    transform: translateY(-1px);
-  }
-
-  .bind-btn.button-bind {
-    background: rgba(147, 51, 234, 0.1);
-    border-color: rgba(147, 51, 234, 0.3);
-    color: #9333ea;
-  }
-
-  .bind-btn.button-bind:hover {
-    background: rgba(147, 51, 234, 0.2);
-  }
-
-  .audio-controls {
-    display: flex;
-    gap: 8px;
-    align-items: center;
-  }
-
-  .volume-control {
-    flex: 1;
-    display: flex;
-    flex-direction: column;
-    gap: 4px;
-  }
-
-  .volume-label {
-    font-size: 0.8rem;
-    color: var(--text-secondary);
-    font-weight: 500;
-  }
-
-  .volume-control input[type="range"] {
-    width: 100%;
-    height: 4px;
-    border-radius: 2px;
-    background: var(--slider-bg);
-    outline: none;
-    -webkit-appearance: none;
-    appearance: none;
-  }
-
-  .volume-control input[type="range"]::-webkit-slider-thumb {
-    -webkit-appearance: none;
-    appearance: none;
-    width: 14px;
-    height: 14px;
-    border-radius: 50%;
-    background: var(--accent-primary);
-    cursor: pointer;
-    transition: all 0.2s;
-  }
-
-  .volume-control input[type="range"]::-webkit-slider-thumb:hover {
-    background: var(--accent-secondary);
-    transform: scale(1.1);
-  }
-
-  .volume-control input[type="range"]::-moz-range-thumb {
-    width: 14px;
-    height: 14px;
-    border-radius: 50%;
-    background: var(--accent-primary);
-    cursor: pointer;
-    border: none;
-    transition: all 0.2s;
-  }
-
-  .volume-control input[type="range"]::-moz-range-thumb:hover {
-    background: var(--accent-secondary);
-    transform: scale(1.1);
-  }
-
-  .volume-control input[type="range"]:disabled {
-    opacity: 0.5;
-    cursor: not-allowed;
-  }
-
-  .volume-control input[type="range"]:disabled::-webkit-slider-thumb {
-    cursor: not-allowed;
-    background: var(--text-muted);
-  }
-
-  .volume-control input[type="range"]:disabled::-moz-range-thumb {
-    cursor: not-allowed;
-    background: var(--text-muted);
-  }
-
-  .mute-btn {
-    padding: 8px;
-    background: var(--button-bg);
-    border: 1px solid var(--border-color-strong);
-    border-radius: 6px;
-    font-size: 1.2rem;
-    cursor: pointer;
-    transition: all 0.2s;
-    min-width: 38px;
-  }
-
-  .mute-btn:hover {
-    background: var(--button-hover);
-  }
-
-  .mute-btn.muted {
-    background: rgba(255, 62, 0, 0.2);
-    border-color: rgba(255, 62, 0, 0.4);
-  }
-
-  .mute-btn.muted:hover {
-    background: rgba(255, 62, 0, 0.3);
-  }
-
-  /* Remove old dark mode override since we're using variables now */
 
 </style>
