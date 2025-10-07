@@ -13,6 +13,7 @@
     "windows": [
       {
         "title": "ClearComms",
+        "label": "main",
         "width": 400,
         "height": 600,
         "resizable": true,

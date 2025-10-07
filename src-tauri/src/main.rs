@@ -3,76 +3,139 @@
 
 use tauri::{Manager, PhysicalPosition};
 use tauri::tray::{TrayIconBuilder, MouseButton, MouseButtonState};
-use tauri::menu::{Menu, MenuItem};
 
 mod audio_management;
 mod hardware_input;
 mod simvar_input;
+mod native_menu;
+
+/// Resize window to fit content width
+#[tauri::command]
+fn resize_window_to_content(app: tauri::AppHandle, session_count: usize) -> Result<String, String> {
+    // Calculate width based on number of sessions
+    // Each channel strip is ~90px + 12px gap, plus 24px padding on sides
+    let base_width = 24; // Left + right padding
+    let channel_width = 90; // Width per channel
+    let gap_width = 12; // Gap between channels
+    
+    let calculated_width = if session_count > 0 {
+        base_width + (channel_width * session_count as u32) + (gap_width * (session_count.saturating_sub(1)) as u32)
+    } else {
+        400 // Default width if no sessions
+    };
+    
+    // Clamp width to reasonable bounds (min 400px, max 1200px)
+    let new_width = calculated_width.clamp(400, 1200);
+    let height = 600; // Keep height constant
+    
+    if let Some(window) = app.get_webview_window("main") {
+        if let Ok(current_size) = window.outer_size() {
+            if current_size.width != new_width {
+                let _ = window.set_size(tauri::Size::Physical(tauri::PhysicalSize {
+                    width: new_width,
+                    height,
+                }));
+                
+                // Re-position window after resize to keep it bottom-right
+                position_window_bottom_right(&window);
+                
+                return Ok(format!("Window resized to {}px width for {} session(s)", new_width, session_count));
+            }
+        }
+    }
+    
+    Ok("Window size unchanged".to_string())
+}
+
+/// Show the main application window
+#[tauri::command]
+fn show_main_window(app: tauri::AppHandle) -> Result<(), String> {
+    if let Some(window) = app.get_webview_window("main") {
+        position_window_bottom_right(&window);
+        let _ = window.show();
+        let _ = window.set_focus();
+        Ok(())
+    } else {
+        Err("Main window not found".to_string())
+    }
+}
+
+/// Hide the main application window
+#[tauri::command]
+fn hide_main_window(app: tauri::AppHandle) -> Result<(), String> {
+    if let Some(window) = app.get_webview_window("main") {
+        let _ = window.hide();
+        Ok(())
+    } else {
+        Err("Main window not found".to_string())
+    }
+}
+
+/// Toggle pin on top for main window
+#[tauri::command]
+fn toggle_pin_window(app: tauri::AppHandle) -> Result<(), String> {
+    if let Some(window) = app.get_webview_window("main") {
+        position_window_bottom_right(&window);
+        let _ = window.show();
+        let _ = window.set_focus();
+        
+        let current_state = window.is_always_on_top().unwrap_or(false);
+        let _ = window.set_always_on_top(!current_state);
+        Ok(())
+    } else {
+        Err("Main window not found".to_string())
+    }
+}
+
+/// Quit the application
+#[tauri::command]
+fn quit_application() {
+    std::process::exit(0);
+}
 
 fn main() {
     tauri::Builder::default()
         .setup(|app| {
-            // Create tray menu
-            let show_i = MenuItem::with_id(app, "show", "Show ClearComms", true, None::<&str>)?;
-            let hide_i = MenuItem::with_id(app, "hide", "Hide ClearComms", true, None::<&str>)?;
-            let pin_i = MenuItem::with_id(app, "pin", "Pin on top", true, None::<&str>)?;
-            let quit_i = MenuItem::with_id(app, "quit", "Quit", true, None::<&str>)?;
-            
-            let menu = Menu::with_items(app, &[&show_i, &hide_i, &pin_i, &quit_i])?;
-            
-            // Build tray icon
+            // Build tray icon without menu (we'll use custom window)
             let _tray = TrayIconBuilder::new()
                 .icon(app.default_window_icon().unwrap().clone())
-                .menu(&menu)
                 .tooltip("ClearComms - Aviation Audio Control")
-                .on_menu_event(|app, event| {
-                    match event.id.as_ref() {
-                        "show" => {
+                .on_tray_icon_event(|tray, event| {
+                    let app = tray.app_handle();
+                    
+                    match event {
+                        tauri::tray::TrayIconEvent::Click {
+                            button: MouseButton::Left,
+                            button_state: MouseButtonState::Up,
+                            ..
+                        } => {
+                            // Left click: Toggle main window
                             if let Some(window) = app.get_webview_window("main") {
-                                position_window_bottom_right(&window);
-                                let _ = window.show();
-                                let _ = window.set_focus();
+                                if window.is_visible().unwrap_or(false) {
+                                    let _ = window.hide();
+                                } else {
+                                    position_window_bottom_right(&window);
+                                    let _ = window.show();
+                                    let _ = window.set_focus();
+                                }
                             }
                         }
-                        "hide" => {
-                            if let Some(window) = app.get_webview_window("main") {
-                                let _ = window.hide();
+                        tauri::tray::TrayIconEvent::Click {
+                            button: MouseButton::Right,
+                            button_state: MouseButtonState::Up,
+                            position,
+                            ..
+                        } => {
+                            // Show native Windows context menu
+                            let app_clone = app.clone();
+                            let x = position.x as i32;
+                            let y = position.y as i32;
+                            
+                            if let Err(e) = native_menu::show_native_context_menu(&app_clone, x, y) {
+                                eprintln!("[Tray] Error showing native menu: {}", e);
                             }
-                        }
-                        "pin" => {
-                            if let Some(window) = app.get_webview_window("main") {
-                                // Show and position window
-                                position_window_bottom_right(&window);
-                                let _ = window.show();
-                                let _ = window.set_focus();
-                                
-                                // Toggle always_on_top state
-                                let current_state = window.is_always_on_top().unwrap_or(false);
-                                let _ = window.set_always_on_top(!current_state);
-                            }
-                        }
-                        "quit" => {
-                            std::process::exit(0);
                         }
                         _ => {}
-                    }
-                })
-                .on_tray_icon_event(|tray, event| {
-                    if let tauri::tray::TrayIconEvent::Click {
-                        button: MouseButton::Left,
-                        button_state: MouseButtonState::Up,
-                        ..
-                    } = event {
-                        let app = tray.app_handle();
-                        if let Some(window) = app.get_webview_window("main") {
-                            if window.is_visible().unwrap_or(false) {
-                                let _ = window.hide();
-                            } else {
-                                position_window_bottom_right(&window);
-                                let _ = window.show();
-                                let _ = window.set_focus();
-                            }
-                        }
                     }
                 })
                 .build(app)?;
@@ -105,6 +168,11 @@ fn main() {
             audio_management::get_audio_sessions,
             audio_management::set_session_volume,
             audio_management::set_session_mute,
+            resize_window_to_content,
+            show_main_window,
+            hide_main_window,
+            toggle_pin_window,
+            quit_application,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

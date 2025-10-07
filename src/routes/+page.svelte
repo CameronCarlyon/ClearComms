@@ -163,9 +163,21 @@
       sessions.forEach(s => {
         console.log(`  - ${s.process_name} (${s.display_name}) [PID: ${s.process_id}]`);
       });
+      
+      // Resize window to fit sessions
+      await resizeWindowToFit(sessions.length);
     } catch (error) {
       console.error("[ClearComms] Error getting audio sessions:", error);
       errorMsg = `Audio error: ${error}`;
+    }
+  }
+
+  async function resizeWindowToFit(sessionCount: number) {
+    try {
+      const result = await invoke<string>("resize_window_to_content", { sessionCount });
+      console.log(`[ClearComms] ${result}`);
+    } catch (error) {
+      console.error("[ClearComms] Error resizing window:", error);
     }
   }
 
@@ -541,6 +553,12 @@
       <p class="status-text">Initialising...</p>
     {/if}
   </section>
+
+  <footer>
+    <p style="font-size: 0.8rem; color: var(--text-muted); text-align: center; margin-top: 20px;">
+      Crafted by Cameron Carlyon | &copy; 2025
+    </p>
+  </footer>
 </main>
 
 <style>
@@ -555,6 +573,7 @@
     padding: 12px;
     min-height: 100vh;
     max-width: 100%;
+    overflow-x: hidden; /* Hide horizontal overflow since window resizes to fit */
     overflow-y: auto;
     background: var(--bg-primary);
   }
@@ -654,7 +673,7 @@
     flex-direction: row;
     gap: 12px;
     padding: 8px;
-    overflow-x: auto;
+    overflow-x: visible; /* No scroll needed since window resizes */
     overflow-y: visible;
   }
 
