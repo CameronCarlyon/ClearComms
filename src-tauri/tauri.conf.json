@@ -15,7 +15,7 @@
         "title": "ClearComms",
         "label": "main",
         "width": 400,
-        "height": 600,
+        "height": 520,
         "resizable": true,
         "fullscreen": false,
         "decorations": true,

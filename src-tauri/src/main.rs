@@ -9,39 +9,41 @@ mod hardware_input;
 mod simvar_input;
 mod native_menu;
 
-/// Resize window to fit content width
+/// Resize window to fit content width and height
 #[tauri::command]
 fn resize_window_to_content(app: tauri::AppHandle, session_count: usize) -> Result<String, String> {
     // Calculate width based on number of sessions
     // Each channel strip is ~90px + 12px gap, plus 24px padding on sides
-    let base_width = 24; // Left + right padding
+    let base_width = 48; // Left + right padding (24px each)
     let channel_width = 90; // Width per channel
     let gap_width = 12; // Gap between channels
     
-    let calculated_width = if session_count > 0 {
+    let content_width = if session_count > 0 {
         base_width + (channel_width * session_count as u32) + (gap_width * (session_count.saturating_sub(1)) as u32)
     } else {
         400 // Default width if no sessions
     };
     
-    // Clamp width to reasonable bounds (min 400px, max 1200px)
-    let new_width = calculated_width.clamp(400, 1200);
-    let height = 600; // Keep height constant
+    // Clamp width to reasonable bounds (min 400px, max 1400px to handle many apps)
+    let new_width = content_width.clamp(400, 1400);
+    
+    // Calculate height based on content
+    // Header: ~70px
+    // Channel strip: ~380px (fader 180px + buttons + spacing)
+    // Footer: ~50px
+    // Total with padding: ~520px
+    let new_height = 520;
     
     if let Some(window) = app.get_webview_window("main") {
-        if let Ok(current_size) = window.outer_size() {
-            if current_size.width != new_width {
-                let _ = window.set_size(tauri::Size::Physical(tauri::PhysicalSize {
-                    width: new_width,
-                    height,
-                }));
-                
-                // Re-position window after resize to keep it bottom-right
-                position_window_bottom_right(&window);
-                
-                return Ok(format!("Window resized to {}px width for {} session(s)", new_width, session_count));
-            }
-        }
+        let _ = window.set_size(tauri::Size::Physical(tauri::PhysicalSize {
+            width: new_width,
+            height: new_height,
+        }));
+        
+        // Re-position window after resize to keep it bottom-right with proper padding
+        position_window_bottom_right(&window);
+        
+        return Ok(format!("Window resized to {}x{} for {} session(s)", new_width, new_height, session_count));
     }
     
     Ok("Window size unchanged".to_string())
@@ -186,9 +188,24 @@ fn position_window_bottom_right(window: &tauri::WebviewWindow) {
         if let Ok(window_size) = window.outer_size() {
             let screen_size = monitor.size();
             
-            // Calculate position: bottom-right with 20px padding
-            let x = screen_size.width as i32 - window_size.width as i32 - 20;
-            let y = screen_size.height as i32 - window_size.height as i32 - 60; // Extra padding for taskbar
+            // Work with physical pixels
+            let screen_width = screen_size.width as i32;
+            let screen_height = screen_size.height as i32;
+            let window_width = window_size.width as i32;
+            let window_height = window_size.height as i32;
+            
+            // Padding from edges (in physical pixels)
+            let padding = 18;
+            
+            // Windows taskbar height (typically 48-72px in physical pixels depending on scaling)
+            // For 150% scaling on 4K: taskbar is ~72px in physical pixels
+            let taskbar_height = 72;
+            
+            let x = screen_width - window_width - padding;
+            let y = screen_height - window_height - taskbar_height - padding;
+            
+            println!("Screen: {}x{}, Window: {}x{}, Position: ({}, {}), Taskbar: {}", 
+                     screen_width, screen_height, window_width, window_height, x, y, taskbar_height);
             
             let position = PhysicalPosition::new(x, y);
             let _ = window.set_position(position);

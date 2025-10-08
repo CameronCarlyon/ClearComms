@@ -55,6 +55,46 @@
   let previousAxisValues: Map<string, Record<string, number>> = new Map();
   let previousButtonStates: Map<string, Record<string, boolean>> = new Map();
   let errorMsg = $state("");
+  let isEditMode = $state(false);
+
+  // Computed: Get sessions with bindings (axis OR button mappings)
+  $effect(() => {
+    const boundSessionIds = new Set([
+      ...axisMappings.map(m => m.sessionId),
+      ...buttonMappings.map(m => m.sessionId)
+    ]);
+    
+    // Trigger window resize based on bound session count + edit mode ghost column
+    const displayCount = isEditMode ? boundSessionIds.size + 1 : boundSessionIds.size;
+    if (audioInitialised && displayCount > 0) {
+      resizeWindowToFit(displayCount);
+    }
+  });
+
+  // Computed: Get bound audio sessions
+  function getBoundSessions(): AudioSession[] {
+    const boundSessionIds = new Set([
+      ...axisMappings.map(m => m.sessionId),
+      ...buttonMappings.map(m => m.sessionId)
+    ]);
+    
+    return audioSessions.filter(s => boundSessionIds.has(s.session_id));
+  }
+
+  // Computed: Get available (unbound) audio sessions for dropdown
+  function getAvailableSessions(): AudioSession[] {
+    const boundSessionIds = new Set([
+      ...axisMappings.map(m => m.sessionId),
+      ...buttonMappings.map(m => m.sessionId)
+    ]);
+    
+    return audioSessions.filter(s => !boundSessionIds.has(s.session_id));
+  }
+
+  function toggleEditMode() {
+    isEditMode = !isEditMode;
+    console.log(`[ClearComms] Edit mode: ${isEditMode ? 'ON' : 'OFF'}`);
+  }
 
   // Auto-initialise on component mount
   onMount(async () => {
@@ -463,15 +503,29 @@
   <section class="audio-section">
     <div class="section-header">
       <h2>Audio Mixer</h2>
-      <button class="icon-btn" onclick={refreshAudioSessions} disabled={!audioInitialised} title="Refresh Sessions">
-        🔄
-      </button>
+      <div class="header-actions">
+        <button 
+          class="edit-mode-btn" 
+          class:active={isEditMode}
+          onclick={toggleEditMode} 
+          disabled={!audioInitialised}
+          title={isEditMode ? 'Exit Edit Mode' : 'Edit Bindings'}
+        >
+          {isEditMode ? '✓ Done' : '✏️ Edit'}
+        </button>
+        <button class="icon-btn" onclick={refreshAudioSessions} disabled={!audioInitialised} title="Refresh Sessions">
+          🔄
+        </button>
+      </div>
     </div>
 
     {#if audioInitialised}
-      {#if audioSessions.length > 0}
+      {@const boundSessions = getBoundSessions()}
+      {@const availableSessions = getAvailableSessions()}
+      
+      {#if boundSessions.length > 0 || isEditMode}
         <div class="mixer-container">
-          {#each audioSessions as session (session.session_id)}
+          {#each boundSessions as session (session.session_id)}
             {@const mapping = axisMappings.find(m => m.sessionId === session.session_id)}
             {@const buttonMapping = buttonMappings.find(m => m.sessionId === session.session_id)}
             
@@ -545,9 +599,49 @@
               </div>
             </div>
           {/each}
+
+          <!-- Ghost Column (Add New Binding) - Only in Edit Mode -->
+          {#if isEditMode}
+            <div class="channel-strip ghost-column">
+              <div class="channel-name">
+                <span class="app-name ghost">Add Binding</span>
+              </div>
+
+              <div class="ghost-content">
+                {#if availableSessions.length > 0}
+                  <select class="app-dropdown" onchange={(e) => {
+                    const sessionId = (e.target as HTMLSelectElement).value;
+                    if (sessionId) {
+                      const session = audioSessions.find(s => s.session_id === sessionId);
+                      if (session) {
+                        startAxisBinding(session.session_id, session.display_name);
+                      }
+                      (e.target as HTMLSelectElement).value = '';
+                    }
+                  }}>
+                    <option value="">Select App...</option>
+                    {#each availableSessions as session}
+                      <option value={session.session_id}>{session.process_name}</option>
+                    {/each}
+                  </select>
+                  <p class="ghost-hint">Select an app to bind volume control</p>
+                {:else}
+                  <p class="ghost-hint empty">All apps are bound</p>
+                {/if}
+              </div>
+            </div>
+          {/if}
         </div>
       {:else}
-        <p class="status-text">No active audio sessions</p>
+        <p class="status-text">
+          {#if isEditMode && availableSessions.length > 0}
+            Click "Add Binding" to bind your first application
+          {:else if isEditMode}
+            No active audio sessions available
+          {:else}
+            No bound applications. Click "Edit" to add bindings.
+          {/if}
+        </p>
       {/if}
     {:else}
       <p class="status-text">Initialising...</p>
@@ -634,6 +728,40 @@
     margin-bottom: 12px;
   }
 
+  .header-actions {
+    display: flex;
+    gap: 8px;
+    align-items: center;
+  }
+
+  .edit-mode-btn {
+    padding: 6px 12px;
+    background: rgba(36, 200, 219, 0.1);
+    border: 1px solid rgba(36, 200, 219, 0.3);
+    border-radius: 6px;
+    cursor: pointer;
+    font-size: 0.85rem;
+    font-weight: 500;
+    color: var(--text-primary);
+    transition: all 0.2s;
+  }
+
+  .edit-mode-btn:hover:not(:disabled) {
+    background: rgba(36, 200, 219, 0.2);
+    transform: translateY(-1px);
+  }
+
+  .edit-mode-btn.active {
+    background: rgba(36, 200, 219, 0.25);
+    border-color: rgba(36, 200, 219, 0.5);
+    color: var(--accent-primary);
+  }
+
+  .edit-mode-btn:disabled {
+    opacity: 0.4;
+    cursor: not-allowed;
+  }
+
   h2 {
     margin: 0;
     font-size: 1rem;
@@ -701,6 +829,70 @@
     background: var(--bg-card-mapped);
     border-color: rgba(36, 200, 219, 0.4);
     box-shadow: 0 0 12px rgba(36, 200, 219, 0.15);
+  }
+
+  /* ===== GHOST COLUMN ===== */
+  .channel-strip.ghost-column {
+    background: rgba(136, 136, 136, 0.05);
+    border: 2px dashed rgba(136, 136, 136, 0.3);
+    min-height: 300px;
+    justify-content: flex-start;
+  }
+
+  .channel-strip.ghost-column:hover {
+    background: rgba(136, 136, 136, 0.08);
+    border-color: rgba(136, 200, 219, 0.4);
+    transform: none;
+  }
+
+  .ghost-content {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 12px;
+    padding: 12px 0;
+    width: 100%;
+  }
+
+  .app-dropdown {
+    width: 100%;
+    padding: 8px;
+    background: var(--bg-secondary);
+    border: 1px solid var(--border-color);
+    border-radius: 6px;
+    color: var(--text-primary);
+    font-size: 0.75rem;
+    cursor: pointer;
+    transition: all 0.2s;
+  }
+
+  .app-dropdown:hover {
+    border-color: rgba(36, 200, 219, 0.5);
+    background: var(--bg-card);
+  }
+
+  .app-dropdown:focus {
+    outline: none;
+    border-color: var(--accent-primary);
+    box-shadow: 0 0 0 2px rgba(36, 200, 219, 0.2);
+  }
+
+  .ghost-hint {
+    font-size: 0.65rem;
+    color: var(--text-muted);
+    text-align: center;
+    margin: 0;
+    padding: 0 8px;
+    line-height: 1.3;
+  }
+
+  .ghost-hint.empty {
+    color: rgba(136, 136, 136, 0.6);
+  }
+
+  .channel-name .app-name.ghost {
+    color: var(--text-muted);
+    font-weight: 500;
   }
 
   /* ===== CHANNEL NAME ===== */

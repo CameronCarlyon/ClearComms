@@ -122,24 +122,24 @@ fn position_window_bottom_right(window: &tauri::WebviewWindow) {
     use tauri::PhysicalPosition;
     
     if let Ok(Some(monitor)) = window.primary_monitor() {
-        let screen_size = monitor.size();
-        let scale_factor = monitor.scale_factor();
-        
-        // Use logical pixels (scaled for DPI)
-        let logical_width = (screen_size.width as f64 / scale_factor) as i32;
-        let logical_height = (screen_size.height as f64 / scale_factor) as i32;
-        
-        // Get window size
         if let Ok(window_size) = window.outer_size() {
-            let window_width = (window_size.width as f64 / scale_factor) as i32;
-            let window_height = (window_size.height as f64 / scale_factor) as i32;
+            let screen_size = monitor.size();
             
-            // Position in bottom-right corner with padding
-            let taskbar_height = 48; // Standard Windows 11 taskbar
-            let padding = 12;
+            // Work with physical pixels
+            let screen_width = screen_size.width as i32;
+            let screen_height = screen_size.height as i32;
+            let window_width = window_size.width as i32;
+            let window_height = window_size.height as i32;
             
-            let x = logical_width - window_width - padding;
-            let y = logical_height - window_height - taskbar_height - padding;
+            // Padding from edges (in physical pixels)
+            let padding = 18;
+            
+            // Windows taskbar height (typically 48-72px in physical pixels depending on scaling)
+            // For 150% scaling on 4K: taskbar is ~72px in physical pixels
+            let taskbar_height = 72;
+            
+            let x = screen_width - window_width - padding;
+            let y = screen_height - window_height - taskbar_height - padding;
             
             let position = PhysicalPosition::new(x, y);
             let _ = window.set_position(position);
