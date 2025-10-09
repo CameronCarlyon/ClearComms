@@ -31,8 +31,8 @@ fn resize_window_to_content(app: tauri::AppHandle, session_count: usize) -> Resu
     // Header: ~70px
     // Channel strip: ~380px (fader 180px + buttons + spacing)
     // Footer: ~50px
-    // Total with padding: ~520px
-    let new_height = 520;
+    // Total with padding: ~800px
+    let new_height = 1000;
     
     if let Some(window) = app.get_webview_window("main") {
         let _ = window.set_size(tauri::Size::Physical(tauri::PhysicalSize {
@@ -98,6 +98,15 @@ fn quit_application() {
 fn main() {
     tauri::Builder::default()
         .setup(|app| {
+            // Get main window and position it
+            if let Some(window) = app.get_webview_window("main") {
+                // Position window in bottom-right corner
+                position_window_bottom_right(&window);
+                
+                // Don't show window on startup (starts in tray)
+                let _ = window.hide();
+            }
+            
             // Build tray icon without menu (we'll use custom window)
             let _tray = TrayIconBuilder::new()
                 .icon(app.default_window_icon().unwrap().clone())
