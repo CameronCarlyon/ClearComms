@@ -690,6 +690,7 @@
     display: flex;
     flex-direction: column;
     position: relative;
+    border-radius: 20px;
   }
 
   /* Main glass content - inset from edges */
