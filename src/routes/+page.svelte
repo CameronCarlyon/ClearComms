@@ -64,9 +64,12 @@
       ...buttonMappings.map(m => m.sessionId)
     ]);
     
-    // Trigger window resize based on bound session count + edit mode ghost column
-    const displayCount = isEditMode ? boundSessionIds.size + 1 : boundSessionIds.size;
-    if (audioInitialised && displayCount > 0) {
+    // Calculate display count: bound sessions + ghost column (if in edit mode)
+    const boundCount = boundSessionIds.size;
+    const displayCount = isEditMode ? boundCount + 1 : boundCount;
+    
+    // Resize window to fit displayed columns (including ghost when in edit mode)
+    if (audioInitialised) {
       resizeWindowToFit(displayCount);
     }
   });
@@ -208,8 +211,7 @@
         console.log(`  - ${s.process_name} (${s.display_name}) [PID: ${s.process_id}]`);
       });
       
-      // Resize window to fit sessions
-      await resizeWindowToFit(sessions.length);
+      // Window will be resized by the $effect that watches axisMappings/buttonMappings
     } catch (error) {
       console.error("[ClearComms] Error getting audio sessions:", error);
       errorMsg = `Audio error: ${error}`;
@@ -498,7 +500,7 @@
       <div class="status-indicator" class:ready={initStatus === 'Ready'} class:failed={initStatus === 'Failed'}>
         {initStatus}
       </div>
-      <button class="window-control-btn close" onclick={quitApplication} title="Quit">
+      <button class="btn btn-round btn-close" onclick={quitApplication} title="Quit">
         ✕
       </button>
     </div>
@@ -514,7 +516,7 @@
       <h2>Audio Mixer</h2>
       <div class="header-actions">
         <button 
-          class="edit-mode-btn" 
+          class="btn btn-pill btn-edit" 
           class:active={isEditMode}
           onclick={toggleEditMode} 
           disabled={!audioInitialised}
@@ -522,7 +524,7 @@
         >
           {isEditMode ? '✓ Done' : '✏️ Edit'}
         </button>
-        <button class="icon-btn" onclick={refreshAudioSessions} disabled={!audioInitialised} title="Refresh Sessions">
+        <button class="btn btn-round btn-icon" onclick={refreshAudioSessions} disabled={!audioInitialised} title="Refresh Sessions">
           🔄
         </button>
       </div>
@@ -540,28 +542,24 @@
             
             <div class="channel-strip" class:has-mapping={!!mapping || !!buttonMapping}>
               <!-- Application Name -->
-              <div class="channel-name">
-                <span class="app-name" title={session.display_name}>{session.process_name}</span>
-              </div>
+              <span class="app-name" title={session.display_name}>{session.process_name}</span>
 
               <!-- Vertical Volume Slider -->
-              <div class="fader-container">
-                <input
-                  type="range"
-                  class="vertical-slider"
-                  min="0"
-                  max="1"
-                  step="0.01"
-                  value={session.volume}
-                  disabled={!!mapping}
-                  onchange={(e) => setSessionVolume(session.session_id, parseFloat((e.target as HTMLInputElement).value))}
-                />
-                <span class="volume-readout">{(session.volume * 100).toFixed(0)}%</span>
-              </div>
+              <input
+                type="range"
+                class="vertical-slider"
+                min="0"
+                max="1"
+                step="0.01"
+                value={session.volume}
+                disabled={!!mapping}
+                onchange={(e) => setSessionVolume(session.session_id, parseFloat((e.target as HTMLInputElement).value))}
+              />
+              <span class="volume-readout">{(session.volume * 100).toFixed(0)}%</span>
 
               <!-- Mute Button -->
               <button
-                class="channel-mute-btn"
+                class="btn btn-round btn-channel btn-mute"
                 class:muted={session.is_muted}
                 onclick={() => setSessionMute(session.session_id, !session.is_muted)}
                 title={session.is_muted ? 'Unmute' : 'Mute'}
@@ -570,74 +568,66 @@
               </button>
 
               <!-- Axis Binding Control -->
-              <div class="channel-binding">
-                {#if mapping}
-                  <div class="mapping-badge" title="Volume: {mapping.axisName}">
-                    <span>🎮</span>
-                    <button class="remove-badge-btn" onclick={() => removeMapping(session.session_id)}>✕</button>
-                  </div>
-                {:else if isBindingMode && pendingBinding?.sessionId === session.session_id}
-                  <div class="binding-active">
-                    <span class="pulse">⏺</span>
-                    <button class="cancel-badge-btn" onclick={cancelBinding}>✕</button>
-                  </div>
-                {:else}
-                  <button class="bind-badge-btn" onclick={() => startAxisBinding(session.session_id, session.display_name)} title="Bind Volume Axis">
-                    🎮
-                  </button>
-                {/if}
-              </div>
+              {#if mapping}
+                <div class="mapping-badge" title="Volume: {mapping.axisName}">
+                  <span>🎮</span>
+                  <button class="btn btn-round btn-badge-small btn-badge-remove" onclick={() => removeMapping(session.session_id)}>✕</button>
+                </div>
+              {:else if isBindingMode && pendingBinding?.sessionId === session.session_id}
+                <div class="binding-active">
+                  <span class="pulse">⏺</span>
+                  <button class="btn btn-round btn-badge-small btn-badge-cancel" onclick={cancelBinding}>✕</button>
+                </div>
+              {:else}
+                <button class="btn btn-round btn-channel btn-bind" onclick={() => startAxisBinding(session.session_id, session.display_name)} title="Bind Volume Axis">
+                  🎮
+                </button>
+              {/if}
 
               <!-- Button Binding Control -->
-              <div class="channel-binding">
-                {#if buttonMapping}
-                  <div class="mapping-badge button" title="Mute: {buttonMapping.buttonName}">
-                    <span>🔘</span>
-                    <button class="remove-badge-btn" onclick={() => removeButtonMapping(session.session_id)}>✕</button>
-                  </div>
-                {:else if isButtonBindingMode && pendingButtonBinding?.sessionId === session.session_id}
-                  <div class="binding-active">
-                    <span class="pulse">⏺</span>
-                    <button class="cancel-badge-btn" onclick={cancelButtonBinding}>✕</button>
-                  </div>
-                {:else}
-                  <button class="bind-badge-btn button" onclick={() => startButtonBinding(session.session_id, session.display_name)} title="Bind Mute Button">
-                    🔘
-                  </button>
-                {/if}
-              </div>
+              {#if buttonMapping}
+                <div class="mapping-badge button" title="Mute: {buttonMapping.buttonName}">
+                  <span>🔘</span>
+                  <button class="btn btn-round btn-badge-small btn-badge-remove" onclick={() => removeButtonMapping(session.session_id)}>✕</button>
+                </div>
+              {:else if isButtonBindingMode && pendingButtonBinding?.sessionId === session.session_id}
+                <div class="binding-active">
+                  <span class="pulse">⏺</span>
+                  <button class="btn btn-round btn-badge-small btn-badge-cancel" onclick={cancelButtonBinding}>✕</button>
+                </div>
+              {:else}
+                <button class="btn btn-round btn-channel btn-bind" onclick={() => startButtonBinding(session.session_id, session.display_name)} title="Bind Mute Button">
+                  🔘
+                </button>
+              {/if}
             </div>
           {/each}
 
           <!-- Ghost Column (Add New Binding) - Only in Edit Mode -->
           {#if isEditMode}
             <div class="channel-strip ghost-column">
-              <div class="channel-name">
-                <span class="app-name ghost">Add Binding</span>
-              </div>
+              <span class="app-name ghost">Add Binding</span>
 
-              <div class="ghost-content">
-                {#if availableSessions.length > 0}
-                  <select class="app-dropdown" onchange={(e) => {
-                    const sessionId = (e.target as HTMLSelectElement).value;
-                    if (sessionId) {
-                      const session = audioSessions.find(s => s.session_id === sessionId);
-                      if (session) {
-                        startAxisBinding(session.session_id, session.display_name);
-                      }
-                      (e.target as HTMLSelectElement).value = '';
+              {#if availableSessions.length > 0}
+                <select class="app-dropdown" onchange={(e) => {
+                  const sessionId = (e.target as HTMLSelectElement).value;
+                  if (sessionId) {
+                    const session = audioSessions.find(s => s.session_id === sessionId);
+                    if (session) {
+                      startAxisBinding(session.session_id, session.display_name);
                     }
-                  }}>
-                    <option value="">Select App...</option>
-                    {#each availableSessions as session}
-                      <option value={session.session_id}>{session.process_name}</option>
-                    {/each}
-                  </select>
-                  <p class="ghost-hint">Select an app to bind volume control</p>
-                {:else}
-                  <p class="ghost-hint empty">All apps are bound</p>
-                {/if}
-              </div>
+                    (e.target as HTMLSelectElement).value = '';
+                  }
+                }}>
+                  <option value="">Select App...</option>
+                  {#each availableSessions as session}
+                    <option value={session.session_id}>{session.process_name}</option>
+                  {/each}
+                </select>
+                <p class="ghost-hint">Select an app to bind volume control</p>
+              {:else}
+                <p class="ghost-hint empty">All apps are bound</p>
+              {/if}
             </div>
           {/if}
         </div>
@@ -670,14 +660,15 @@
     font-size: 14px;
     line-height: 1.4;
     
-    /* iOS-style color palette */
-    --glass-bg: rgba(255, 255, 255, 0.08);
-    --glass-border: rgba(255, 255, 255, 0.12);
-    --glass-highlight: rgba(255, 255, 255, 0.15);
-    --shadow-light: rgba(0, 0, 0, 0.1);
-    --shadow-medium: rgba(0, 0, 0, 0.15);
-    --ios-blue: #007AFF;
-    --ios-tint: rgba(0, 122, 255, 0.15);
+    /* Monochrome color palette */
+    --bg-dark: #1a1a1a;
+    --bg-medium: #2a2a2a;
+    --bg-light: #3a3a3a;
+    --text-primary: #ffffff;
+    --text-secondary: #cccccc;
+    --text-muted: #888888;
+    --border-color: rgba(255, 255, 255, 0.1);
+    --shadow-soft: rgba(0, 0, 0, 0.3);
   }
 
   .container {
@@ -701,21 +692,15 @@
     left: 0;
     right: 0;
     bottom: 0;
-    background: linear-gradient(135deg, 
-      rgba(15, 23, 42, 0.95) 0%, 
-      rgba(30, 41, 59, 0.92) 50%, 
-      rgba(15, 23, 42, 0.95) 100%
-    );
-    backdrop-filter: blur(40px);
-    -webkit-backdrop-filter: blur(40px);
+    background: rgba(26, 26, 26, 0.92);
     border-radius: 20px;
     box-shadow: 
-      0 0 0 1px rgba(255, 255, 255, 0.05),
-      0 20px 60px rgba(0, 0, 0, 0.5);
+      0 0 0 1px rgba(255, 255, 255, 0.08),
+      0 20px 60px var(--shadow-soft);
     z-index: 0;
   }
 
-  /* Liquid glass overlay effect */
+  /* Clean overlay */
   .container::after {
     content: '';
     position: absolute;
@@ -723,9 +708,6 @@
     left: 0;
     right: 0;
     bottom: 0;
-    background: 
-      radial-gradient(circle at 20% 30%, rgba(0, 122, 255, 0.08) 0%, transparent 50%),
-      radial-gradient(circle at 80% 70%, rgba(36, 200, 219, 0.08) 0%, transparent 50%);
     pointer-events: none;
     z-index: 1;
     border-radius: 20px;
@@ -749,14 +731,9 @@
     margin-bottom: 12px;
     padding-top: 12px;
     padding-bottom: 12px;
-    background: var(--glass-bg);
-    backdrop-filter: blur(20px);
-    -webkit-backdrop-filter: blur(20px);
-    border-radius: 16px;
-    border: 1px solid var(--glass-border);
-    box-shadow: 
-      0 4px 16px var(--shadow-light),
-      inset 0 1px 0 rgba(255, 255, 255, 0.1);
+    background: var(--bg-medium);
+    border-radius: 12px;
+    border: 1px solid var(--border-color);
   }
 
   .header-right {
@@ -769,40 +746,48 @@
     margin: 0;
     font-size: 1.3rem;
     font-weight: 600;
-    color: #ffffff;
+    color: var(--text-primary);
     letter-spacing: -0.3px;
   }
 
-  .window-control-btn {
-    width: 32px;
-    height: 32px;
+  /* ===== BASE BUTTON STYLES ===== */
+  .btn {
     padding: 0;
-    background: var(--glass-bg);
-    backdrop-filter: blur(10px);
-    -webkit-backdrop-filter: blur(10px);
-    border: 1px solid var(--glass-border);
-    color: #ffffff;
-    font-size: 1rem;
-    font-weight: 300;
+    background: var(--text-primary);
+    border: none;
+    color: var(--bg-dark);
     cursor: pointer;
+    transition: all 0.2s ease;
     display: flex;
     align-items: center;
     justify-content: center;
-    border-radius: 50%;
-    transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
-    box-shadow: 0 2px 8px var(--shadow-light);
   }
 
-  .window-control-btn:hover {
-    background: rgba(255, 59, 48, 0.8);
-    border-color: rgba(255, 59, 48, 1);
-    color: white;
-    transform: scale(1.08);
-    box-shadow: 0 4px 12px rgba(255, 59, 48, 0.4);
+  .btn:disabled {
+    opacity: 0.3;
+    cursor: not-allowed;
   }
 
-  .window-control-btn:active {
+  .btn:active:not(:disabled) {
     transform: scale(0.95);
+  }
+
+  /* Round button variant */
+  .btn-round {
+    border-radius: 50%;
+  }
+
+  /* Pill button variant */
+  .btn-pill {
+    border-radius: 20px;
+  }
+
+  /* Window control button */
+  .btn-close {
+    width: 32px;
+    height: 32px;
+    font-size: 1rem;
+    font-weight: 600;
   }
 
   .status-indicator {
@@ -810,44 +795,32 @@
     border-radius: 20px;
     font-size: 0.75rem;
     font-weight: 600;
-    background: var(--glass-bg);
-    backdrop-filter: blur(10px);
-    -webkit-backdrop-filter: blur(10px);
-    border: 1px solid var(--glass-border);
-    color: rgba(255, 255, 255, 0.7);
-    box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.1);
+    background: var(--bg-light);
+    border: 1px solid var(--border-color);
+    color: var(--text-secondary);
   }
 
   .status-indicator.ready {
-    background: rgba(52, 199, 89, 0.15);
-    border-color: rgba(52, 199, 89, 0.3);
-    color: #34C759;
-    box-shadow: 
-      0 2px 8px rgba(52, 199, 89, 0.2),
-      inset 0 1px 0 rgba(255, 255, 255, 0.1);
+    background: var(--text-primary);
+    border-color: var(--text-primary);
+    color: var(--bg-dark);
   }
 
   .status-indicator.failed {
-    background: rgba(255, 59, 48, 0.15);
-    border-color: rgba(255, 59, 48, 0.3);
-    color: #FF3B30;
-    box-shadow: 
-      0 2px 8px rgba(255, 59, 48, 0.2),
-      inset 0 1px 0 rgba(255, 255, 255, 0.1);
+    background: var(--bg-light);
+    border-color: var(--text-muted);
+    color: var(--text-muted);
   }
 
   .error-banner {
     padding: 10px 14px;
     margin-bottom: 12px;
-    background: rgba(255, 59, 48, 0.12);
-    backdrop-filter: blur(10px);
-    -webkit-backdrop-filter: blur(10px);
-    border: 1px solid rgba(255, 59, 48, 0.3);
+    background: var(--bg-medium);
+    border: 1px solid var(--border-color);
     border-radius: 12px;
-    color: #FF3B30;
+    color: var(--text-primary);
     font-size: 0.85rem;
     font-weight: 500;
-    box-shadow: 0 2px 8px rgba(255, 59, 48, 0.15);
   }
 
   .audio-section {
@@ -863,21 +836,16 @@
     align-items: center;
     margin-bottom: 12px;
     padding: 12px 16px;
-    background: var(--glass-bg);
-    backdrop-filter: blur(20px);
-    -webkit-backdrop-filter: blur(20px);
-    border-radius: 16px;
-    border: 1px solid var(--glass-border);
-    box-shadow: 
-      0 4px 16px var(--shadow-light),
-      inset 0 1px 0 rgba(255, 255, 255, 0.1);
+    background: var(--bg-medium);
+    border-radius: 12px;
+    border: 1px solid var(--border-color);
   }
 
   h2 {
     margin: 0;
     font-size: 1rem;
     font-weight: 600;
-    color: #ffffff;
+    color: var(--text-primary);
     letter-spacing: -0.2px;
   }
 
@@ -887,76 +855,23 @@
     align-items: center;
   }
 
-  .edit-mode-btn {
+  /* Edit mode button */
+  .btn-edit {
     padding: 7px 14px;
-    background: var(--glass-bg);
-    backdrop-filter: blur(10px);
-    -webkit-backdrop-filter: blur(10px);
-    border: 1px solid var(--glass-border);
-    border-radius: 20px;
-    cursor: pointer;
     font-size: 0.85rem;
     font-weight: 600;
-    color: rgba(255, 255, 255, 0.9);
-    transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
-    box-shadow: 0 2px 8px var(--shadow-light);
   }
 
-  .edit-mode-btn:hover:not(:disabled) {
-    background: var(--ios-tint);
-    border-color: rgba(0, 122, 255, 0.4);
-    color: var(--ios-blue);
-    transform: translateY(-1px);
-    box-shadow: 0 4px 12px rgba(0, 122, 255, 0.2);
-  }
-
-  .edit-mode-btn.active {
-    background: var(--ios-tint);
-    border-color: rgba(0, 122, 255, 0.5);
-    color: var(--ios-blue);
-    box-shadow: 
-      0 2px 8px rgba(0, 122, 255, 0.25),
-      inset 0 1px 0 rgba(255, 255, 255, 0.2);
-  }
-
-  .edit-mode-btn:disabled {
-    opacity: 0.4;
-    cursor: not-allowed;
-  }
-
-  .icon-btn {
+  /* Icon button */
+  .btn-icon {
     width: 34px;
     height: 34px;
-    padding: 0;
-    background: var(--glass-bg);
-    backdrop-filter: blur(10px);
-    -webkit-backdrop-filter: blur(10px);
-    border: 1px solid var(--glass-border);
-    border-radius: 50%;
-    cursor: pointer;
     font-size: 1rem;
-    transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    box-shadow: 0 2px 8px var(--shadow-light);
-  }
-
-  .icon-btn:hover:not(:disabled) {
-    background: var(--ios-tint);
-    border-color: rgba(0, 122, 255, 0.4);
-    transform: scale(1.08);
-    box-shadow: 0 4px 12px rgba(0, 122, 255, 0.2);
-  }
-
-  .icon-btn:disabled {
-    opacity: 0.4;
-    cursor: not-allowed;
   }
 
   .status-text {
     text-align: center;
-    color: rgba(255, 255, 255, 0.6);
+    color: var(--text-secondary);
     font-size: 0.9rem;
     padding: 20px;
   }
@@ -966,7 +881,7 @@
     justify-content: center;
     align-items: center;
     padding: 16px;
-    color: rgba(255, 255, 255, 0.5);
+    color: var(--text-muted);
   }
 
   /* ===== MIXER LAYOUT ===== */
@@ -988,95 +903,49 @@
     padding: 16px 12px;
     min-width: 85px;
     max-width: 95px;
-    background: var(--glass-bg);
-    backdrop-filter: blur(20px);
-    -webkit-backdrop-filter: blur(20px);
-    border: 1px solid var(--glass-border);
-    border-radius: 20px;
-    transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
-    box-shadow: 
-      0 8px 24px var(--shadow-medium),
-      inset 0 1px 0 rgba(255, 255, 255, 0.1);
-  }
-
-  .channel-strip:hover {
-    background: var(--glass-highlight);
-    transform: translateY(-4px) scale(1.02);
-    box-shadow: 
-      0 12px 32px var(--shadow-medium),
-      inset 0 1px 0 rgba(255, 255, 255, 0.15);
-  }
-
-  .channel-strip.has-mapping {
-    background: rgba(0, 122, 255, 0.08);
-    border-color: rgba(0, 122, 255, 0.3);
-    box-shadow: 
-      0 8px 24px rgba(0, 122, 255, 0.15),
-      inset 0 1px 0 rgba(255, 255, 255, 0.1);
-  }
-
-  .channel-strip.has-mapping:hover {
-    box-shadow: 
-      0 12px 32px rgba(0, 122, 255, 0.25),
-      inset 0 1px 0 rgba(255, 255, 255, 0.15);
+    transition: all 0.2s ease;
   }
 
   /* ===== GHOST COLUMN ===== */
   .channel-strip.ghost-column {
-    background: rgba(255, 255, 255, 0.03);
-    border: 2px dashed rgba(255, 255, 255, 0.2);
+    background: transparent;
+    border: 2px dashed var(--border-color);
     min-height: 320px;
     justify-content: flex-start;
   }
 
   .channel-strip.ghost-column:hover {
-    background: rgba(255, 255, 255, 0.05);
-    border-color: rgba(0, 122, 255, 0.4);
-    transform: none;
-  }
-
-  .ghost-content {
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    gap: 12px;
-    padding: 12px 0;
-    width: 100%;
+    background: var(--bg-medium);
+    border-color: var(--text-secondary);
   }
 
   .app-dropdown {
     width: 100%;
     padding: 10px;
-    background: var(--glass-bg);
-    backdrop-filter: blur(10px);
-    -webkit-backdrop-filter: blur(10px);
-    border: 1px solid var(--glass-border);
-    border-radius: 12px;
-    color: rgba(255, 255, 255, 0.9);
+    margin-top: 12px;
+    background: var(--bg-light);
+    border: 1px solid var(--border-color);
+    border-radius: 8px;
+    color: var(--text-primary);
     font-size: 0.75rem;
     font-weight: 500;
     cursor: pointer;
-    transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
-    box-shadow: 0 2px 8px var(--shadow-light);
+    transition: all 0.2s ease;
   }
 
   .app-dropdown:hover {
-    border-color: rgba(0, 122, 255, 0.4);
-    background: var(--glass-highlight);
-    box-shadow: 0 4px 12px rgba(0, 122, 255, 0.15);
+    border-color: var(--text-secondary);
+    background: var(--bg-medium);
   }
 
   .app-dropdown:focus {
     outline: none;
-    border-color: rgba(0, 122, 255, 0.6);
-    box-shadow: 
-      0 0 0 3px rgba(0, 122, 255, 0.2),
-      0 4px 12px rgba(0, 122, 255, 0.2);
+    border-color: var(--text-primary);
   }
 
   .ghost-hint {
     font-size: 0.65rem;
-    color: rgba(255, 255, 255, 0.5);
+    color: var(--text-muted);
     text-align: center;
     margin: 0;
     padding: 0 8px;
@@ -1084,25 +953,17 @@
   }
 
   .ghost-hint.empty {
-    color: rgba(255, 255, 255, 0.3);
+    color: var(--border-color);
   }
 
-  .channel-name .app-name.ghost {
-    color: rgba(255, 255, 255, 0.5);
-    font-weight: 500;
-  }
-
-  /* ===== CHANNEL NAME ===== */
-  .channel-name {
+  /* ===== APP NAME ===== */
+  .app-name {
     width: 100%;
     text-align: center;
-    margin-bottom: 6px;
-  }
-
-  .channel-name .app-name {
+    margin-bottom: 12px;
     font-size: 0.8rem;
     font-weight: 700;
-    color: #ffffff;
+    color: var(--text-primary);
     display: block;
     white-space: nowrap;
     overflow: hidden;
@@ -1110,36 +971,32 @@
     letter-spacing: -0.2px;
   }
 
-  /* ===== VERTICAL SLIDER (Fader) ===== */
-  .fader-container {
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    gap: 10px;
-    margin: 10px 0;
+  .app-name.ghost {
+    color: var(--text-muted);
+    font-weight: 500;
   }
 
+  /* ===== VERTICAL SLIDER ===== */
   .vertical-slider {
     -webkit-appearance: slider-vertical;
     appearance: slider-vertical;
     writing-mode: bt-lr;
     width: 6px;
     height: 180px;
-    background: rgba(255, 255, 255, 0.1);
+    background: var(--bg-light);
     border-radius: 999px;
     outline: none;
     cursor: pointer;
     position: relative;
-    box-shadow: inset 0 2px 4px rgba(0, 0, 0, 0.2);
+    margin: 10px 0;
   }
 
   /* Chrome/Safari/Edge Vertical Slider */
   .vertical-slider::-webkit-slider-runnable-track {
     width: 6px;
     height: 180px;
-    background: rgba(255, 255, 255, 0.1);
+    background: var(--bg-light);
     border-radius: 999px;
-    box-shadow: inset 0 2px 4px rgba(0, 0, 0, 0.2);
   }
 
   .vertical-slider::-webkit-slider-thumb {
@@ -1148,53 +1005,33 @@
     width: 22px;
     height: 22px;
     border-radius: 50%;
-    background: linear-gradient(135deg, #ffffff 0%, #e0e0e0 100%);
+    background: var(--text-primary);
     cursor: pointer;
-    box-shadow: 
-      0 4px 12px rgba(0, 0, 0, 0.3),
-      inset 0 1px 0 rgba(255, 255, 255, 0.8);
-    transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+    transition: all 0.2s ease;
     margin-left: -8px;
   }
 
-  .vertical-slider::-webkit-slider-thumb:hover {
-    background: linear-gradient(135deg, #ffffff 0%, #f0f0f0 100%);
-    transform: scale(1.2);
-    box-shadow: 
-      0 6px 16px rgba(0, 0, 0, 0.4),
-      inset 0 1px 0 rgba(255, 255, 255, 1);
-  }
-
   .vertical-slider::-webkit-slider-thumb:active {
-    transform: scale(1.1);
+    transform: scale(1.05);
   }
 
   /* Firefox Vertical Slider */
   .vertical-slider::-moz-range-track {
     width: 6px;
     height: 180px;
-    background: rgba(255, 255, 255, 0.1);
+    background: var(--bg-light);
     border-radius: 999px;
     border: none;
-    box-shadow: inset 0 2px 4px rgba(0, 0, 0, 0.2);
   }
 
   .vertical-slider::-moz-range-thumb {
     width: 22px;
     height: 22px;
     border-radius: 50%;
-    background: linear-gradient(135deg, #ffffff 0%, #e0e0e0 100%);
+    background: var(--text-primary);
     cursor: pointer;
     border: none;
-    box-shadow: 
-      0 4px 12px rgba(0, 0, 0, 0.3),
-      inset 0 1px 0 rgba(255, 255, 255, 0.8);
-    transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
-  }
-
-  .vertical-slider::-moz-range-thumb:hover {
-    background: linear-gradient(135deg, #ffffff 0%, #f0f0f0 100%);
-    transform: scale(1.2);
+    transition: all 0.2s ease;
   }
 
   .vertical-slider:disabled {
@@ -1203,12 +1040,12 @@
   }
 
   .vertical-slider:disabled::-webkit-slider-thumb {
-    background: rgba(255, 255, 255, 0.3);
+    background: var(--text-muted);
     cursor: not-allowed;
   }
 
   .vertical-slider:disabled::-moz-range-thumb {
-    background: rgba(255, 255, 255, 0.3);
+    background: var(--text-muted);
     cursor: not-allowed;
   }
 
@@ -1221,207 +1058,100 @@
     letter-spacing: -0.3px;
   }
 
-  /* ===== MUTE BUTTON ===== */
-  .channel-mute-btn {
+  /* ===== CHANNEL BUTTONS ===== */
+  .btn-channel {
     width: 46px;
     height: 46px;
-    padding: 0;
-    background: var(--glass-bg);
-    backdrop-filter: blur(10px);
-    -webkit-backdrop-filter: blur(10px);
-    border: 1px solid var(--glass-border);
-    border-radius: 50%;
-    font-size: 1.4rem;
-    cursor: pointer;
-    transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    box-shadow: 0 4px 12px var(--shadow-light);
-  }
-
-  .channel-mute-btn:hover {
-    background: var(--glass-highlight);
-    transform: scale(1.12);
-    box-shadow: 0 6px 16px var(--shadow-medium);
-  }
-
-  .channel-mute-btn.muted {
-    background: rgba(255, 59, 48, 0.15);
-    border-color: rgba(255, 59, 48, 0.4);
-    box-shadow: 0 4px 12px rgba(255, 59, 48, 0.25);
-  }
-
-  .channel-mute-btn.muted:hover {
-    background: rgba(255, 59, 48, 0.25);
-    box-shadow: 0 6px 16px rgba(255, 59, 48, 0.35);
-  }
-
-  /* ===== BINDING BADGES ===== */
-  .channel-binding {
-    width: 46px;
-    height: 46px;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-  }
-
-  .bind-badge-btn {
-    width: 100%;
-    height: 100%;
-    padding: 0;
-    background: rgba(0, 122, 255, 0.08);
-    backdrop-filter: blur(10px);
-    -webkit-backdrop-filter: blur(10px);
-    border: 1px solid rgba(0, 122, 255, 0.25);
-    border-radius: 50%;
     font-size: 1.3rem;
-    cursor: pointer;
-    transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    box-shadow: 0 2px 8px rgba(0, 122, 255, 0.15);
   }
 
-  .bind-badge-btn:hover {
-    background: rgba(0, 122, 255, 0.15);
-    border-color: rgba(0, 122, 255, 0.4);
-    transform: scale(1.12);
-    box-shadow: 0 4px 12px rgba(0, 122, 255, 0.3);
+  /* Mute button */
+  .btn-mute {
+    font-size: 1.4rem;
   }
 
-  .bind-badge-btn.button {
-    background: rgba(191, 90, 242, 0.08);
-    border-color: rgba(191, 90, 242, 0.25);
-    box-shadow: 0 2px 8px rgba(191, 90, 242, 0.15);
+  .btn-mute.muted {
+    background: var(--bg-light);
+    color: var(--text-primary);
+    border: 2px solid var(--text-primary);
   }
 
-  .bind-badge-btn.button:hover {
-    background: rgba(191, 90, 242, 0.15);
-    border-color: rgba(191, 90, 242, 0.4);
-    box-shadow: 0 4px 12px rgba(191, 90, 242, 0.3);
+  .btn-mute.muted:hover {
+    background: var(--bg-medium);
   }
 
   .mapping-badge {
-    width: 100%;
-    height: 100%;
+    width: 46px;
+    height: 46px;
     position: relative;
-    background: rgba(0, 122, 255, 0.15);
-    backdrop-filter: blur(10px);
-    -webkit-backdrop-filter: blur(10px);
-    border: 1px solid rgba(0, 122, 255, 0.4);
+    background: var(--bg-light);
+    border: 2px solid var(--text-primary);
     border-radius: 50%;
     font-size: 1.3rem;
     display: flex;
     align-items: center;
     justify-content: center;
-    box-shadow: 
-      0 4px 12px rgba(0, 122, 255, 0.25),
-      inset 0 1px 0 rgba(255, 255, 255, 0.1);
+    color: var(--text-primary);
   }
 
   .mapping-badge.button {
-    background: rgba(191, 90, 242, 0.15);
-    border-color: rgba(191, 90, 242, 0.4);
-    box-shadow: 
-      0 4px 12px rgba(191, 90, 242, 0.25),
-      inset 0 1px 0 rgba(255, 255, 255, 0.1);
+    background: var(--bg-light);
+    border-color: var(--text-primary);
   }
 
-  .remove-badge-btn {
+  /* Small badge buttons */
+  .btn-badge-small {
     position: absolute;
     top: -6px;
     right: -6px;
     width: 20px;
     height: 20px;
-    padding: 0;
-    background: rgba(255, 59, 48, 0.95);
-    backdrop-filter: blur(10px);
-    -webkit-backdrop-filter: blur(10px);
-    border: 1px solid rgba(255, 59, 48, 1);
-    border-radius: 50%;
-    color: white;
     font-size: 0.75rem;
     font-weight: bold;
-    cursor: pointer;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
-    box-shadow: 0 2px 8px rgba(255, 59, 48, 0.4);
   }
 
-  .remove-badge-btn:hover {
-    background: rgba(255, 59, 48, 1);
-    transform: scale(1.15);
-    box-shadow: 0 4px 12px rgba(255, 59, 48, 0.6);
+  .btn-badge-remove {
+    /* Uses .btn-badge-small styling */
   }
 
   .binding-active {
-    width: 100%;
-    height: 100%;
+    width: 46px;
+    height: 46px;
     position: relative;
-    background: rgba(52, 199, 89, 0.12);
-    backdrop-filter: blur(10px);
-    -webkit-backdrop-filter: blur(10px);
-    border: 2px solid rgba(52, 199, 89, 0.4);
+    background: var(--bg-light);
+    border: 2px solid var(--text-primary);
     border-radius: 50%;
     font-size: 1.3rem;
     display: flex;
     align-items: center;
     justify-content: center;
     animation: pulse-border 1.5s ease-in-out infinite;
+    color: var(--text-primary);
   }
 
   .binding-active .pulse {
-    color: #34C759;
+    color: var(--text-primary);
     animation: pulse-icon 1s ease-in-out infinite;
   }
 
-  .cancel-badge-btn {
-    position: absolute;
-    top: -6px;
-    right: -6px;
-    width: 20px;
-    height: 20px;
-    padding: 0;
-    background: rgba(142, 142, 147, 0.9);
-    backdrop-filter: blur(10px);
-    -webkit-backdrop-filter: blur(10px);
-    border: 1px solid rgba(142, 142, 147, 1);
-    border-radius: 50%;
-    color: white;
-    font-size: 0.75rem;
-    font-weight: bold;
-    cursor: pointer;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
-    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.3);
-  }
-
-  .cancel-badge-btn:hover {
-    background: rgba(142, 142, 147, 1);
-    transform: scale(1.15);
-    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.4);
+  .btn-badge-cancel {
+    background: var(--bg-light);
+    border: 1px solid var(--text-secondary);
+    color: var(--text-primary);
   }
 
   @keyframes pulse-border {
     0%, 100% { 
-      border-color: rgba(52, 199, 89, 0.3);
-      box-shadow: 0 0 0 rgba(52, 199, 89, 0);
+      border-color: var(--text-secondary);
     }
     50% { 
-      border-color: rgba(52, 199, 89, 0.7);
-      box-shadow: 0 0 16px rgba(52, 199, 89, 0.5);
+      border-color: var(--text-primary);
     }
   }
 
   @keyframes pulse-icon {
     0%, 100% { opacity: 1; transform: scale(1); }
-    50% { opacity: 0.6; transform: scale(1.2); }
+    50% { opacity: 0.7; transform: scale(1.15); }
   }
 
 </style>

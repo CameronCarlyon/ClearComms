@@ -29,6 +29,7 @@ pub struct DeviceInfo {
     pub manufacturer: String,
     pub vendor_id: u16,
     pub product_id: u16,
+    #[allow(dead_code)]
     pub num_axes: u32,
     pub num_buttons: u32,
 }
