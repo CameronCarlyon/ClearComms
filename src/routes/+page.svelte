@@ -511,7 +511,6 @@
   {/if}
 
   <!-- Audio Management Section -->
-  <section class="audio-section">
     <div class="section-header">
       <h2>Audio Mixer</h2>
       <div class="header-actions">
@@ -645,7 +644,6 @@
     {:else}
       <p class="status-text">Initialising...</p>
     {/if}
-  </section>
 
   <footer>
     <p style="font-size: 0.8rem; color: var(--text-muted); text-align: center;">
@@ -669,6 +667,10 @@
     --text-muted: #888888;
     --border-color: rgba(255, 255, 255, 0.1);
     --shadow-soft: rgba(0, 0, 0, 0.3);
+  }
+
+  main {
+    padding: 1rem;
   }
 
   .container {
@@ -715,10 +717,18 @@
 
   /* Ensure content is above overlay */
   .app-header,
-  .audio-section,
+  .section-header,
+  .mixer-container,
+  .status-text,
+  .error-banner,
   footer {
     position: relative;
     z-index: 2;
+  }
+
+  .app-header,
+  .section-header,
+  footer {
     padding-left: 16px;
     padding-right: 16px;
   }
@@ -727,13 +737,6 @@
     display: flex;
     justify-content: space-between;
     align-items: center;
-    margin-top: 12px;
-    margin-bottom: 12px;
-    padding-top: 12px;
-    padding-bottom: 12px;
-    background: var(--bg-medium);
-    border-radius: 12px;
-    border: 1px solid var(--border-color);
   }
 
   .header-right {
@@ -823,22 +826,10 @@
     font-weight: 500;
   }
 
-  .audio-section {
-    display: flex;
-    flex-direction: column;
-    overflow: hidden;
-    flex: 1;
-  }
-
   .section-header {
     display: flex;
     justify-content: space-between;
     align-items: center;
-    margin-bottom: 12px;
-    padding: 12px 16px;
-    background: var(--bg-medium);
-    border-radius: 12px;
-    border: 1px solid var(--border-color);
   }
 
   h2 {
@@ -1108,10 +1099,6 @@
     height: 20px;
     font-size: 0.75rem;
     font-weight: bold;
-  }
-
-  .btn-badge-remove {
-    /* Uses .btn-badge-small styling */
   }
 
   .binding-active {
