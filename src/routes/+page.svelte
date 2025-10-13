@@ -543,18 +543,21 @@
               <!-- Application Name -->
               <span class="app-name" title={session.display_name}>{session.process_name}</span>
 
-              <!-- Vertical Volume Slider -->
-              <input
-                type="range"
-                class="vertical-slider"
-                min="0"
-                max="1"
-                step="0.01"
-                value={session.volume}
-                disabled={!!mapping}
-                onchange={(e) => setSessionVolume(session.session_id, parseFloat((e.target as HTMLInputElement).value))}
-              />
-              <span class="volume-readout">{(session.volume * 100).toFixed(0)}%</span>
+              <!-- Horizontal Volume Bar -->
+              <div class="volume-bar-container">
+                <input
+                  type="range"
+                  class="volume-slider"
+                  min="0"
+                  max="1"
+                  step="0.01"
+                  value={session.volume}
+                  disabled={!!mapping}
+                  style="--volume-percent: {session.volume * 100}%"
+                  onchange={(e) => setSessionVolume(session.session_id, parseFloat((e.target as HTMLInputElement).value))}
+                />
+                <span class="volume-readout">{(session.volume * 100).toFixed(0)}%</span>
+              </div>
 
               <!-- Mute Button -->
               <button
@@ -671,6 +674,10 @@
 
   main {
     padding: 1rem;
+    display: flex;
+    flex-direction: column;
+    height: 100vh;
+    justify-content: space-between;
   }
 
   .container {
@@ -722,16 +729,12 @@
   .status-text,
   .error-banner,
   footer {
-    position: relative;
     z-index: 2;
   }
 
   .app-header,
   .section-header,
-  footer {
-    padding-left: 16px;
-    padding-right: 16px;
-  }
+
 
   .app-header {
     display: flex;
@@ -967,83 +970,96 @@
     font-weight: 500;
   }
 
-  /* ===== VERTICAL SLIDER ===== */
-  .vertical-slider {
-    -webkit-appearance: slider-vertical;
-    appearance: slider-vertical;
-    writing-mode: bt-lr;
-    width: 6px;
-    height: 180px;
-    background: var(--bg-light);
-    border-radius: 999px;
-    outline: none;
-    cursor: pointer;
-    position: relative;
+  /* ===== VOLUME BAR ===== */
+  .volume-bar-container {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 8px;
+    width: 100%;
     margin: 10px 0;
   }
 
-  /* Chrome/Safari/Edge Vertical Slider */
-  .vertical-slider::-webkit-slider-runnable-track {
-    width: 6px;
-    height: 180px;
-    background: var(--bg-light);
-    border-radius: 999px;
-  }
-
-  .vertical-slider::-webkit-slider-thumb {
+  .volume-slider {
     -webkit-appearance: none;
     appearance: none;
-    width: 22px;
-    height: 22px;
-    border-radius: 50%;
-    background: var(--text-primary);
-    cursor: pointer;
-    transition: all 0.2s ease;
-    margin-left: -8px;
-  }
-
-  .vertical-slider::-webkit-slider-thumb:active {
-    transform: scale(1.05);
-  }
-
-  /* Firefox Vertical Slider */
-  .vertical-slider::-moz-range-track {
-    width: 6px;
+    writing-mode: bt-lr; /* Bottom to top */
+    width: 46px;
     height: 180px;
-    background: var(--bg-light);
-    border-radius: 999px;
-    border: none;
-  }
-
-  .vertical-slider::-moz-range-thumb {
-    width: 22px;
-    height: 22px;
-    border-radius: 50%;
-    background: var(--text-primary);
+    background: transparent;
+    outline: none;
     cursor: pointer;
-    border: none;
-    transition: all 0.2s ease;
+    position: relative;
   }
 
-  .vertical-slider:disabled {
+  /* Track styling - the pill-shaped background */
+  .volume-slider::-webkit-slider-runnable-track {
+    width: 46px;
+    height: 100%;
+    background: linear-gradient(
+      to top,
+      var(--text-primary) 0%,
+      var(--text-primary) var(--volume-percent, 0%),
+      var(--bg-light) var(--volume-percent, 0%),
+      var(--bg-light) 100%
+    );
+    border: 1px solid rgba(255, 255, 255, 0.15);
+    border-radius: 23px;
+    cursor: pointer;
+    transition: all 0.15s ease;
+  }
+
+  .volume-slider::-moz-range-track {
+    width: 46px;
+    height: 100%;
+    background: var(--bg-light);
+    border: 1px solid rgba(255, 255, 255, 0.15);
+    border-radius: 23px;
+    cursor: pointer;
+  }
+
+  /* Progress fill for Firefox */
+  .volume-slider::-moz-range-progress {
+    width: 46px;
+    background: var(--text-primary);
+    border-radius: 0 0 23px 23px;
+  }
+
+  /* Hide the thumb - we want just the fill effect */
+  .volume-slider::-webkit-slider-thumb {
+    -webkit-appearance: none;
+    appearance: none;
+    width: 0;
+    height: 0;
+    opacity: 0;
+  }
+
+  .volume-slider::-moz-range-thumb {
+    width: 0;
+    height: 0;
+    border: none;
+    opacity: 0;
+  }
+
+  /* Hover effect */
+  .volume-slider:hover:not(:disabled)::-webkit-slider-runnable-track {
+    border-color: rgba(255, 255, 255, 0.25);
+  }
+
+  /* Disabled state */
+  .volume-slider:disabled {
     opacity: 0.4;
     cursor: not-allowed;
   }
 
-  .vertical-slider:disabled::-webkit-slider-thumb {
-    background: var(--text-muted);
-    cursor: not-allowed;
-  }
-
-  .vertical-slider:disabled::-moz-range-thumb {
-    background: var(--text-muted);
+  .volume-slider:disabled::-webkit-slider-runnable-track {
     cursor: not-allowed;
   }
 
   .volume-readout {
-    font-size: 0.75rem;
+    font-size: 0.7rem;
     font-weight: 700;
-    color: rgba(255, 255, 255, 0.8);
+    color: var(--text-secondary);
     text-align: center;
     min-width: 40px;
     letter-spacing: -0.3px;
