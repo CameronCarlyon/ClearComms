@@ -54,6 +54,7 @@
   let pendingButtonBinding = $state<{ sessionId: string; sessionName: string } | null>(null);
   let previousAxisValues: Map<string, Record<string, number>> = new Map();
   let previousButtonStates: Map<string, Record<string, boolean>> = new Map();
+  let lastHardwareAxisValues: Map<string, number> = new Map(); // Track last hardware axis values
   let errorMsg = $state("");
   let isEditMode = $state(false);
 
@@ -64,11 +65,11 @@
       ...buttonMappings.map(m => m.sessionId)
     ]);
     
-    // Calculate display count: bound sessions + ghost column (if in edit mode)
-    const boundCount = boundSessionIds.size;
-    const displayCount = isEditMode ? boundCount + 1 : boundCount;
+    // Calculate display count based only on bound sessions (not edit mode)
+    // Window width should only change when bindings change, not when toggling edit mode
+    const displayCount = boundSessionIds.size;
     
-    // Resize window to fit displayed columns (including ghost when in edit mode)
+    // Resize window to fit bound sessions only
     if (audioInitialised) {
       resizeWindowToFit(displayCount);
     }
@@ -382,17 +383,25 @@
       const device = axisData.find(d => d.device_handle === mapping.deviceHandle);
       if (device && device.axes[mapping.axisName] !== undefined) {
         const axisValue = device.axes[mapping.axisName];
-        const session = audioSessions.find(s => s.session_id === mapping.sessionId);
+        const mappingKey = `${mapping.deviceHandle}-${mapping.axisName}-${mapping.sessionId}`;
+        const lastHardwareValue = lastHardwareAxisValues.get(mappingKey);
         
-        if (session && Math.abs(session.volume - axisValue) > 0.01) {
-          try {
-            await invoke("set_session_volume", { sessionId: mapping.sessionId, volume: axisValue });
-            const sessionIndex = audioSessions.findIndex(s => s.session_id === mapping.sessionId);
-            if (sessionIndex !== -1) {
-              audioSessions[sessionIndex].volume = axisValue;
+        // Only update if the hardware axis value has actually changed
+        if (lastHardwareValue === undefined || Math.abs(lastHardwareValue - axisValue) > 0.01) {
+          const session = audioSessions.find(s => s.session_id === mapping.sessionId);
+          
+          if (session) {
+            try {
+              await invoke("set_session_volume", { sessionId: mapping.sessionId, volume: axisValue });
+              const sessionIndex = audioSessions.findIndex(s => s.session_id === mapping.sessionId);
+              if (sessionIndex !== -1) {
+                audioSessions[sessionIndex].volume = axisValue;
+              }
+              // Store the new hardware value
+              lastHardwareAxisValues.set(mappingKey, axisValue);
+            } catch (error) {
+              console.error(`[ClearComms] Error applying mapping for ${mapping.sessionName}:`, error);
             }
-          } catch (error) {
-            console.error(`[ClearComms] Error applying mapping for ${mapping.sessionName}:`, error);
           }
         }
       }
@@ -500,6 +509,18 @@
       <div class="status-indicator" class:ready={initStatus === 'Ready'} class:failed={initStatus === 'Failed'}>
         {initStatus}
       </div>
+              <button 
+          class="btn btn-round btn-icon" 
+          class:active={isEditMode}
+          onclick={toggleEditMode} 
+          disabled={!audioInitialised}
+          title={isEditMode ? 'Exit Edit Mode' : 'Edit Bindings'}
+        >
+          {isEditMode ? '✓' : '✏️'}
+        </button>
+        <button class="btn btn-round btn-icon" onclick={refreshAudioSessions} disabled={!audioInitialised} title="Refresh Sessions">
+          🔄
+        </button>
       <button class="btn btn-round btn-close" onclick={quitApplication} title="Quit">
         ✕
       </button>
@@ -511,23 +532,6 @@
   {/if}
 
   <!-- Audio Management Section -->
-    <div class="section-header">
-      <h2>Audio Mixer</h2>
-      <div class="header-actions">
-        <button 
-          class="btn btn-pill btn-edit" 
-          class:active={isEditMode}
-          onclick={toggleEditMode} 
-          disabled={!audioInitialised}
-          title={isEditMode ? 'Exit Edit Mode' : 'Edit Bindings'}
-        >
-          {isEditMode ? '✓ Done' : '✏️ Edit'}
-        </button>
-        <button class="btn btn-round btn-icon" onclick={refreshAudioSessions} disabled={!audioInitialised} title="Refresh Sessions">
-          🔄
-        </button>
-      </div>
-    </div>
 
     {#if audioInitialised}
       {@const boundSessions = getBoundSessions()}
@@ -552,8 +556,8 @@
                   max="1"
                   step="0.01"
                   value={session.volume}
-                  disabled={!!mapping}
                   style="--volume-percent: {session.volume * 100}%"
+                  oninput={(e) => setSessionVolume(session.session_id, parseFloat((e.target as HTMLInputElement).value))}
                   onchange={(e) => setSessionVolume(session.session_id, parseFloat((e.target as HTMLInputElement).value))}
                 />
                 <span class="volume-readout">{(session.volume * 100).toFixed(0)}%</span>
@@ -650,7 +654,7 @@
 
   <footer>
     <p style="font-size: 0.8rem; color: var(--text-muted); text-align: center;">
-      Crafted by Cameron Carlyon | &copy; 2025
+      Crafted by Cameron Carlyon | &copy; {new Date().getFullYear()}
     </p>
   </footer>
 </main>
@@ -672,20 +676,25 @@
     --shadow-soft: rgba(0, 0, 0, 0.3);
   }
 
+  * {
+    box-sizing: border-box;
+  }
+
   main {
     padding: 1rem;
     display: flex;
     flex-direction: column;
     height: 100vh;
+    max-height: 100vh;
     justify-content: space-between;
+    overflow: hidden;
   }
 
   .container {
-    margin: 0;
-    padding: 0;
-    height: 100vh;
-    max-width: 100vw;
-    overflow: hidden;
+    flex: 1;
+    min-height: 0;
+    overflow-y: auto;
+    overflow-x: hidden;
     background: transparent;
     display: flex;
     flex-direction: column;
@@ -724,17 +733,12 @@
 
   /* Ensure content is above overlay */
   .app-header,
-  .section-header,
   .mixer-container,
   .status-text,
   .error-banner,
   footer {
     z-index: 2;
   }
-
-  .app-header,
-  .section-header,
-
 
   .app-header {
     display: flex;
@@ -797,7 +801,8 @@
   }
 
   .status-indicator {
-    padding: 6px 14px;
+    padding: 10px 15px;
+    min-height: 100%;
     border-radius: 20px;
     font-size: 0.75rem;
     font-weight: 600;
@@ -829,29 +834,8 @@
     font-weight: 500;
   }
 
-  .section-header {
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-  }
-
-  h2 {
-    margin: 0;
-    font-size: 1rem;
-    font-weight: 600;
-    color: var(--text-primary);
-    letter-spacing: -0.2px;
-  }
-
-  .header-actions {
-    display: flex;
-    gap: 8px;
-    align-items: center;
-  }
-
   /* Edit mode button */
   .btn-edit {
-    padding: 7px 14px;
     font-size: 0.85rem;
     font-weight: 600;
   }
@@ -870,7 +854,6 @@
     justify-content: center;
     color: var(--text-secondary);
     font-size: 0.9rem;
-    padding: 20px;
     height: 100%;
   }
 
@@ -888,13 +871,17 @@
     flex-direction: row;
     justify-content: center;
     gap: 14px;
-    overflow: hidden;
-    padding: 8px;
+    overflow-y: auto;
+    overflow-x: hidden;
+    flex: 1;
+    min-height: 0;
+    align-items: center;
   }
 
   /* ===== CHANNEL STRIP (Vertical Layout) ===== */
   .channel-strip {
     display: flex;
+    height: 100%;
     flex-direction: column;
     align-items: center;
     gap: 12px;
@@ -981,42 +968,42 @@
     align-items: center;
     gap: 8px;
     width: 100%;
+    flex: 1;
+    min-height: 0;
   }
 
   .volume-slider {
-    -webkit-appearance: none;
-    appearance: none;
-    writing-mode: bt-lr; /* Bottom to top */
+    -webkit-appearance: slider-vertical;
+    appearance: slider-vertical;
     width: 46px;
-    height: 180px;
+    flex: 1;
+    min-height: 0;
     background: transparent;
     outline: none;
     cursor: pointer;
     position: relative;
   }
 
-  /* Track styling - the pill-shaped background */
+  /* Track styling */
   .volume-slider::-webkit-slider-runnable-track {
     width: 46px;
     height: 100%;
     background: linear-gradient(
       to top,
-      var(--text-primary) 0%,
-      var(--text-primary) var(--volume-percent, 0%),
+      #fff 0%,
+      #fff var(--volume-percent, 0%),
       var(--bg-light) var(--volume-percent, 0%),
       var(--bg-light) 100%
     );
     border: 1px solid rgba(255, 255, 255, 0.15);
     border-radius: 23px;
     cursor: pointer;
-    transition: all 0.15s ease;
   }
 
   .volume-slider::-moz-range-track {
     width: 46px;
     height: 100%;
     background: var(--bg-light);
-    border: 1px solid rgba(255, 255, 255, 0.15);
     border-radius: 23px;
     cursor: pointer;
   }
@@ -1024,7 +1011,7 @@
   /* Progress fill for Firefox */
   .volume-slider::-moz-range-progress {
     width: 46px;
-    background: var(--text-primary);
+    background: #fff;
     border-radius: 0 0 23px 23px;
   }
 
@@ -1072,6 +1059,7 @@
   .btn-channel {
     width: 46px;
     height: 46px;
+    aspect-ratio: 1 / 1;
     font-size: 1.3rem;
   }
 
@@ -1093,6 +1081,7 @@
   .mapping-badge {
     width: 46px;
     height: 46px;
+    aspect-ratio: 1 / 1;
     position: relative;
     background: var(--bg-light);
     border: 2px solid var(--text-primary);
@@ -1116,6 +1105,7 @@
     right: -6px;
     width: 20px;
     height: 20px;
+    aspect-ratio: 1 / 1;
     font-size: 0.75rem;
     font-weight: bold;
   }
@@ -1123,6 +1113,7 @@
   .binding-active {
     width: 46px;
     height: 46px;
+    aspect-ratio: 1 / 1;
     position: relative;
     background: var(--bg-light);
     border: 2px solid var(--text-primary);

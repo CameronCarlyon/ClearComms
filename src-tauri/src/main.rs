@@ -27,11 +27,7 @@ fn resize_window_to_content(app: tauri::AppHandle, session_count: usize) -> Resu
     // Clamp width to reasonable bounds (min 400px, max 1400px to handle many apps)
     let new_width = content_width.clamp(400, 1400);
     
-    // Calculate height based on content
-    // Header: ~70px
-    // Channel strip: ~380px (fader 180px + buttons + spacing)
-    // Footer: ~50px
-    // Total with padding: ~800px
+    // Fixed height - never changes
     let new_height = 1000;
     
     if let Some(window) = app.get_webview_window("main") {
