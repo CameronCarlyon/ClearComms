@@ -865,9 +865,13 @@
 
   .status-text {
     text-align: center;
+    display: flex;
+    align-items: center;
+    justify-content: center;
     color: var(--text-secondary);
     font-size: 0.9rem;
     padding: 20px;
+    height: 100%;
   }
 
   footer {
@@ -977,7 +981,6 @@
     align-items: center;
     gap: 8px;
     width: 100%;
-    margin: 10px 0;
   }
 
   .volume-slider {
