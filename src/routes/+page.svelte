@@ -60,14 +60,19 @@
 
   // Computed: Get sessions with bindings (axis OR button mappings)
   $effect(() => {
+    // Only count mappings for sessions that actually exist
+    const activeSessionIds = new Set(audioSessions.map(s => s.session_id));
+    
     const boundSessionIds = new Set([
-      ...axisMappings.map(m => m.sessionId),
-      ...buttonMappings.map(m => m.sessionId)
+      ...axisMappings.filter(m => activeSessionIds.has(m.sessionId)).map(m => m.sessionId),
+      ...buttonMappings.filter(m => activeSessionIds.has(m.sessionId)).map(m => m.sessionId)
     ]);
     
     // Calculate display count based only on bound sessions (not edit mode)
     // Window width should only change when bindings change, not when toggling edit mode
     const displayCount = boundSessionIds.size;
+    
+    console.log(`[ClearComms] Resize effect: axisMappings=${axisMappings.length}, buttonMappings=${buttonMappings.length}, activeBindings=${displayCount}`);
     
     // Resize window to fit bound sessions only
     if (audioInitialised) {
@@ -681,8 +686,9 @@
   }
 
   main {
-    padding: 1rem;
     display: flex;
+    gap: 1rem;
+    padding: 1rem;
     flex-direction: column;
     height: 100vh;
     max-height: 100vh;
@@ -861,7 +867,6 @@
     display: flex;
     justify-content: center;
     align-items: center;
-    padding: 16px;
     color: var(--text-muted);
   }
 
@@ -884,8 +889,8 @@
     height: 100%;
     flex-direction: column;
     align-items: center;
-    gap: 12px;
-    padding: 16px 12px;
+    gap: 1rem;
+    padding: 0rem 1rem;
     min-width: 85px;
     max-width: 95px;
     transition: all 0.2s ease;
@@ -995,7 +1000,6 @@
       var(--bg-light) var(--volume-percent, 0%),
       var(--bg-light) 100%
     );
-    border: 1px solid rgba(255, 255, 255, 0.15);
     border-radius: 23px;
     cursor: pointer;
   }

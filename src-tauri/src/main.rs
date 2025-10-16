@@ -12,29 +12,29 @@ mod native_menu;
 /// Resize window to fit content width and height
 #[tauri::command]
 fn resize_window_to_content(app: tauri::AppHandle, session_count: usize) -> Result<String, String> {
-    // Calculate width based on number of sessions
-    // Each channel strip is ~90px + 12px gap, plus 24px padding on sides
-    let base_width = 48; // Left + right padding (24px each)
-    let channel_width = 90; // Width per channel
-    let gap_width = 12; // Gap between channels
+    let base_width = 400;
+    let channel_width = 109; // 95px channel + 14px gap
     
-    let content_width = if session_count > 0 {
-        base_width + (channel_width * session_count as u32) + (gap_width * (session_count.saturating_sub(1)) as u32)
+    // 0 or 1 session: base width only
+    // 2+ sessions: base + additional channels
+    let new_width = if session_count <= 1 {
+        base_width
     } else {
-        400 // Default width if no sessions
+        base_width + (channel_width * (session_count - 1) as u32)
     };
     
-    // Clamp width to reasonable bounds (min 400px, max 1400px to handle many apps)
-    let new_width = content_width.clamp(400, 1400);
-    
-    // Fixed height - never changes
     let new_height = 1000;
     
+    println!("[ClearComms] Resizing window: session_count={}, new_width={}, new_height={}", session_count, new_width, new_height);
+    
     if let Some(window) = app.get_webview_window("main") {
-        let _ = window.set_size(tauri::Size::Physical(tauri::PhysicalSize {
+        match window.set_size(tauri::Size::Physical(tauri::PhysicalSize {
             width: new_width,
             height: new_height,
-        }));
+        })) {
+            Ok(_) => println!("[ClearComms] Successfully set window size"),
+            Err(e) => println!("[ClearComms] ERROR setting window size: {:?}", e),
+        }
         
         // Re-position window after resize to keep it bottom-right with proper padding
         position_window_bottom_right(&window);
@@ -42,6 +42,7 @@ fn resize_window_to_content(app: tauri::AppHandle, session_count: usize) -> Resu
         return Ok(format!("Window resized to {}x{} for {} session(s)", new_width, new_height, session_count));
     }
     
+    println!("[ClearComms] WARNING: Main window not found");
     Ok("Window size unchanged".to_string())
 }
 
