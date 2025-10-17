@@ -217,6 +217,9 @@
         console.log(`  - ${s.process_name} (${s.display_name}) [PID: ${s.process_id}]`);
       });
       
+      // Clean up stale mappings for sessions that no longer exist
+      cleanupStaleMappings();
+      
       // Window will be resized by the $effect that watches axisMappings/buttonMappings
     } catch (error) {
       console.error("[ClearComms] Error getting audio sessions:", error);
@@ -461,6 +464,26 @@
     // Update previous button states for next poll
     for (const device of axisData) {
       previousButtonStates.set(device.device_handle, { ...device.buttons });
+    }
+  }
+
+  function cleanupStaleMappings() {
+    const activeSessionIds = new Set(audioSessions.map(s => s.session_id));
+    
+    const oldAxisCount = axisMappings.length;
+    const oldButtonCount = buttonMappings.length;
+    
+    // Remove mappings for sessions that no longer exist
+    axisMappings = axisMappings.filter(m => activeSessionIds.has(m.sessionId));
+    buttonMappings = buttonMappings.filter(m => activeSessionIds.has(m.sessionId));
+    
+    const removedAxis = oldAxisCount - axisMappings.length;
+    const removedButton = oldButtonCount - buttonMappings.length;
+    
+    if (removedAxis > 0 || removedButton > 0) {
+      console.log(`[ClearComms] Cleaned up ${removedAxis} stale axis mapping(s) and ${removedButton} stale button mapping(s)`);
+      saveMappings();
+      saveButtonMappings();
     }
   }
 
