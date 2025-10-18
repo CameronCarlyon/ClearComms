@@ -530,14 +530,13 @@
   }
 </script>
 
-<main class="container">
-  <header class="app-header">
-    <h1>ClearComms</h1>
-    <div class="header-right">
-      <div class="status-indicator" class:ready={initStatus === 'Ready'} class:failed={initStatus === 'Failed'}>
-        {initStatus}
-      </div>
-              <button 
+{#if initStatus === 'Ready'}
+  <!-- Main Application -->
+  <main class="container">
+    <header class="app-header">
+      <h1>ClearComms</h1>
+      <div class="header-right">
+        <button 
           class="btn btn-round btn-icon" 
           class:active={isEditMode}
           onclick={toggleEditMode} 
@@ -549,17 +548,17 @@
         <button class="btn btn-round btn-icon" onclick={refreshAudioSessions} disabled={!audioInitialised} title="Refresh Sessions">
           🔄
         </button>
-      <button class="btn btn-round btn-close" onclick={quitApplication} title="Quit">
-        ✕
-      </button>
-    </div>
-  </header>
+        <button class="btn btn-round btn-close" onclick={quitApplication} title="Quit">
+          ✕
+        </button>
+      </div>
+    </header>
 
-  {#if errorMsg}
-    <div class="error-banner">{errorMsg}</div>
-  {/if}
+    {#if errorMsg}
+      <div class="error-banner">{errorMsg}</div>
+    {/if}
 
-  <!-- Audio Management Section -->
+    <!-- Audio Management Section -->
 
     {#if audioInitialised}
       {@const boundSessions = getBoundSessions()}
@@ -686,6 +685,20 @@
     </p>
   </footer>
 </main>
+{:else}
+  <!-- Boot Screen -->
+  <div class="boot-screen">
+    <h1 class="boot-title">ClearComms</h1>
+    <p class="boot-status" class:error={initStatus === 'Failed'}>
+      {initStatus === 'Failed' ? errorMsg : initStatus}
+    </p>
+    {#if initStatus === 'Failed'}
+      <button class="btn btn-round btn-restart" onclick={() => window.location.reload()}>
+        Restart Application
+      </button>
+    {/if}
+  </div>
+{/if}
 
 <style>
   :root {
@@ -827,29 +840,6 @@
     height: 32px;
     font-size: 1rem;
     font-weight: 600;
-  }
-
-  .status-indicator {
-    padding: 10px 15px;
-    min-height: 100%;
-    border-radius: 20px;
-    font-size: 0.75rem;
-    font-weight: 600;
-    background: var(--bg-light);
-    border: 1px solid var(--border-color);
-    color: var(--text-secondary);
-  }
-
-  .status-indicator.ready {
-    background: var(--text-primary);
-    border-color: var(--text-primary);
-    color: var(--bg-dark);
-  }
-
-  .status-indicator.failed {
-    background: var(--bg-light);
-    border-color: var(--text-muted);
-    color: var(--text-muted);
   }
 
   .error-banner {
@@ -1178,4 +1168,51 @@
     50% { opacity: 0.7; transform: scale(1.15); }
   }
 
+  /* ===== BOOT SCREEN ===== */
+  .boot-screen {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    height: 100vh;
+    width: 100vw;
+    background: transparent;
+    gap: 1.5rem;
+    padding: 2rem;
+  }
+
+  .boot-title {
+    font-size: 2.5rem;
+    font-weight: 700;
+    color: var(--text-primary);
+    margin: 0;
+    letter-spacing: -0.5px;
+  }
+
+  .boot-status {
+    font-size: 1rem;
+    color: var(--text-secondary);
+    margin: 0;
+    text-align: center;
+    max-width: 300px;
+  }
+
+  .boot-status.error {
+    color: #ff4444;
+  }
+
+  .btn-restart {
+    margin-top: 1rem;
+    padding: 12px 24px;
+    font-size: 1rem;
+    background: var(--text-primary);
+    color: var(--bg-dark);
+    border-radius: 8px;
+    font-weight: 500;
+  }
+
+  .btn-restart:hover {
+    background: var(--text-secondary);
+    transform: translateY(-2px);
+  }
 </style>
