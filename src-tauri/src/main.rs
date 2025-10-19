@@ -176,6 +176,7 @@ fn main() {
             audio_management::get_audio_sessions,
             audio_management::set_session_volume,
             audio_management::set_session_mute,
+            audio_management::check_default_device_changed,
             resize_window_to_content,
             show_main_window,
             hide_main_window,

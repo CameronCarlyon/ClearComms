@@ -25,6 +25,7 @@ pub struct AudioSession {
 /// Manages Windows Core Audio API for application volume control
 pub struct AudioManager {
     sessions: HashMap<String, AudioSession>,
+    current_device_id: String,
 }
 
 #[cfg(windows)]
@@ -89,9 +90,47 @@ impl AudioManager {
                 .map_err(|e: Error| format!("Failed to initialize COM: {}", e))?;
         }
         
+        // Get initial default device ID
+        let device_id = Self::get_default_device_id()?;
+        
         Ok(Self {
             sessions: HashMap::new(),
+            current_device_id: device_id,
         })
+    }
+    
+    /// Get the current default audio device ID
+    fn get_default_device_id() -> std::result::Result<String, String> {
+        unsafe {
+            let enumerator: IMMDeviceEnumerator = CoCreateInstance(
+                &MMDeviceEnumerator,
+                None,
+                CLSCTX_ALL,
+            ).map_err(|e: Error| format!("Failed to create device enumerator: {}", e))?;
+
+            let device = enumerator
+                .GetDefaultAudioEndpoint(eRender, eConsole)
+                .map_err(|e: Error| format!("Failed to get default audio endpoint: {}", e))?;
+
+            let id = device.GetId()
+                .map_err(|e: Error| format!("Failed to get device ID: {}", e))?;
+            
+            id.to_string()
+                .map_err(|e| format!("Failed to convert device ID: {}", e))
+        }
+    }
+    
+    /// Check if default device has changed, return true if changed
+    pub fn check_device_changed(&mut self) -> std::result::Result<bool, String> {
+        let new_device_id = Self::get_default_device_id()?;
+        
+        if new_device_id != self.current_device_id {
+            eprintln!("[Audio] Default device changed: {} -> {}", self.current_device_id, new_device_id);
+            self.current_device_id = new_device_id;
+            Ok(true)
+        } else {
+            Ok(false)
+        }
     }
 
     /// Enumerate all active audio sessions
@@ -372,4 +411,19 @@ pub fn set_session_mute(session_id: String, muted: bool) -> std::result::Result<
         .ok_or("Audio manager not initialised. Call init_audio_manager first.")?;
     
     manager.set_session_mute(&session_id, muted)
+}
+
+/// Check if the default audio device has changed
+/// Returns true if changed, false otherwise
+#[tauri::command]
+pub fn check_default_device_changed() -> std::result::Result<bool, String> {
+    let mut lock = AUDIO_MANAGER
+        .lock()
+        .map_err(|e| format!("Failed to lock audio manager mutex: {}", e))?;
+    
+    let manager = lock
+        .as_mut()
+        .ok_or("Audio manager not initialised. Call init_audio_manager first.")?;
+    
+    manager.check_device_changed()
 }

@@ -19,6 +19,8 @@
     axisName: string;
     sessionId: string;
     sessionName: string;
+    processId: number; // For re-matching after device changes
+    processName: string;
   }
 
   // Button-to-mute mapping types
@@ -28,6 +30,8 @@
     buttonName: string;
     sessionId: string;
     sessionName: string;
+    processId: number; // For re-matching after device changes
+    processName: string;
   }
 
   interface AxisData {
@@ -45,13 +49,14 @@
   let axisMappings = $state<AxisMapping[]>([]);
   let buttonMappings = $state<ButtonMapping[]>([]);
   let pollingInterval: number | null = null;
+  let audioMonitorInterval: number | null = null;
   let isPolling = $state(false);
   let initStatus = $state("Initialising...");
   let audioInitialised = $state(false);
   let isBindingMode = $state(false);
   let isButtonBindingMode = $state(false);
-  let pendingBinding = $state<{ sessionId: string; sessionName: string } | null>(null);
-  let pendingButtonBinding = $state<{ sessionId: string; sessionName: string } | null>(null);
+  let pendingBinding = $state<{ sessionId: string; sessionName: string; processId: number; processName: string } | null>(null);
+  let pendingButtonBinding = $state<{ sessionId: string; sessionName: string; processId: number; processName: string } | null>(null);
   let previousAxisValues: Map<string, Record<string, number>> = new Map();
   let previousButtonStates: Map<string, Record<string, boolean>> = new Map();
   let lastHardwareAxisValues: Map<string, number> = new Map(); // Track last hardware axis values
@@ -82,22 +87,22 @@
 
   // Computed: Get bound audio sessions
   function getBoundSessions(): AudioSession[] {
-    const boundSessionIds = new Set([
-      ...axisMappings.map(m => m.sessionId),
-      ...buttonMappings.map(m => m.sessionId)
+    const boundProcessIds = new Set([
+      ...axisMappings.map(m => m.processId),
+      ...buttonMappings.map(m => m.processId)
     ]);
     
-    return audioSessions.filter(s => boundSessionIds.has(s.session_id));
+    return audioSessions.filter(s => boundProcessIds.has(s.process_id));
   }
 
   // Computed: Get available (unbound) audio sessions for dropdown
   function getAvailableSessions(): AudioSession[] {
-    const boundSessionIds = new Set([
-      ...axisMappings.map(m => m.sessionId),
-      ...buttonMappings.map(m => m.sessionId)
+    const boundProcessIds = new Set([
+      ...axisMappings.map(m => m.processId),
+      ...buttonMappings.map(m => m.processId)
     ]);
     
-    return audioSessions.filter(s => !boundSessionIds.has(s.session_id));
+    return audioSessions.filter(s => !boundProcessIds.has(s.process_id));
   }
 
   function toggleEditMode() {
@@ -197,6 +202,9 @@
         console.error("[ClearComms] Polling error:", error);
       }
     }, 50);
+    
+    // Start audio session monitoring (every 3 seconds)
+    startAudioMonitoring();
   }
   
   function stopPolling() {
@@ -206,6 +214,38 @@
       console.log("[ClearComms] Polling stopped");
     }
     isPolling = false;
+    
+    // Stop audio monitoring
+    stopAudioMonitoring();
+  }
+
+  function startAudioMonitoring() {
+    if (audioMonitorInterval) return;
+    
+    audioMonitorInterval = setInterval(async () => {
+      try {
+        // Check if default device changed
+        const deviceChanged = await invoke<boolean>("check_default_device_changed");
+        if (deviceChanged) {
+          console.log("[ClearComms] Audio device changed - refreshing sessions");
+        }
+        
+        // Always refresh sessions to pick up new/closed apps
+        await refreshAudioSessions();
+      } catch (error) {
+        console.error("[ClearComms] Audio monitoring error:", error);
+      }
+    }, 3000); // Check every 3 seconds
+    
+    console.log("[ClearComms] Audio session monitoring started (3s interval)");
+  }
+
+  function stopAudioMonitoring() {
+    if (audioMonitorInterval) {
+      clearInterval(audioMonitorInterval);
+      audioMonitorInterval = null;
+      console.log("[ClearComms] Audio monitoring stopped");
+    }
   }
 
   async function refreshAudioSessions() {
@@ -258,9 +298,9 @@
     }
   }
 
-  function startAxisBinding(sessionId: string, sessionName: string) {
+  function startAxisBinding(sessionId: string, sessionName: string, processId: number, processName: string) {
     isBindingMode = true;
-    pendingBinding = { sessionId, sessionName };
+    pendingBinding = { sessionId, sessionName, processId, processName };
     
     previousAxisValues.clear();
     for (const device of axisData) {
@@ -277,9 +317,9 @@
     console.log("[ClearComms] Binding mode cancelled");
   }
 
-  function startButtonBinding(sessionId: string, sessionName: string) {
+  function startButtonBinding(sessionId: string, sessionName: string, processId: number, processName: string) {
     isButtonBindingMode = true;
-    pendingButtonBinding = { sessionId, sessionName };
+    pendingButtonBinding = { sessionId, sessionName, processId, processName };
     
     // Store current button states
     previousButtonStates.clear();
@@ -335,42 +375,42 @@
     return null;
   }
 
-  function createMapping(deviceHandle: string, deviceName: string, axisName: string, sessionId: string, sessionName: string) {
-    axisMappings = axisMappings.filter(m => m.sessionId !== sessionId);
+  function createMapping(deviceHandle: string, deviceName: string, axisName: string, sessionId: string, sessionName: string, processId: number, processName: string) {
+    axisMappings = axisMappings.filter(m => m.processId !== processId);
     
-    const newMapping: AxisMapping = { deviceHandle, deviceName, axisName, sessionId, sessionName };
+    const newMapping: AxisMapping = { deviceHandle, deviceName, axisName, sessionId, sessionName, processId, processName };
     axisMappings = [...axisMappings, newMapping];
     
     console.log(`[ClearComms] ✓ Mapped ${deviceName} ${axisName} → ${sessionName}`);
     saveMappings();
   }
 
-  function removeMapping(sessionId: string) {
-    const mapping = axisMappings.find(m => m.sessionId === sessionId);
+  function removeMapping(processId: number) {
+    const mapping = axisMappings.find(m => m.processId === processId);
     if (mapping) {
       console.log(`[ClearComms] Removed mapping: ${mapping.deviceName} ${mapping.axisName} → ${mapping.sessionName}`);
     }
-    axisMappings = axisMappings.filter(m => m.sessionId !== sessionId);
+    axisMappings = axisMappings.filter(m => m.processId !== processId);
     saveMappings();
   }
 
-  function createButtonMapping(deviceHandle: string, deviceName: string, buttonName: string, sessionId: string, sessionName: string) {
-    // Remove existing button mapping for this session (one button per session)
-    buttonMappings = buttonMappings.filter(m => m.sessionId !== sessionId);
+  function createButtonMapping(deviceHandle: string, deviceName: string, buttonName: string, sessionId: string, sessionName: string, processId: number, processName: string) {
+    // Remove existing button mapping for this process (one button per process)
+    buttonMappings = buttonMappings.filter(m => m.processId !== processId);
     
-    const newMapping: ButtonMapping = { deviceHandle, deviceName, buttonName, sessionId, sessionName };
+    const newMapping: ButtonMapping = { deviceHandle, deviceName, buttonName, sessionId, sessionName, processId, processName };
     buttonMappings = [...buttonMappings, newMapping];
     
     console.log(`[ClearComms] ✓ Mapped ${deviceName} ${buttonName} → Mute ${sessionName}`);
     saveButtonMappings();
   }
 
-  function removeButtonMapping(sessionId: string) {
-    const mapping = buttonMappings.find(m => m.sessionId === sessionId);
+  function removeButtonMapping(processId: number) {
+    const mapping = buttonMappings.find(m => m.processId === processId);
     if (mapping) {
       console.log(`[ClearComms] Removed button mapping: ${mapping.deviceName} ${mapping.buttonName} → Mute ${mapping.sessionName}`);
     }
-    buttonMappings = buttonMappings.filter(m => m.sessionId !== sessionId);
+    buttonMappings = buttonMappings.filter(m => m.processId !== processId);
     saveButtonMappings();
   }
 
@@ -378,7 +418,15 @@
     if (isBindingMode && pendingBinding) {
       const movement = detectAxisMovement();
       if (movement) {
-        createMapping(movement.deviceHandle, movement.deviceName, movement.axisName, pendingBinding.sessionId, pendingBinding.sessionName);
+        createMapping(
+          movement.deviceHandle, 
+          movement.deviceName, 
+          movement.axisName, 
+          pendingBinding.sessionId, 
+          pendingBinding.sessionName,
+          pendingBinding.processId,
+          pendingBinding.processName
+        );
         isBindingMode = false;
         pendingBinding = null;
       }
@@ -391,17 +439,19 @@
       const device = axisData.find(d => d.device_handle === mapping.deviceHandle);
       if (device && device.axes[mapping.axisName] !== undefined) {
         const axisValue = device.axes[mapping.axisName];
-        const mappingKey = `${mapping.deviceHandle}-${mapping.axisName}-${mapping.sessionId}`;
+        const mappingKey = `${mapping.deviceHandle}-${mapping.axisName}-${mapping.processId}`;
         const lastHardwareValue = lastHardwareAxisValues.get(mappingKey);
         
         // Only update if the hardware axis value has actually changed
         if (lastHardwareValue === undefined || Math.abs(lastHardwareValue - axisValue) > 0.01) {
-          const session = audioSessions.find(s => s.session_id === mapping.sessionId);
+          // Find session by process ID (survives device changes)
+          const session = audioSessions.find(s => s.process_id === mapping.processId);
           
           if (session) {
             try {
-              await invoke("set_session_volume", { sessionId: mapping.sessionId, volume: axisValue });
-              const sessionIndex = audioSessions.findIndex(s => s.session_id === mapping.sessionId);
+              await invoke("set_session_volume", { sessionId: session.session_id, volume: axisValue });
+              // Update local state immediately for responsive UI
+              const sessionIndex = audioSessions.findIndex(s => s.process_id === mapping.processId);
               if (sessionIndex !== -1) {
                 audioSessions[sessionIndex].volume = axisValue;
               }
@@ -421,7 +471,15 @@
     if (isButtonBindingMode && pendingButtonBinding) {
       const buttonPress = detectButtonPress();
       if (buttonPress) {
-        createButtonMapping(buttonPress.deviceHandle, buttonPress.deviceName, buttonPress.buttonName, pendingButtonBinding.sessionId, pendingButtonBinding.sessionName);
+        createButtonMapping(
+          buttonPress.deviceHandle, 
+          buttonPress.deviceName, 
+          buttonPress.buttonName, 
+          pendingButtonBinding.sessionId, 
+          pendingButtonBinding.sessionName,
+          pendingButtonBinding.processId,
+          pendingButtonBinding.processName
+        );
         isButtonBindingMode = false;
         pendingButtonBinding = null;
       }
@@ -443,12 +501,13 @@
         
         // Detect button press (false → true transition)
         if (!previousState && currentState) {
-          const session = audioSessions.find(s => s.session_id === mapping.sessionId);
+          // Find session by process ID (survives device changes)
+          const session = audioSessions.find(s => s.process_id === mapping.processId);
           if (session) {
             const newMuteState = !session.is_muted;
             try {
-              await invoke("set_session_mute", { sessionId: mapping.sessionId, muted: newMuteState });
-              const sessionIndex = audioSessions.findIndex(s => s.session_id === mapping.sessionId);
+              await invoke("set_session_mute", { sessionId: session.session_id, muted: newMuteState });
+              const sessionIndex = audioSessions.findIndex(s => s.process_id === mapping.processId);
               if (sessionIndex !== -1) {
                 audioSessions[sessionIndex].is_muted = newMuteState;
               }
@@ -468,14 +527,14 @@
   }
 
   function cleanupStaleMappings() {
-    const activeSessionIds = new Set(audioSessions.map(s => s.session_id));
+    const activeProcessIds = new Set(audioSessions.map(s => s.process_id));
     
     const oldAxisCount = axisMappings.length;
     const oldButtonCount = buttonMappings.length;
     
-    // Remove mappings for sessions that no longer exist
-    axisMappings = axisMappings.filter(m => activeSessionIds.has(m.sessionId));
-    buttonMappings = buttonMappings.filter(m => activeSessionIds.has(m.sessionId));
+    // Remove mappings for processes that no longer have active audio sessions
+    axisMappings = axisMappings.filter(m => activeProcessIds.has(m.processId));
+    buttonMappings = buttonMappings.filter(m => activeProcessIds.has(m.processId));
     
     const removedAxis = oldAxisCount - axisMappings.length;
     const removedButton = oldButtonCount - buttonMappings.length;
@@ -567,8 +626,8 @@
       {#if boundSessions.length > 0 || isEditMode}
         <div class="mixer-container">
           {#each boundSessions as session (session.session_id)}
-            {@const mapping = axisMappings.find(m => m.sessionId === session.session_id)}
-            {@const buttonMapping = buttonMappings.find(m => m.sessionId === session.session_id)}
+            {@const mapping = axisMappings.find(m => m.processId === session.process_id)}
+            {@const buttonMapping = buttonMappings.find(m => m.processId === session.process_id)}
             
             <div class="channel-strip" class:has-mapping={!!mapping || !!buttonMapping}>
               <!-- Application Name -->
@@ -604,7 +663,7 @@
               {#if mapping}
                 <div class="mapping-badge" title="Volume: {mapping.axisName}">
                   <span>🎮</span>
-                  <button class="btn btn-round btn-badge-small btn-badge-remove" onclick={() => removeMapping(session.session_id)}>✕</button>
+                  <button class="btn btn-round btn-badge-small btn-badge-remove" onclick={() => removeMapping(session.process_id)}>✕</button>
                 </div>
               {:else if isBindingMode && pendingBinding?.sessionId === session.session_id}
                 <div class="binding-active">
@@ -612,7 +671,7 @@
                   <button class="btn btn-round btn-badge-small btn-badge-cancel" onclick={cancelBinding}>✕</button>
                 </div>
               {:else}
-                <button class="btn btn-round btn-channel btn-bind" onclick={() => startAxisBinding(session.session_id, session.display_name)} title="Bind Volume Axis">
+                <button class="btn btn-round btn-channel btn-bind" onclick={() => startAxisBinding(session.session_id, session.display_name, session.process_id, session.process_name)} title="Bind Volume Axis">
                   🎮
                 </button>
               {/if}
@@ -621,7 +680,7 @@
               {#if buttonMapping}
                 <div class="mapping-badge button" title="Mute: {buttonMapping.buttonName}">
                   <span>🔘</span>
-                  <button class="btn btn-round btn-badge-small btn-badge-remove" onclick={() => removeButtonMapping(session.session_id)}>✕</button>
+                  <button class="btn btn-round btn-badge-small btn-badge-remove" onclick={() => removeButtonMapping(session.process_id)}>✕</button>
                 </div>
               {:else if isButtonBindingMode && pendingButtonBinding?.sessionId === session.session_id}
                 <div class="binding-active">
@@ -629,7 +688,7 @@
                   <button class="btn btn-round btn-badge-small btn-badge-cancel" onclick={cancelButtonBinding}>✕</button>
                 </div>
               {:else}
-                <button class="btn btn-round btn-channel btn-bind" onclick={() => startButtonBinding(session.session_id, session.display_name)} title="Bind Mute Button">
+                <button class="btn btn-round btn-channel btn-bind" onclick={() => startButtonBinding(session.session_id, session.display_name, session.process_id, session.process_name)} title="Bind Mute Button">
                   🔘
                 </button>
               {/if}
@@ -647,7 +706,7 @@
                   if (sessionId) {
                     const session = audioSessions.find(s => s.session_id === sessionId);
                     if (session) {
-                      startAxisBinding(session.session_id, session.display_name);
+                      startAxisBinding(session.session_id, session.display_name, session.process_id, session.process_name);
                     }
                     (e.target as HTMLSelectElement).value = '';
                   }
