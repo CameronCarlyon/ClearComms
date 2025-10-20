@@ -604,9 +604,6 @@
         >
           {isEditMode ? '✓' : '✏️'}
         </button>
-        <button class="btn btn-round btn-icon" onclick={refreshAudioSessions} disabled={!audioInitialised} title="Refresh Sessions">
-          🔄
-        </button>
         <button class="btn btn-round btn-close" onclick={quitApplication} title="Quit">
           ✕
         </button>
