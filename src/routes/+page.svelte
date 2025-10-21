@@ -656,38 +656,40 @@
                 {session.is_muted ? '🔇' : '🔊'}
               </button>
 
-              <!-- Axis Binding Control -->
-              {#if mapping}
-                <div class="mapping-badge" title="Volume: {mapping.axisName}">
-                  <span>🎮</span>
-                  <button class="btn btn-round btn-badge-small btn-badge-remove" onclick={() => removeMapping(session.process_id)}>✕</button>
-                </div>
-              {:else if isBindingMode && pendingBinding?.sessionId === session.session_id}
-                <div class="binding-active">
-                  <span class="pulse">⏺</span>
-                  <button class="btn btn-round btn-badge-small btn-badge-cancel" onclick={cancelBinding}>✕</button>
-                </div>
-              {:else}
-                <button class="btn btn-round btn-channel btn-bind" onclick={() => startAxisBinding(session.session_id, session.display_name, session.process_id, session.process_name)} title="Bind Volume Axis">
-                  🎮
-                </button>
-              {/if}
+              <!-- Axis Binding Control (Edit Mode Only) -->
+              {#if isEditMode}
+                {#if mapping}
+                  <div class="mapping-badge" title="Volume: {mapping.axisName}">
+                    <span>🎮</span>
+                    <button class="btn btn-round btn-badge-small btn-badge-remove" onclick={() => removeMapping(session.process_id)}>✕</button>
+                  </div>
+                {:else if isBindingMode && pendingBinding?.sessionId === session.session_id}
+                  <div class="binding-active">
+                    <span class="pulse">⏺</span>
+                    <button class="btn btn-round btn-badge-small btn-badge-cancel" onclick={cancelBinding}>✕</button>
+                  </div>
+                {:else}
+                  <button class="btn btn-round btn-channel btn-bind" onclick={() => startAxisBinding(session.session_id, session.display_name, session.process_id, session.process_name)} title="Bind Volume Axis">
+                    🎮
+                  </button>
+                {/if}
 
-              <!-- Button Binding Control -->
-              {#if buttonMapping}
-                <div class="mapping-badge button" title="Mute: {buttonMapping.buttonName}">
-                  <span>🔘</span>
-                  <button class="btn btn-round btn-badge-small btn-badge-remove" onclick={() => removeButtonMapping(session.process_id)}>✕</button>
-                </div>
-              {:else if isButtonBindingMode && pendingButtonBinding?.sessionId === session.session_id}
-                <div class="binding-active">
-                  <span class="pulse">⏺</span>
-                  <button class="btn btn-round btn-badge-small btn-badge-cancel" onclick={cancelButtonBinding}>✕</button>
-                </div>
-              {:else}
-                <button class="btn btn-round btn-channel btn-bind" onclick={() => startButtonBinding(session.session_id, session.display_name, session.process_id, session.process_name)} title="Bind Mute Button">
-                  🔘
-                </button>
+                <!-- Button Binding Control (Edit Mode Only) -->
+                {#if buttonMapping}
+                  <div class="mapping-badge button" title="Mute: {buttonMapping.buttonName}">
+                    <span>🔘</span>
+                    <button class="btn btn-round btn-badge-small btn-badge-remove" onclick={() => removeButtonMapping(session.process_id)}>✕</button>
+                  </div>
+                {:else if isButtonBindingMode && pendingButtonBinding?.sessionId === session.session_id}
+                  <div class="binding-active">
+                    <span class="pulse">⏺</span>
+                    <button class="btn btn-round btn-badge-small btn-badge-cancel" onclick={cancelButtonBinding}>✕</button>
+                  </div>
+                {:else}
+                  <button class="btn btn-round btn-channel btn-bind" onclick={() => startButtonBinding(session.session_id, session.display_name, session.process_id, session.process_name)} title="Bind Mute Button">
+                    🔘
+                  </button>
+                {/if}
               {/if}
             </div>
           {/each}
