@@ -83,6 +83,7 @@ fn get_process_name(process_id: u32) -> String {
 impl AudioManager {
     /// Create a new audio manager instance
     pub fn new() -> std::result::Result<Self, String> {
+        eprintln!("[Audio] Initialising COM library...");
         // Initialize COM for this thread
         unsafe {
             CoInitializeEx(None, COINIT_APARTMENTTHREADED)
@@ -90,8 +91,10 @@ impl AudioManager {
                 .map_err(|e: Error| format!("Failed to initialize COM: {}", e))?;
         }
         
+        eprintln!("[Audio] Detecting default audio device...");
         // Get initial default device ID
         let device_id = Self::get_default_device_id()?;
+        eprintln!("[Audio] Default device: {}", device_id);
         
         Ok(Self {
             sessions: HashMap::new(),
@@ -208,7 +211,6 @@ impl AudioManager {
                 }
             }
 
-            eprintln!("[Audio] Found {} active audio sessions", sessions.len());
             Ok(sessions)
         }
     }
@@ -258,7 +260,6 @@ impl AudioManager {
                                     session.volume = volume;
                                 }
                                 
-                                eprintln!("[Audio] Set volume for {} to {:.2}", session_id, volume);
                                 return Ok(());
                             }
                         }
@@ -313,7 +314,6 @@ impl AudioManager {
                                     session.is_muted = muted;
                                 }
                                 
-                                eprintln!("[Audio] Set mute for {} to {}", session_id, muted);
                                 return Ok(());
                             }
                         }
@@ -360,6 +360,7 @@ static AUDIO_MANAGER: Mutex<Option<AudioManager>> = Mutex::new(None);
 /// Initialize the audio manager
 #[tauri::command]
 pub fn init_audio_manager() -> std::result::Result<String, String> {
+    eprintln!("[Audio] Initialising audio manager...");
     let manager = AudioManager::new()?;
     
     let mut lock = AUDIO_MANAGER
@@ -368,6 +369,7 @@ pub fn init_audio_manager() -> std::result::Result<String, String> {
     
     *lock = Some(manager);
     
+    eprintln!("[Audio] Audio manager ready");
     Ok("Audio manager initialised successfully".to_string())
 }
 

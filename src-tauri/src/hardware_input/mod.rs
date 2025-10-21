@@ -135,7 +135,6 @@ impl HidInputManager {
             }
         }
 
-        eprintln!("[Input] Found {} joystick devices", self.devices.len());
         self.axis_cache.clear();
         self.button_cache.clear();
         
@@ -267,10 +266,21 @@ static INPUT_MANAGER: Mutex<Option<HidInputManager>> = Mutex::new(None);
 /// Initialise input system and enumerate devices
 #[tauri::command]
 pub fn init_direct_input() -> Result<String, String> {
+    eprintln!("[Input] Initialising HID input manager...");
     let mut manager = HidInputManager::new()?;
+    
+    eprintln!("[Input] Enumerating devices...");
     manager.enumerate_devices()?;
     
     let device_count = manager.get_devices().len();
+    eprintln!("[Input] Found {} joystick device(s)", device_count);
+    
+    // Log device details if any found
+    if device_count > 0 {
+        for device in manager.get_devices() {
+            eprintln!("[Input]   - {}", device.to_display_string());
+        }
+    }
     
     let mut lock = INPUT_MANAGER
         .lock()

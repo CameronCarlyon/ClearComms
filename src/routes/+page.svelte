@@ -21,6 +21,7 @@
     sessionName: string;
     processId: number; // For re-matching after device changes
     processName: string;
+    inverted: boolean; // Reverse axis direction
   }
 
   // Button-to-mute mapping types
@@ -62,6 +63,7 @@
   let lastHardwareAxisValues: Map<string, number> = new Map(); // Track last hardware axis values
   let errorMsg = $state("");
   let isEditMode = $state(false);
+  let previousDisplayCount = $state(-1); // Track previous count to avoid unnecessary resizes
 
   // Computed: Get sessions with bindings (axis OR button mappings)
   $effect(() => {
@@ -77,10 +79,10 @@
     // Window width should only change when bindings change, not when toggling edit mode
     const displayCount = boundSessionIds.size;
     
-    console.log(`[ClearComms] Resize effect: axisMappings=${axisMappings.length}, buttonMappings=${buttonMappings.length}, activeBindings=${displayCount}`);
-    
-    // Resize window to fit bound sessions only
-    if (audioInitialised) {
+    // Only resize if the count has actually changed
+    if (audioInitialised && displayCount !== previousDisplayCount) {
+      console.log(`[ClearComms] Bound session count changed: ${previousDisplayCount} → ${displayCount}`);
+      previousDisplayCount = displayCount;
       resizeWindowToFit(displayCount);
     }
   });
@@ -378,11 +380,21 @@
   function createMapping(deviceHandle: string, deviceName: string, axisName: string, sessionId: string, sessionName: string, processId: number, processName: string) {
     axisMappings = axisMappings.filter(m => m.processId !== processId);
     
-    const newMapping: AxisMapping = { deviceHandle, deviceName, axisName, sessionId, sessionName, processId, processName };
+    const newMapping: AxisMapping = { deviceHandle, deviceName, axisName, sessionId, sessionName, processId, processName, inverted: false };
     axisMappings = [...axisMappings, newMapping];
     
     console.log(`[ClearComms] ✓ Mapped ${deviceName} ${axisName} → ${sessionName}`);
     saveMappings();
+  }
+
+  function toggleAxisInversion(processId: number) {
+    const mapping = axisMappings.find(m => m.processId === processId);
+    if (mapping) {
+      mapping.inverted = !mapping.inverted;
+      axisMappings = [...axisMappings]; // Trigger reactivity
+      console.log(`[ClearComms] Axis inversion ${mapping.inverted ? 'enabled' : 'disabled'} for ${mapping.sessionName}`);
+      saveMappings();
+    }
   }
 
   function removeMapping(processId: number) {
@@ -438,7 +450,13 @@
     for (const mapping of axisMappings) {
       const device = axisData.find(d => d.device_handle === mapping.deviceHandle);
       if (device && device.axes[mapping.axisName] !== undefined) {
-        const axisValue = device.axes[mapping.axisName];
+        let axisValue = device.axes[mapping.axisName];
+        
+        // Apply inversion if enabled
+        if (mapping.inverted) {
+          axisValue = 1.0 - axisValue;
+        }
+        
         const mappingKey = `${mapping.deviceHandle}-${mapping.axisName}-${mapping.processId}`;
         const lastHardwareValue = lastHardwareAxisValues.get(mappingKey);
         
@@ -663,6 +681,15 @@
                     <span>🎮</span>
                     <button class="btn btn-round btn-badge-small btn-badge-remove" onclick={() => removeMapping(session.process_id)}>✕</button>
                   </div>
+                  <!-- Axis Inversion Toggle -->
+                  <button 
+                    class="btn btn-round btn-channel btn-invert" 
+                    class:active={mapping.inverted}
+                    onclick={() => toggleAxisInversion(session.process_id)} 
+                    title={mapping.inverted ? 'Axis Inverted' : 'Normal Axis Direction'}
+                  >
+                    ↕️
+                  </button>
                 {:else if isBindingMode && pendingBinding?.sessionId === session.session_id}
                   <div class="binding-active">
                     <span class="pulse">⏺</span>
@@ -1151,6 +1178,28 @@
 
   .btn-mute.muted:hover {
     background: var(--bg-medium);
+  }
+
+  .btn-invert {
+    font-size: 1.2rem;
+    background: var(--bg-light);
+    color: var(--text-secondary);
+    border: 2px solid var(--border-color);
+  }
+
+  .btn-invert.active {
+    background: var(--text-primary);
+    color: var(--bg-dark);
+    border-color: var(--text-primary);
+  }
+
+  .btn-invert:hover {
+    background: var(--bg-medium);
+    border-color: var(--text-secondary);
+  }
+
+  .btn-invert.active:hover {
+    background: var(--text-secondary);
   }
 
   .mapping-badge {

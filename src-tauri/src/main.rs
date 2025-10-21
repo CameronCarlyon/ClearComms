@@ -25,15 +25,13 @@ fn resize_window_to_content(app: tauri::AppHandle, session_count: usize) -> Resu
     
     let new_height = 1000;
     
-    println!("[ClearComms] Resizing window: session_count={}, new_width={}, new_height={}", session_count, new_width, new_height);
-    
     if let Some(window) = app.get_webview_window("main") {
         match window.set_size(tauri::Size::Physical(tauri::PhysicalSize {
             width: new_width,
             height: new_height,
         })) {
-            Ok(_) => println!("[ClearComms] Successfully set window size"),
-            Err(e) => println!("[ClearComms] ERROR setting window size: {:?}", e),
+            Ok(_) => {},
+            Err(e) => eprintln!("[ClearComms] ERROR setting window size: {:?}", e),
         }
         
         // Re-position window after resize to keep it bottom-right with proper padding
@@ -42,8 +40,7 @@ fn resize_window_to_content(app: tauri::AppHandle, session_count: usize) -> Resu
         return Ok(format!("Window resized to {}x{} for {} session(s)", new_width, new_height, session_count));
     }
     
-    println!("[ClearComms] WARNING: Main window not found");
-    Ok("Window size unchanged".to_string())
+    Err("Main window not found".to_string())
 }
 
 /// Show the main application window
@@ -210,9 +207,6 @@ fn position_window_bottom_right(window: &tauri::WebviewWindow) {
             
             let x = screen_width - window_width - padding;
             let y = screen_height - window_height - taskbar_height - padding;
-            
-            println!("Screen: {}x{}, Window: {}x{}, Position: ({}, {}), Taskbar: {}", 
-                     screen_width, screen_height, window_width, window_height, x, y, taskbar_height);
             
             let position = PhysicalPosition::new(x, y);
             let _ = window.set_position(position);
