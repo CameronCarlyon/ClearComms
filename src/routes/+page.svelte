@@ -64,6 +64,7 @@
   let errorMsg = $state("");
   let isEditMode = $state(false);
   let previousDisplayCount = $state(-1); // Track previous count to avoid unnecessary resizes
+  let preMuteVolumes = $state<Map<string, number>>(new Map()); // Store volume before muting
 
   // Computed: Get sessions with bindings (axis OR button mappings)
   $effect(() => {
@@ -105,6 +106,19 @@
     ]);
     
     return audioSessions.filter(s => !boundProcessIds.has(s.process_id));
+  }
+
+  // Format process name to be more user-friendly
+  function formatProcessName(processName: string): string {
+    // Remove .exe extension
+    let name = processName.replace(/\.exe$/i, '');
+    
+    // Capitalize first letter of each word
+    name = name.split(/[-_\s]/).map(word => 
+      word.charAt(0).toUpperCase() + word.slice(1).toLowerCase()
+    ).join(' ');
+    
+    return name;
   }
 
   function toggleEditMode() {
@@ -289,8 +303,51 @@
     }
   }
 
+  async function animateVolume(sessionId: string, fromVolume: number, toVolume: number, durationMs: number = 300) {
+    const startTime = Date.now();
+    const volumeDelta = toVolume - fromVolume;
+    
+    const animate = async () => {
+      const elapsed = Date.now() - startTime;
+      const progress = Math.min(elapsed / durationMs, 1);
+      
+      // Ease-out curve for smooth deceleration
+      const easeOut = 1 - Math.pow(1 - progress, 3);
+      const currentVolume = fromVolume + (volumeDelta * easeOut);
+      
+      try {
+        await invoke("set_session_volume", { sessionId, volume: currentVolume });
+        await refreshAudioSessions();
+      } catch (error) {
+        console.error("[ClearComms] Error animating volume:", error);
+        return;
+      }
+      
+      if (progress < 1) {
+        requestAnimationFrame(animate);
+      }
+    };
+    
+    await animate();
+  }
+
   async function setSessionMute(sessionId: string, muted: boolean) {
     try {
+      // Find the current session
+      const session = audioSessions.find(s => s.session_id === sessionId);
+      
+      if (muted && session) {
+        // Store current volume before muting
+        preMuteVolumes.set(sessionId, session.volume);
+        // Animate volume to 0
+        await animateVolume(sessionId, session.volume, 0);
+      } else if (!muted) {
+        // Restore previous volume or default to 0.5
+        const previousVolume = preMuteVolumes.get(sessionId) ?? 0.5;
+        await animateVolume(sessionId, 0, previousVolume);
+        preMuteVolumes.delete(sessionId);
+      }
+      
       await invoke("set_session_mute", { sessionId, muted });
       console.log(`[ClearComms] Set mute for ${sessionId} to ${muted}`);
       await refreshAudioSessions();
@@ -646,7 +703,7 @@
             
             <div class="channel-strip" class:has-mapping={!!mapping || !!buttonMapping}>
               <!-- Application Name -->
-              <span class="app-name" title={session.display_name}>{session.process_name}</span>
+              <span class="app-name" title={session.display_name}>{formatProcessName(session.process_name)}</span>
 
               <!-- Horizontal Volume Bar -->
               <div class="volume-bar-container">
@@ -660,19 +717,44 @@
                   style="--volume-percent: {session.volume * 100}%"
                   oninput={(e) => setSessionVolume(session.session_id, parseFloat((e.target as HTMLInputElement).value))}
                   onchange={(e) => setSessionVolume(session.session_id, parseFloat((e.target as HTMLInputElement).value))}
+                  onwheel={(e) => {
+                    e.preventDefault();
+                    const delta = e.deltaY > 0 ? -0.05 : 0.05; // Scroll down = decrease, scroll up = increase
+                    const newVolume = Math.max(0, Math.min(1, session.volume + delta));
+                    setSessionVolume(session.session_id, newVolume);
+                  }}
                 />
-                <span class="volume-readout">{(session.volume * 100).toFixed(0)}%</span>
               </div>
 
-              <!-- Mute Button -->
-              <button
-                class="btn btn-round btn-channel btn-mute"
-                class:muted={session.is_muted}
-                onclick={() => setSessionMute(session.session_id, !session.is_muted)}
-                title={session.is_muted ? 'Unmute' : 'Mute'}
-              >
-                {session.is_muted ? '🔇' : '🔊'}
-              </button>
+              <!-- Mute Button / Button Binding Control -->
+              {#if isEditMode}
+                <!-- Button Binding Control (Edit Mode) -->
+                {#if buttonMapping}
+                  <div class="mapping-badge button" title="Mute: {buttonMapping.buttonName}">
+                    <span>🔘</span>
+                    <button class="btn btn-round btn-badge-small btn-badge-remove" onclick={() => removeButtonMapping(session.process_id)}>✕</button>
+                  </div>
+                {:else if isButtonBindingMode && pendingButtonBinding?.sessionId === session.session_id}
+                  <div class="binding-active">
+                    <span class="pulse">⏺</span>
+                    <button class="btn btn-round btn-badge-small btn-badge-cancel" onclick={cancelButtonBinding}>✕</button>
+                  </div>
+                {:else}
+                  <button class="btn btn-round btn-channel btn-bind" onclick={() => startButtonBinding(session.session_id, session.display_name, session.process_id, session.process_name)} title="Bind Mute Button">
+                    🔘
+                  </button>
+                {/if}
+              {:else}
+                <!-- Mute Button (Normal Mode) -->
+                <button
+                  class="btn btn-round btn-channel btn-mute"
+                  class:muted={session.is_muted}
+                  onclick={() => setSessionMute(session.session_id, !session.is_muted)}
+                  title={session.is_muted ? 'Unmute' : 'Mute'}
+                >
+                  {session.is_muted ? '🔇' : '🔊'}
+                </button>
+              {/if}
 
               <!-- Axis Binding Control (Edit Mode Only) -->
               {#if isEditMode}
@@ -700,23 +782,6 @@
                     🎮
                   </button>
                 {/if}
-
-                <!-- Button Binding Control (Edit Mode Only) -->
-                {#if buttonMapping}
-                  <div class="mapping-badge button" title="Mute: {buttonMapping.buttonName}">
-                    <span>🔘</span>
-                    <button class="btn btn-round btn-badge-small btn-badge-remove" onclick={() => removeButtonMapping(session.process_id)}>✕</button>
-                  </div>
-                {:else if isButtonBindingMode && pendingButtonBinding?.sessionId === session.session_id}
-                  <div class="binding-active">
-                    <span class="pulse">⏺</span>
-                    <button class="btn btn-round btn-badge-small btn-badge-cancel" onclick={cancelButtonBinding}>✕</button>
-                  </div>
-                {:else}
-                  <button class="btn btn-round btn-channel btn-bind" onclick={() => startButtonBinding(session.session_id, session.display_name, session.process_id, session.process_name)} title="Bind Mute Button">
-                    🔘
-                  </button>
-                {/if}
               {/if}
             </div>
           {/each}
@@ -739,7 +804,7 @@
                 }}>
                   <option value="">Select App...</option>
                   {#each availableSessions as session}
-                    <option value={session.session_id}>{session.process_name}</option>
+                    <option value={session.session_id}>{formatProcessName(session.process_name)}</option>
                   {/each}
                 </select>
                 <p class="ghost-hint">Select an app to bind volume control</p>
@@ -1046,9 +1111,7 @@
 
   /* ===== APP NAME ===== */
   .app-name {
-    width: 100%;
     text-align: center;
-    margin-bottom: 12px;
     font-size: 0.8rem;
     font-weight: 700;
     color: var(--text-primary);
@@ -1100,6 +1163,7 @@
     );
     border-radius: 23px;
     cursor: pointer;
+    transition: background 0.3s ease-out;
   }
 
   .volume-slider::-moz-range-track {
@@ -1108,6 +1172,7 @@
     background: var(--bg-light);
     border-radius: 23px;
     cursor: pointer;
+    transition: background 0.3s ease-out;
   }
 
   /* Progress fill for Firefox */
@@ -1115,6 +1180,7 @@
     width: 46px;
     background: #fff;
     border-radius: 0 0 23px 23px;
+    transition: background 0.3s ease-out;
   }
 
   /* Hide the thumb - we want just the fill effect */
@@ -1146,15 +1212,6 @@
 
   .volume-slider:disabled::-webkit-slider-runnable-track {
     cursor: not-allowed;
-  }
-
-  .volume-readout {
-    font-size: 0.7rem;
-    font-weight: 700;
-    color: var(--text-secondary);
-    text-align: center;
-    min-width: 40px;
-    letter-spacing: -0.3px;
   }
 
   /* ===== CHANNEL BUTTONS ===== */
