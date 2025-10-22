@@ -342,6 +342,11 @@
     try {
       await invoke("set_session_volume", { sessionId, volume });
       console.log(`[ClearComms] Set volume for ${sessionId} to ${volume.toFixed(2)}`);
+      
+      // Auto-update mute state based on volume
+      const shouldBeMuted = volume === 0;
+      await invoke("set_session_mute", { sessionId, muted: shouldBeMuted });
+      
       await refreshAudioSessions();
     } catch (error) {
       console.error("[ClearComms] Error setting volume:", error);
@@ -393,8 +398,10 @@
       const session = audioSessions.find(s => s.session_id === sessionId);
       
       if (muted && session) {
-        // Store current volume before muting
-        preMuteVolumes.set(sessionId, session.volume);
+        // Store current volume before muting (only if not already zero)
+        if (session.volume > 0) {
+          preMuteVolumes.set(sessionId, session.volume);
+        }
         // Animate volume to 0
         await animateVolume(sessionId, session.volume, 0);
       } else if (!muted) {
@@ -581,10 +588,16 @@
           if (session) {
             try {
               await invoke("set_session_volume", { sessionId: session.session_id, volume: axisValue });
+              
+              // Auto-update mute state based on volume
+              const shouldBeMuted = axisValue === 0;
+              await invoke("set_session_mute", { sessionId: session.session_id, muted: shouldBeMuted });
+              
               // Update local state immediately for responsive UI
               const sessionIndex = audioSessions.findIndex(s => s.session_id === session.session_id);
               if (sessionIndex !== -1) {
                 audioSessions[sessionIndex].volume = axisValue;
+                audioSessions[sessionIndex].is_muted = shouldBeMuted;
               }
               // Store the new hardware value
               lastHardwareAxisValues.set(mappingKey, axisValue);
@@ -909,7 +922,7 @@
 
   <footer>
     <p style="font-size: 0.8rem; color: var(--text-muted); text-align: center;">
-      Crafted by Cameron Carlyon | &copy; {new Date().getFullYear()}
+      Crafted by <a href="https://cameroncarlyon.com" onclick={async (e) => { e.preventDefault(); await invoke('open_url', { url: 'https://cameroncarlyon.com' }); }} style="color: var(--text-secondary); text-decoration: none; cursor: pointer;">Cameron Carlyon</a> | &copy; {new Date().getFullYear()}
     </p>
   </footer>
 </main>

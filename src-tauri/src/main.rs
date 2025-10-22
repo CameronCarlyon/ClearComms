@@ -89,6 +89,13 @@ fn quit_application() {
     std::process::exit(0);
 }
 
+/// Open a URL in the default browser
+#[tauri::command]
+async fn open_url(url: String) -> Result<(), String> {
+    tauri_plugin_opener::open_url(url, None::<&str>)
+        .map_err(|e| format!("Failed to open URL: {}", e))
+}
+
 fn main() {
     tauri::Builder::default()
         .setup(|app| {
@@ -179,7 +186,9 @@ fn main() {
             hide_main_window,
             toggle_pin_window,
             quit_application,
+            open_url,
         ])
+        .plugin(tauri_plugin_opener::init())
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
 
