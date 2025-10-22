@@ -2,6 +2,8 @@
   import { invoke } from "@tauri-apps/api/core";
   import { onMount, onDestroy } from "svelte";
 
+  console.log("[ClearComms] Component script loaded");
+
   // Audio session types
   interface AudioSession {
     session_id: string;
@@ -88,24 +90,67 @@
     }
   });
 
-  // Computed: Get bound audio sessions
+  // Computed: Get bound audio sessions (deduplicated by process_name)
   function getBoundSessions(): AudioSession[] {
-    const boundProcessIds = new Set([
-      ...axisMappings.map(m => m.processId),
-      ...buttonMappings.map(m => m.processId)
+    const boundProcessNames = new Set([
+      ...axisMappings.map(m => m.processName),
+      ...buttonMappings.map(m => m.processName)
     ]);
     
-    return audioSessions.filter(s => boundProcessIds.has(s.process_id));
+    const sessions: AudioSession[] = [];
+    const foundProcessNames = new Set<string>();
+    
+    // Add all active bound sessions (match by process_name, but only take first occurrence)
+    for (const session of audioSessions) {
+      if (boundProcessNames.has(session.process_name) && !foundProcessNames.has(session.process_name)) {
+        sessions.push(session);
+        foundProcessNames.add(session.process_name);
+      }
+    }
+    
+    // Add placeholder sessions for bound apps that aren't currently active
+    for (const mapping of axisMappings) {
+      if (!foundProcessNames.has(mapping.processName)) {
+        console.log(`[ClearComms] Creating placeholder for ${mapping.processName} (axis binding)`);
+        sessions.push({
+          session_id: `placeholder_${mapping.processName}`,
+          display_name: mapping.sessionName,
+          process_id: 0,
+          process_name: mapping.processName,
+          volume: 0,
+          is_muted: true
+        });
+        foundProcessNames.add(mapping.processName);
+      }
+    }
+    
+    // Check button mappings too (in case app only has button binding, no axis)
+    for (const mapping of buttonMappings) {
+      if (!foundProcessNames.has(mapping.processName)) {
+        console.log(`[ClearComms] Creating placeholder for ${mapping.processName} (button binding)`);
+        sessions.push({
+          session_id: `placeholder_${mapping.processName}`,
+          display_name: mapping.sessionName,
+          process_id: 0,
+          process_name: mapping.processName,
+          volume: 0,
+          is_muted: true
+        });
+        foundProcessNames.add(mapping.processName);
+      }
+    }
+    
+    return sessions;
   }
 
   // Computed: Get available (unbound) audio sessions for dropdown
   function getAvailableSessions(): AudioSession[] {
-    const boundProcessIds = new Set([
-      ...axisMappings.map(m => m.processId),
-      ...buttonMappings.map(m => m.processId)
+    const boundProcessNames = new Set([
+      ...axisMappings.map(m => m.processName),
+      ...buttonMappings.map(m => m.processName)
     ]);
     
-    return audioSessions.filter(s => !boundProcessIds.has(s.process_id));
+    return audioSessions.filter(s => !boundProcessNames.has(s.process_name));
   }
 
   // Format process name to be more user-friendly
@@ -268,10 +313,6 @@
     try {
       const sessions = await invoke<AudioSession[]>("get_audio_sessions");
       audioSessions = sessions;
-      console.log(`[ClearComms] Found ${sessions.length} audio session(s):`);
-      sessions.forEach(s => {
-        console.log(`  - ${s.process_name} (${s.display_name}) [PID: ${s.process_id}]`);
-      });
       
       // Clean up stale mappings for sessions that no longer exist
       cleanupStaleMappings();
@@ -293,6 +334,11 @@
   }
 
   async function setSessionVolume(sessionId: string, volume: number) {
+    // Skip placeholder sessions (inactive apps)
+    if (sessionId.startsWith('placeholder_')) {
+      return;
+    }
+    
     try {
       await invoke("set_session_volume", { sessionId, volume });
       console.log(`[ClearComms] Set volume for ${sessionId} to ${volume.toFixed(2)}`);
@@ -304,6 +350,11 @@
   }
 
   async function animateVolume(sessionId: string, fromVolume: number, toVolume: number, durationMs: number = 300) {
+    // Skip placeholder sessions (inactive apps)
+    if (sessionId.startsWith('placeholder_')) {
+      return;
+    }
+    
     const startTime = Date.now();
     const volumeDelta = toVolume - fromVolume;
     
@@ -332,6 +383,11 @@
   }
 
   async function setSessionMute(sessionId: string, muted: boolean) {
+    // Skip placeholder sessions (inactive apps)
+    if (sessionId.startsWith('placeholder_')) {
+      return;
+    }
+    
     try {
       // Find the current session
       const session = audioSessions.find(s => s.session_id === sessionId);
@@ -435,7 +491,7 @@
   }
 
   function createMapping(deviceHandle: string, deviceName: string, axisName: string, sessionId: string, sessionName: string, processId: number, processName: string) {
-    axisMappings = axisMappings.filter(m => m.processId !== processId);
+    axisMappings = axisMappings.filter(m => m.processName !== processName);
     
     const newMapping: AxisMapping = { deviceHandle, deviceName, axisName, sessionId, sessionName, processId, processName, inverted: false };
     axisMappings = [...axisMappings, newMapping];
@@ -444,8 +500,8 @@
     saveMappings();
   }
 
-  function toggleAxisInversion(processId: number) {
-    const mapping = axisMappings.find(m => m.processId === processId);
+  function toggleAxisInversion(processName: string) {
+    const mapping = axisMappings.find(m => m.processName === processName);
     if (mapping) {
       mapping.inverted = !mapping.inverted;
       axisMappings = [...axisMappings]; // Trigger reactivity
@@ -454,18 +510,18 @@
     }
   }
 
-  function removeMapping(processId: number) {
-    const mapping = axisMappings.find(m => m.processId === processId);
+  function removeMapping(processName: string) {
+    const mapping = axisMappings.find(m => m.processName === processName);
     if (mapping) {
       console.log(`[ClearComms] Removed mapping: ${mapping.deviceName} ${mapping.axisName} → ${mapping.sessionName}`);
     }
-    axisMappings = axisMappings.filter(m => m.processId !== processId);
+    axisMappings = axisMappings.filter(m => m.processName !== processName);
     saveMappings();
   }
 
   function createButtonMapping(deviceHandle: string, deviceName: string, buttonName: string, sessionId: string, sessionName: string, processId: number, processName: string) {
     // Remove existing button mapping for this process (one button per process)
-    buttonMappings = buttonMappings.filter(m => m.processId !== processId);
+    buttonMappings = buttonMappings.filter(m => m.processName !== processName);
     
     const newMapping: ButtonMapping = { deviceHandle, deviceName, buttonName, sessionId, sessionName, processId, processName };
     buttonMappings = [...buttonMappings, newMapping];
@@ -474,12 +530,12 @@
     saveButtonMappings();
   }
 
-  function removeButtonMapping(processId: number) {
-    const mapping = buttonMappings.find(m => m.processId === processId);
+  function removeButtonMapping(processName: string) {
+    const mapping = buttonMappings.find(m => m.processName === processName);
     if (mapping) {
       console.log(`[ClearComms] Removed button mapping: ${mapping.deviceName} ${mapping.buttonName} → Mute ${mapping.sessionName}`);
     }
-    buttonMappings = buttonMappings.filter(m => m.processId !== processId);
+    buttonMappings = buttonMappings.filter(m => m.processName !== processName);
     saveButtonMappings();
   }
 
@@ -514,19 +570,19 @@
           axisValue = 1.0 - axisValue;
         }
         
-        const mappingKey = `${mapping.deviceHandle}-${mapping.axisName}-${mapping.processId}`;
+        const mappingKey = `${mapping.deviceHandle}-${mapping.axisName}-${mapping.processName}`;
         const lastHardwareValue = lastHardwareAxisValues.get(mappingKey);
         
         // Only update if the hardware axis value has actually changed
         if (lastHardwareValue === undefined || Math.abs(lastHardwareValue - axisValue) > 0.01) {
-          // Find session by process ID (survives device changes)
-          const session = audioSessions.find(s => s.process_id === mapping.processId);
+          // Find session by process name (survives app restarts)
+          const session = audioSessions.find(s => s.process_name === mapping.processName);
           
           if (session) {
             try {
               await invoke("set_session_volume", { sessionId: session.session_id, volume: axisValue });
               // Update local state immediately for responsive UI
-              const sessionIndex = audioSessions.findIndex(s => s.process_id === mapping.processId);
+              const sessionIndex = audioSessions.findIndex(s => s.session_id === session.session_id);
               if (sessionIndex !== -1) {
                 audioSessions[sessionIndex].volume = axisValue;
               }
@@ -576,13 +632,13 @@
         
         // Detect button press (false → true transition)
         if (!previousState && currentState) {
-          // Find session by process ID (survives device changes)
-          const session = audioSessions.find(s => s.process_id === mapping.processId);
+          // Find session by process name (survives app restarts)
+          const session = audioSessions.find(s => s.process_name === mapping.processName);
           if (session) {
             const newMuteState = !session.is_muted;
             try {
               await invoke("set_session_mute", { sessionId: session.session_id, muted: newMuteState });
-              const sessionIndex = audioSessions.findIndex(s => s.process_id === mapping.processId);
+              const sessionIndex = audioSessions.findIndex(s => s.session_id === session.session_id);
               if (sessionIndex !== -1) {
                 audioSessions[sessionIndex].is_muted = newMuteState;
               }
@@ -602,40 +658,32 @@
   }
 
   function cleanupStaleMappings() {
-    const activeProcessIds = new Set(audioSessions.map(s => s.process_id));
-    
-    const oldAxisCount = axisMappings.length;
-    const oldButtonCount = buttonMappings.length;
-    
-    // Remove mappings for processes that no longer have active audio sessions
-    axisMappings = axisMappings.filter(m => activeProcessIds.has(m.processId));
-    buttonMappings = buttonMappings.filter(m => activeProcessIds.has(m.processId));
-    
-    const removedAxis = oldAxisCount - axisMappings.length;
-    const removedButton = oldButtonCount - buttonMappings.length;
-    
-    if (removedAxis > 0 || removedButton > 0) {
-      console.log(`[ClearComms] Cleaned up ${removedAxis} stale axis mapping(s) and ${removedButton} stale button mapping(s)`);
-      saveMappings();
-      saveButtonMappings();
-    }
+    // DISABLED: We want mappings to persist even when apps are closed
+    // This allows placeholders to show inactive bound apps
+    // Mappings are now matched by processName which persists across app restarts
+    return;
   }
 
   function saveMappings() {
     try {
       localStorage.setItem('clearcomms_axis_mappings', JSON.stringify(axisMappings));
-      console.log("[ClearComms] Mappings saved");
+      console.log("[ClearComms] Axis mappings saved:", axisMappings);
     } catch (error) {
       console.error("[ClearComms] Error saving mappings:", error);
     }
   }
 
   function loadMappings() {
+    console.log("[ClearComms] loadMappings() called");
     try {
       const saved = localStorage.getItem('clearcomms_axis_mappings');
+      console.log("[ClearComms] localStorage data:", saved);
       if (saved) {
         axisMappings = JSON.parse(saved);
-        console.log(`[ClearComms] Loaded ${axisMappings.length} axis mapping(s) from storage`);
+        console.log(`[ClearComms] Loaded ${axisMappings.length} axis mapping(s):`);
+        console.log(axisMappings);
+      } else {
+        console.log("[ClearComms] No saved axis mappings found");
       }
     } catch (error) {
       console.error("[ClearComms] Error loading mappings:", error);
@@ -645,18 +693,23 @@
   function saveButtonMappings() {
     try {
       localStorage.setItem('clearcomms_button_mappings', JSON.stringify(buttonMappings));
-      console.log("[ClearComms] Button mappings saved");
+      console.log("[ClearComms] Button mappings saved:", buttonMappings);
     } catch (error) {
       console.error("[ClearComms] Error saving button mappings:", error);
     }
   }
 
   function loadButtonMappings() {
+    console.log("[ClearComms] loadButtonMappings() called");
     try {
       const saved = localStorage.getItem('clearcomms_button_mappings');
+      console.log("[ClearComms] localStorage data:", saved);
       if (saved) {
         buttonMappings = JSON.parse(saved);
-        console.log(`[ClearComms] Loaded ${buttonMappings.length} button mapping(s) from storage`);
+        console.log(`[ClearComms] Loaded ${buttonMappings.length} button mapping(s):`);
+        console.log(buttonMappings);
+      } else {
+        console.log("[ClearComms] No saved button mappings found");
       }
     } catch (error) {
       console.error("[ClearComms] Error loading button mappings:", error);
@@ -698,10 +751,11 @@
       {#if boundSessions.length > 0 || isEditMode}
         <div class="mixer-container">
           {#each boundSessions as session (session.session_id)}
-            {@const mapping = axisMappings.find(m => m.processId === session.process_id)}
-            {@const buttonMapping = buttonMappings.find(m => m.processId === session.process_id)}
+            {@const mapping = axisMappings.find(m => m.processName === session.process_name)}
+            {@const buttonMapping = buttonMappings.find(m => m.processName === session.process_name)}
+            {@const isPlaceholder = session.session_id.startsWith('placeholder_')}
             
-            <div class="channel-strip" class:has-mapping={!!mapping || !!buttonMapping}>
+            <div class="channel-strip" class:has-mapping={!!mapping || !!buttonMapping} class:inactive={isPlaceholder}>
               <!-- Application Name -->
               <span class="app-name" title={session.display_name}>{formatProcessName(session.process_name)}</span>
 
@@ -732,7 +786,7 @@
                 {#if buttonMapping}
                   <div class="mapping-badge button" title="Mute: {buttonMapping.buttonName}">
                     <span>🔘</span>
-                    <button class="btn btn-round btn-badge-small btn-badge-remove" onclick={() => removeButtonMapping(session.process_id)}>✕</button>
+                    <button class="btn btn-round btn-badge-small btn-badge-remove" onclick={() => removeButtonMapping(session.process_name)}>✕</button>
                   </div>
                 {:else if isButtonBindingMode && pendingButtonBinding?.sessionId === session.session_id}
                   <div class="binding-active">
@@ -761,13 +815,13 @@
                 {#if mapping}
                   <div class="mapping-badge" title="Volume: {mapping.axisName}">
                     <span>🎮</span>
-                    <button class="btn btn-round btn-badge-small btn-badge-remove" onclick={() => removeMapping(session.process_id)}>✕</button>
+                    <button class="btn btn-round btn-badge-small btn-badge-remove" onclick={() => removeMapping(session.process_name)}>✕</button>
                   </div>
                   <!-- Axis Inversion Toggle -->
                   <button 
                     class="btn btn-round btn-channel btn-invert" 
                     class:active={mapping.inverted}
-                    onclick={() => toggleAxisInversion(session.process_id)} 
+                    onclick={() => toggleAxisInversion(session.process_name)} 
                     title={mapping.inverted ? 'Axis Inverted' : 'Normal Axis Direction'}
                   >
                     ↕️
@@ -789,28 +843,52 @@
           <!-- Ghost Column (Add New Binding) - Only in Edit Mode -->
           {#if isEditMode}
             <div class="channel-strip ghost-column">
-              <span class="app-name ghost">Add Binding</span>
-
-              {#if availableSessions.length > 0}
-                <select class="app-dropdown" onchange={(e) => {
-                  const sessionId = (e.target as HTMLSelectElement).value;
-                  if (sessionId) {
-                    const session = audioSessions.find(s => s.session_id === sessionId);
-                    if (session) {
-                      startAxisBinding(session.session_id, session.display_name, session.process_id, session.process_name);
+              <!-- Application Name -->
+              <span class="app-name ghost">
+                {#if availableSessions.length > 0}
+                  <select class="app-dropdown-inline" onchange={(e) => {
+                    const sessionId = (e.target as HTMLSelectElement).value;
+                    if (sessionId) {
+                      const session = audioSessions.find(s => s.session_id === sessionId);
+                      if (session) {
+                        startAxisBinding(session.session_id, session.display_name, session.process_id, session.process_name);
+                      }
+                      (e.target as HTMLSelectElement).value = '';
                     }
-                    (e.target as HTMLSelectElement).value = '';
-                  }
-                }}>
-                  <option value="">Select App...</option>
-                  {#each availableSessions as session}
-                    <option value={session.session_id}>{formatProcessName(session.process_name)}</option>
-                  {/each}
-                </select>
-                <p class="ghost-hint">Select an app to bind volume control</p>
-              {:else}
-                <p class="ghost-hint empty">All apps are bound</p>
-              {/if}
+                  }}>
+                    <option value="">Select App...</option>
+                    {#each availableSessions as session}
+                      <option value={session.session_id}>{formatProcessName(session.process_name)}</option>
+                    {/each}
+                  </select>
+                {:else}
+                  All Bound
+                {/if}
+              </span>
+
+              <!-- Horizontal Volume Bar (Disabled) -->
+              <div class="volume-bar-container">
+                <input
+                  type="range"
+                  class="volume-slider"
+                  min="0"
+                  max="1"
+                  step="0.01"
+                  value={0.5}
+                  style="--volume-percent: 50%"
+                  disabled
+                />
+              </div>
+
+              <!-- Ghost Mute Button -->
+              <button class="btn btn-round btn-channel btn-bind" disabled title="Select an app first">
+                🔘
+              </button>
+
+              <!-- Ghost Axis Binding Button -->
+              <button class="btn btn-round btn-channel btn-bind" disabled title="Select an app first">
+                🎮
+              </button>
             </div>
           {/if}
         </div>
@@ -1059,23 +1137,67 @@
     transition: all 0.2s ease;
   }
 
+  /* Inactive (placeholder) channel styling */
+  .channel-strip.inactive {
+    opacity: 0.5;
+  }
+
+  .channel-strip.inactive .volume-slider {
+    pointer-events: none;
+  }
+
+  .channel-strip.inactive .app-name {
+    color: var(--text-muted);
+  }
+
   /* ===== GHOST COLUMN ===== */
   .channel-strip.ghost-column {
-    background: transparent;
+    opacity: 0.5;
     border: 2px dashed var(--border-color);
-    min-height: 320px;
-    justify-content: flex-start;
   }
 
   .channel-strip.ghost-column:hover {
-    background: var(--bg-medium);
+    opacity: 0.7;
     border-color: var(--text-secondary);
+  }
+
+  .channel-strip.ghost-column .volume-slider {
+    pointer-events: none;
+  }
+
+  .channel-strip.ghost-column .btn:disabled {
+    cursor: not-allowed;
+    opacity: 0.6;
+  }
+
+  .app-dropdown-inline {
+    background: transparent;
+    border: none;
+    color: var(--text-primary);
+    font-size: 0.8rem;
+    font-weight: 700;
+    cursor: pointer;
+    outline: none;
+    text-align: center;
+    width: 100%;
+    padding: 0;
+    letter-spacing: -0.2px;
+    appearance: none;
+    -webkit-appearance: none;
+  }
+
+  .app-dropdown-inline:hover {
+    color: var(--text-secondary);
+  }
+
+  .app-dropdown-inline option {
+    background: var(--bg-dark);
+    color: var(--text-primary);
   }
 
   .app-dropdown {
     width: 100%;
-    padding: 10px;
-    margin-top: 12px;
+    padding: 8px;
     background: var(--bg-light);
     border: 1px solid var(--border-color);
     border-radius: 8px;
@@ -1094,19 +1216,6 @@
   .app-dropdown:focus {
     outline: none;
     border-color: var(--text-primary);
-  }
-
-  .ghost-hint {
-    font-size: 0.65rem;
-    color: var(--text-muted);
-    text-align: center;
-    margin: 0;
-    padding: 0 8px;
-    line-height: 1.4;
-  }
-
-  .ghost-hint.empty {
-    color: var(--border-color);
   }
 
   /* ===== APP NAME ===== */
