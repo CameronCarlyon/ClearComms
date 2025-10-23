@@ -72,21 +72,23 @@
 
   // Computed: Get sessions with bindings (axis OR button mappings)
   $effect(() => {
-    // Only count mappings for sessions that actually exist
-    const activeSessionIds = new Set(audioSessions.map(s => s.session_id));
-    
-    const boundSessionIds = new Set([
-      ...axisMappings.filter(m => activeSessionIds.has(m.sessionId)).map(m => m.sessionId),
-      ...buttonMappings.filter(m => activeSessionIds.has(m.sessionId)).map(m => m.sessionId)
+    // Count all unique bound process names (includes placeholders for inactive apps)
+    const boundProcessNames = new Set([
+      ...axisMappings.map(m => m.processName),
+      ...buttonMappings.map(m => m.processName)
     ]);
     
-    // Calculate display count based only on bound sessions (not edit mode)
-    // Window width should only change when bindings change, not when toggling edit mode
-    const displayCount = boundSessionIds.size;
+    // Calculate display count based on all bound processes (active + inactive)
+    let displayCount = boundProcessNames.size;
+    
+    // Add ghost column width if edit mode is enabled with 2+ bound sessions
+    if (isEditMode && displayCount >= 2) {
+      displayCount += 1;
+    }
     
     // Only resize if the count has actually changed
     if (audioInitialised && displayCount !== previousDisplayCount) {
-      console.log(`[ClearComms] Bound session count changed: ${previousDisplayCount} → ${displayCount}`);
+      console.log(`[ClearComms] Display count changed: ${previousDisplayCount} → ${displayCount} (Edit mode: ${isEditMode}, Bound processes: ${boundProcessNames.size})`);
       previousDisplayCount = displayCount;
       resizeWindowToFit(displayCount);
     }
@@ -157,6 +159,18 @@
 
   // Format process name to be more user-friendly
   function formatProcessName(processName: string): string {
+    // Custom name mappings for specific applications
+    const customNames: Record<string, string> = {
+      'vpilot.exe': 'vPilot',
+      'couatl.exe': 'GSX'
+    };
+    
+    // Check for custom name first (case-insensitive)
+    const lowerProcessName = processName.toLowerCase();
+    if (customNames[lowerProcessName]) {
+      return customNames[lowerProcessName];
+    }
+    
     // Remove .exe extension
     let name = processName.replace(/\.exe$/i, '');
     
@@ -647,6 +661,14 @@
           axisValue = 1.0 - axisValue;
         }
         
+        // Apply deadzones at extremes (snap to 0% or 100%)
+        const deadzoneThreshold = 0.01; // 1% deadzone at each end
+        if (axisValue < deadzoneThreshold) {
+          axisValue = 0.0;
+        } else if (axisValue > (1.0 - deadzoneThreshold)) {
+          axisValue = 1.0;
+        }
+        
         const mappingKey = `${mapping.deviceHandle}-${mapping.axisName}-${mapping.processName}`;
         const lastHardwareValue = lastHardwareAxisValues.get(mappingKey);
         
@@ -843,7 +865,7 @@
               <span class="app-name" title={session.display_name}>{formatProcessName(session.process_name)}</span>
 
               <!-- Horizontal Volume Bar -->
-              <div class="volume-bar-container"></div>
+              <div class="volume-bar-container">
                 <input
                   type="range"
                   class="volume-slider"
