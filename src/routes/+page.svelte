@@ -67,6 +67,8 @@
   let isEditMode = $state(false);
   let previousDisplayCount = $state(-1); // Track previous count to avoid unnecessary resizes
   let preMuteVolumes = $state<Map<string, number>>(new Map()); // Store volume before muting
+  let isDraggingSlider = $state<Map<string, boolean>>(new Map()); // Track which sliders are being dragged
+  let isAnimatingSlider = $state<Map<string, boolean>>(new Map()); // Track which sliders are animating
 
   // Computed: Get sessions with bindings (axis OR button mappings)
   $effect(() => {
@@ -333,15 +335,52 @@
     }
   }
 
-  async function setSessionVolume(sessionId: string, volume: number) {
+  function setSessionVolumeImmediate(sessionId: string, volume: number) {
     // Skip placeholder sessions (inactive apps)
     if (sessionId.startsWith('placeholder_')) {
       return;
     }
     
+    // Update local state immediately for responsive UI (no backend call)
+    const sessionIndex = audioSessions.findIndex(s => s.session_id === sessionId);
+    if (sessionIndex !== -1) {
+      audioSessions[sessionIndex].volume = volume;
+      audioSessions[sessionIndex].is_muted = volume === 0;
+    }
+  }
+  
+  async function setSessionVolumeAnimated(sessionId: string, targetVolume: number) {
+    // Skip placeholder sessions (inactive apps)
+    if (sessionId.startsWith('placeholder_')) {
+      return;
+    }
+    
+    // Find the current session
+    const session = audioSessions.find(s => s.session_id === sessionId);
+    if (!session) return;
+    
+    // Mark as animating
+    isAnimatingSlider.set(sessionId, true);
+    
+    // Animate from current volume to target volume
+    await animateVolumeUI(sessionId, session.volume, targetVolume);
+    
+    // Apply to backend after animation
+    await setSessionVolumeFinal(sessionId, targetVolume);
+    
+    // Clear animating flag
+    isAnimatingSlider.delete(sessionId);
+  }
+  
+  async function setSessionVolumeFinal(sessionId: string, volume: number) {
+    // Skip placeholder sessions (inactive apps)
+    if (sessionId.startsWith('placeholder_')) {
+      return;
+    }
+    
+    // Called when user finishes dragging - apply to backend and refresh
     try {
       await invoke("set_session_volume", { sessionId, volume });
-      console.log(`[ClearComms] Set volume for ${sessionId} to ${volume.toFixed(2)}`);
       
       // Auto-update mute state based on volume
       const shouldBeMuted = volume === 0;
@@ -352,6 +391,37 @@
       console.error("[ClearComms] Error setting volume:", error);
       errorMsg = `Audio error: ${error}`;
     }
+  }
+  
+  async function animateVolumeUI(sessionId: string, fromVolume: number, toVolume: number, durationMs: number = 300) {
+    // Skip placeholder sessions (inactive apps)
+    if (sessionId.startsWith('placeholder_')) {
+      return;
+    }
+    
+    const startTime = Date.now();
+    const volumeDelta = toVolume - fromVolume;
+    
+    const animate = () => {
+      const elapsed = Date.now() - startTime;
+      const progress = Math.min(elapsed / durationMs, 1);
+      
+      // Ease-out curve for smooth deceleration
+      const easeOut = 1 - Math.pow(1 - progress, 3);
+      const currentVolume = fromVolume + (volumeDelta * easeOut);
+      
+      // Update UI only (no backend calls during animation)
+      setSessionVolumeImmediate(sessionId, currentVolume);
+      
+      if (progress < 1) {
+        requestAnimationFrame(animate);
+      }
+    };
+    
+    animate();
+    
+    // Wait for animation to complete
+    await new Promise(resolve => setTimeout(resolve, durationMs));
   }
 
   async function animateVolume(sessionId: string, fromVolume: number, toVolume: number, durationMs: number = 300) {
@@ -773,7 +843,7 @@
               <span class="app-name" title={session.display_name}>{formatProcessName(session.process_name)}</span>
 
               <!-- Horizontal Volume Bar -->
-              <div class="volume-bar-container">
+              <div class="volume-bar-container"></div>
                 <input
                   type="range"
                   class="volume-slider"
@@ -782,13 +852,58 @@
                   step="0.01"
                   value={session.volume}
                   style="--volume-percent: {session.volume * 100}%"
-                  oninput={(e) => setSessionVolume(session.session_id, parseFloat((e.target as HTMLInputElement).value))}
-                  onchange={(e) => setSessionVolume(session.session_id, parseFloat((e.target as HTMLInputElement).value))}
-                  onwheel={(e) => {
+                  onpointerdown={(e) => {
+                    // Ignore if currently animating
+                    if (isAnimatingSlider.get(session.session_id)) {
+                      e.preventDefault();
+                      return;
+                    }
+                    
+                    // Store start position
+                    isDraggingSlider.set(session.session_id, false);
+                  }}
+                  oninput={(e) => {
+                    const slider = e.currentTarget as HTMLInputElement;
+                    const newValue = parseFloat(slider.value);
+                    const currentValue = session.volume;
+                    
+                    // Don't allow input during animation
+                    if (isAnimatingSlider.get(session.session_id)) {
+                      e.preventDefault();
+                      slider.value = currentValue.toString();
+                      return;
+                    }
+                    
+                    // Check if this is the first input event (click) or a drag
+                    const wasDragging = isDraggingSlider.get(session.session_id);
+                    
+                    if (!wasDragging && Math.abs(newValue - currentValue) > 0.02) {
+                      // First input after mousedown with significant difference = track click
+                      // Prevent the instant snap and animate instead
+                      e.preventDefault();
+                      slider.value = currentValue.toString();
+                      console.log(`[Volume Click] Track click detected: from ${currentValue.toFixed(3)} to ${newValue.toFixed(3)}`);
+                      setSessionVolumeAnimated(session.session_id, newValue);
+                      // Don't set dragging flag - this was a click
+                    } else {
+                      // Mark as dragging for subsequent inputs
+                      isDraggingSlider.set(session.session_id, true);
+                      setSessionVolumeImmediate(session.session_id, newValue);
+                    }
+                  }}
+                  onchange={async (e) => {
+                    if (isDraggingSlider.get(session.session_id)) {
+                      // User was dragging - just finalize without animation
+                      const targetVolume = parseFloat((e.target as HTMLInputElement).value);
+                      await setSessionVolumeFinal(session.session_id, targetVolume);
+                      isDraggingSlider.delete(session.session_id);
+                    }
+                  }}
+                  onwheel={async (e) => {
                     e.preventDefault();
-                    const delta = e.deltaY > 0 ? -0.05 : 0.05; // Scroll down = decrease, scroll up = increase
+                    const delta = e.deltaY > 0 ? -0.05 : 0.05;
                     const newVolume = Math.max(0, Math.min(1, session.volume + delta));
-                    setSessionVolume(session.session_id, newVolume);
+                    await setSessionVolumeAnimated(session.session_id, newVolume);
                   }}
                 />
               </div>
