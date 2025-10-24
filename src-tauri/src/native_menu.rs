@@ -12,6 +12,9 @@ use windows::Win32::{
 use tauri::Manager;
 
 #[cfg(windows)]
+use crate::window_utils::position_window_bottom_right;
+
+#[cfg(windows)]
 const MENU_SHOW: usize = 1001;
 #[cfg(windows)]
 const MENU_HIDE: usize = 1002;
@@ -101,49 +104,32 @@ pub fn show_native_context_menu(app: &tauri::AppHandle, x: i32, y: i32) -> Resul
             }
         } else if selected == MENU_PIN {
             if let Some(window) = app_clone.get_webview_window("main") {
-                position_window_bottom_right(&window);
-                let _ = window.show();
-                let _ = window.set_focus();
+                let is_visible = window.is_visible().unwrap_or(false);
+                let current_pin_state = window.is_always_on_top().unwrap_or(false);
                 
-                // Toggle always_on_top state
-                let current_state = window.is_always_on_top().unwrap_or(false);
-                let _ = window.set_always_on_top(!current_state);
+                if !is_visible {
+                    // Window is hidden - show it and pin it
+                    position_window_bottom_right(&window);
+                    let _ = window.show();
+                    let _ = window.set_focus();
+                    let _ = window.set_always_on_top(true);
+                    eprintln!("[Menu] Window shown and pinned on top");
+                } else if current_pin_state {
+                    // Window is visible and pinned - unpin and hide
+                    let _ = window.set_always_on_top(false);
+                    let _ = window.hide();
+                    eprintln!("[Menu] Pin on top toggled: true -> false (hidden)");
+                } else {
+                    // Window is visible but not pinned - pin it
+                    let _ = window.set_always_on_top(true);
+                    eprintln!("[Menu] Pin on top toggled: false -> true");
+                }
             }
         } else if selected == MENU_QUIT {
             std::process::exit(0);
         }
         
         Ok(())
-    }
-}
-
-#[cfg(windows)]
-fn position_window_bottom_right(window: &tauri::WebviewWindow) {
-    use tauri::PhysicalPosition;
-    
-    if let Ok(Some(monitor)) = window.primary_monitor() {
-        if let Ok(window_size) = window.outer_size() {
-            let screen_size = monitor.size();
-            
-            // Work with physical pixels
-            let screen_width = screen_size.width as i32;
-            let screen_height = screen_size.height as i32;
-            let window_width = window_size.width as i32;
-            let window_height = window_size.height as i32;
-            
-            // Padding from edges (in physical pixels)
-            let padding = 18;
-            
-            // Windows taskbar height (typically 48-72px in physical pixels depending on scaling)
-            // For 150% scaling on 4K: taskbar is ~72px in physical pixels
-            let taskbar_height = 72;
-            
-            let x = screen_width - window_width - padding;
-            let y = screen_height - window_height - taskbar_height - padding;
-            
-            let position = PhysicalPosition::new(x, y);
-            let _ = window.set_position(position);
-        }
     }
 }
 

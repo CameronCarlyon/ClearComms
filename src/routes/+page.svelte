@@ -65,36 +65,34 @@
   let lastHardwareAxisValues: Map<string, number> = new Map(); // Track last hardware axis values
   let errorMsg = $state("");
   let isEditMode = $state(false);
-  let previousDisplayCount = $state(-1); // Track previous count to avoid unnecessary resizes
-  let preMuteVolumes = $state<Map<string, number>>(new Map()); // Store volume before muting
-  let isDraggingSlider = $state<Map<string, boolean>>(new Map()); // Track which sliders are being dragged
-  let isAnimatingSlider = $state<Map<string, boolean>>(new Map()); // Track which sliders are animating
+  let previousDisplayCount = $state(-1);
+  let preMuteVolumes = $state<Map<string, number>>(new Map());
+  let animatingSliders = $state<Set<string>>(new Set());
+  let animationSignals = $state<Map<string, { cancelled: boolean; resolve?: (completed: boolean) => void; frameId?: number }>>(new Map());
+  let dragTargets = $state<Map<string, number>>(new Map());
+  let dragAnimationFrames = $state<Map<string, number>>(new Map());
+  let manuallyControlledSessions = $state<Set<string>>(new Set());
 
-  // Computed: Get sessions with bindings (axis OR button mappings)
+  // Track display count and resize window when bindings change
   $effect(() => {
-    // Count all unique bound process names (includes placeholders for inactive apps)
     const boundProcessNames = new Set([
       ...axisMappings.map(m => m.processName),
       ...buttonMappings.map(m => m.processName)
     ]);
     
-    // Calculate display count based on all bound processes (active + inactive)
     let displayCount = boundProcessNames.size;
     
-    // Add ghost column width if edit mode is enabled with 2+ bound sessions
     if (isEditMode && displayCount >= 2) {
       displayCount += 1;
     }
     
-    // Only resize if the count has actually changed
     if (audioInitialised && displayCount !== previousDisplayCount) {
-      console.log(`[ClearComms] Display count changed: ${previousDisplayCount} → ${displayCount} (Edit mode: ${isEditMode}, Bound processes: ${boundProcessNames.size})`);
       previousDisplayCount = displayCount;
       resizeWindowToFit(displayCount);
     }
   });
 
-  // Computed: Get bound audio sessions (deduplicated by process_name)
+  // Get bound sessions with placeholders for inactive apps
   function getBoundSessions(): AudioSession[] {
     const boundProcessNames = new Set([
       ...axisMappings.map(m => m.processName),
@@ -104,7 +102,7 @@
     const sessions: AudioSession[] = [];
     const foundProcessNames = new Set<string>();
     
-    // Add all active bound sessions (match by process_name, but only take first occurrence)
+    // Add active sessions
     for (const session of audioSessions) {
       if (boundProcessNames.has(session.process_name) && !foundProcessNames.has(session.process_name)) {
         sessions.push(session);
@@ -112,26 +110,10 @@
       }
     }
     
-    // Add placeholder sessions for bound apps that aren't currently active
-    for (const mapping of axisMappings) {
+    // Add placeholders for inactive bound apps
+    const allMappings = [...axisMappings, ...buttonMappings];
+    for (const mapping of allMappings) {
       if (!foundProcessNames.has(mapping.processName)) {
-        console.log(`[ClearComms] Creating placeholder for ${mapping.processName} (axis binding)`);
-        sessions.push({
-          session_id: `placeholder_${mapping.processName}`,
-          display_name: mapping.sessionName,
-          process_id: 0,
-          process_name: mapping.processName,
-          volume: 0,
-          is_muted: true
-        });
-        foundProcessNames.add(mapping.processName);
-      }
-    }
-    
-    // Check button mappings too (in case app only has button binding, no axis)
-    for (const mapping of buttonMappings) {
-      if (!foundProcessNames.has(mapping.processName)) {
-        console.log(`[ClearComms] Creating placeholder for ${mapping.processName} (button binding)`);
         sessions.push({
           session_id: `placeholder_${mapping.processName}`,
           display_name: mapping.sessionName,
@@ -147,7 +129,7 @@
     return sessions;
   }
 
-  // Computed: Get available (unbound) audio sessions for dropdown
+  // Get unbound sessions for dropdown
   function getAvailableSessions(): AudioSession[] {
     const boundProcessNames = new Set([
       ...axisMappings.map(m => m.processName),
@@ -184,74 +166,52 @@
 
   function toggleEditMode() {
     isEditMode = !isEditMode;
-    console.log(`[ClearComms] Edit mode: ${isEditMode ? 'ON' : 'OFF'}`);
   }
 
   async function quitApplication() {
     await invoke("quit_application");
   }
 
-  // Auto-initialise on component mount
   onMount(async () => {
     loadMappings();
     loadButtonMappings();
-    console.log("[ClearComms] Starting automatic initialisation...");
     await autoInitialise();
   });
 
-  // Clean up polling on component destroy
   onDestroy(() => {
     stopPolling();
   });
 
   async function autoInitialise() {
     try {
-      // Step 1: Initialise input system
       initStatus = "Initialising input system...";
-      console.log("[ClearComms] Step 1: Initialising input system");
-      const initResult = await invoke<string>("init_direct_input");
-      console.log("[ClearComms] ✓ Input system initialised:", initResult);
+      await invoke<string>("init_direct_input");
 
-      // Step 2: Enumerate devices
       initStatus = "Enumerating devices...";
-      console.log("[ClearComms] Step 2: Enumerating devices");
-      const deviceList = await invoke<string[]>("enumerate_input_devices");
-      console.log(`[ClearComms] ✓ Found ${deviceList.length} device(s):`, deviceList);
+      await invoke<string[]>("enumerate_input_devices");
 
-      // Step 3: Get initial axis values
       initStatus = "Reading axis values...";
-      console.log("[ClearComms] Step 3: Getting initial axis values");
       await getAxisValues();
-      console.log("[ClearComms] ✓ Axis values retrieved");
 
-      // Step 4: Initialise audio manager
       initStatus = "Initialising audio manager...";
-      console.log("[ClearComms] Step 4: Initialising audio manager");
       try {
-        const audioResult = await invoke<string>("init_audio_manager");
-        console.log("[ClearComms] ✓", audioResult);
+        await invoke<string>("init_audio_manager");
         audioInitialised = true;
-        
-        // Get initial audio sessions
         await refreshAudioSessions();
       } catch (audioError) {
-        console.warn("[ClearComms] ⚠ Audio manager failed (non-critical):", audioError);
+        console.warn("Audio manager failed (non-critical):", audioError);
       }
 
-      // Step 5: Start polling
       initStatus = "Starting real-time polling...";
-      console.log("[ClearComms] Step 5: Starting real-time polling (20Hz)");
       startPolling();
-      console.log("[ClearComms] ✓ Polling started");
 
       initStatus = "Ready";
-      console.log("[ClearComms] === Initialisation complete ===");
       errorMsg = "";
     } catch (error) {
       const errorMessage = `Initialisation failed: ${error}`;
       errorMsg = errorMessage;
       initStatus = "Failed";
-      console.error("[ClearComms] ✗ Initialisation error:", error);
+      console.error("Initialisation error:", error);
     }
   }
 
@@ -260,7 +220,7 @@
       const data = await invoke<AxisData[]>("get_all_axis_values");
       axisData = data;
     } catch (error) {
-      console.error("[ClearComms] Error getting axis values:", error);
+      console.error("Error getting axis values:", error);
       errorMsg = `Error: ${error}`;
       axisData = [];
     }
@@ -276,11 +236,10 @@
         await applyAxisMappings();
         await applyButtonMappings();
       } catch (error) {
-        console.error("[ClearComms] Polling error:", error);
+        console.error("Polling error:", error);
       }
     }, 50);
     
-    // Start audio session monitoring (every 3 seconds)
     startAudioMonitoring();
   }
   
@@ -288,11 +247,8 @@
     if (pollingInterval) {
       clearInterval(pollingInterval);
       pollingInterval = null;
-      console.log("[ClearComms] Polling stopped");
     }
     isPolling = false;
-    
-    // Stop audio monitoring
     stopAudioMonitoring();
   }
 
@@ -301,205 +257,246 @@
     
     audioMonitorInterval = setInterval(async () => {
       try {
-        // Check if default device changed
         const deviceChanged = await invoke<boolean>("check_default_device_changed");
         if (deviceChanged) {
-          console.log("[ClearComms] Audio device changed - refreshing sessions");
+          console.log("Audio device changed - refreshing sessions");
         }
-        
-        // Always refresh sessions to pick up new/closed apps
         await refreshAudioSessions();
       } catch (error) {
-        console.error("[ClearComms] Audio monitoring error:", error);
+        console.error("Audio monitoring error:", error);
       }
-    }, 3000); // Check every 3 seconds
-    
-    console.log("[ClearComms] Audio session monitoring started (3s interval)");
+    }, 3000);
   }
 
   function stopAudioMonitoring() {
     if (audioMonitorInterval) {
       clearInterval(audioMonitorInterval);
       audioMonitorInterval = null;
-      console.log("[ClearComms] Audio monitoring stopped");
     }
   }
 
   async function refreshAudioSessions() {
     try {
       const sessions = await invoke<AudioSession[]>("get_audio_sessions");
+      
+      // Update sessions but handle special cases
+      for (const newSession of sessions) {
+        const existingIndex = audioSessions.findIndex(s => s.session_id === newSession.session_id);
+        
+        if (existingIndex !== -1) {
+          const existing = audioSessions[existingIndex];
+          
+          // If user is manually dragging, preserve the current volume completely
+          if (manuallyControlledSessions.has(newSession.session_id)) {
+            newSession.volume = existing.volume;
+            newSession.is_muted = existing.is_muted;
+          }
+          // If currently animating, preserve the animated volume
+          else if (animatingSliders.has(newSession.session_id)) {
+            newSession.volume = existing.volume;
+          }
+          // If muted with volume at 0, keep it at 0 (don't restore from backend)
+          else if (newSession.is_muted && existing.volume === 0) {
+            newSession.volume = 0;
+          }
+        }
+      }
+      
       audioSessions = sessions;
-      
-      // Clean up stale mappings for sessions that no longer exist
       cleanupStaleMappings();
-      
-      // Window will be resized by the $effect that watches axisMappings/buttonMappings
     } catch (error) {
-      console.error("[ClearComms] Error getting audio sessions:", error);
+      console.error("Error getting audio sessions:", error);
       errorMsg = `Audio error: ${error}`;
     }
   }
 
   async function resizeWindowToFit(sessionCount: number) {
     try {
-      const result = await invoke<string>("resize_window_to_content", { sessionCount });
-      console.log(`[ClearComms] ${result}`);
+      await invoke<string>("resize_window_to_content", { sessionCount });
     } catch (error) {
-      console.error("[ClearComms] Error resizing window:", error);
+      console.error("Error resizing window:", error);
     }
   }
 
+  // Update volume immediately in UI (no backend call)
   function setSessionVolumeImmediate(sessionId: string, volume: number) {
-    // Skip placeholder sessions (inactive apps)
-    if (sessionId.startsWith('placeholder_')) {
-      return;
-    }
+    if (sessionId.startsWith('placeholder_')) return;
     
-    // Update local state immediately for responsive UI (no backend call)
     const sessionIndex = audioSessions.findIndex(s => s.session_id === sessionId);
     if (sessionIndex !== -1) {
       audioSessions[sessionIndex].volume = volume;
       audioSessions[sessionIndex].is_muted = volume === 0;
     }
   }
-  
-  async function setSessionVolumeAnimated(sessionId: string, targetVolume: number) {
-    // Skip placeholder sessions (inactive apps)
-    if (sessionId.startsWith('placeholder_')) {
+
+  function cancelVolumeAnimation(sessionId: string) {
+    const signal = animationSignals.get(sessionId);
+    if (!signal) {
       return;
     }
+
+    signal.cancelled = true;
+    if (signal.frameId !== undefined) {
+      cancelAnimationFrame(signal.frameId);
+    }
+
+    const resolve = signal.resolve;
+    signal.resolve = undefined;
+    animationSignals.delete(sessionId);
+    animatingSliders.delete(sessionId);
+    resolve?.(false);
+  }
+
+  // Animate volume change in UI, then apply to backend
+  async function animateVolumeTo(sessionId: string, targetVolume: number, durationMs: number = 200): Promise<boolean> {
+    if (sessionId.startsWith('placeholder_')) return false;
     
-    // Find the current session
     const session = audioSessions.find(s => s.session_id === sessionId);
-    if (!session) return;
+    if (!session) return false;
+
+    cancelVolumeAnimation(sessionId);
     
-    // Mark as animating
-    isAnimatingSlider.set(sessionId, true);
-    
-    // Animate from current volume to target volume
-    await animateVolumeUI(sessionId, session.volume, targetVolume);
-    
-    // Apply to backend after animation
-    await setSessionVolumeFinal(sessionId, targetVolume);
-    
-    // Clear animating flag
-    isAnimatingSlider.delete(sessionId);
+    const startVolume = session.volume;
+    const startTime = Date.now();
+    animatingSliders.add(sessionId);
+
+    return new Promise<boolean>((resolve) => {
+      const signal = { cancelled: false, resolve, frameId: undefined as number | undefined };
+      animationSignals.set(sessionId, signal);
+
+      const animate = () => {
+        if (signal.cancelled) {
+          return;
+        }
+
+        const elapsed = Date.now() - startTime;
+        const progress = Math.min(elapsed / durationMs, 1);
+
+        // Ease-out cubic for smooth deceleration
+        const eased = 1 - Math.pow(1 - progress, 3);
+        const currentVolume = startVolume + (targetVolume - startVolume) * eased;
+
+        setSessionVolumeImmediate(sessionId, currentVolume);
+
+        if (progress < 1) {
+          signal.frameId = requestAnimationFrame(animate);
+        } else {
+          animationSignals.delete(sessionId);
+          animatingSliders.delete(sessionId);
+          resolve(true);
+        }
+      };
+
+      animate();
+    });
   }
   
-  async function setSessionVolumeFinal(sessionId: string, volume: number) {
-    // Skip placeholder sessions (inactive apps)
-    if (sessionId.startsWith('placeholder_')) {
-      return;
-    }
+  // Smooth drag following - continuously animate toward target
+  function startDragAnimation(sessionId: string, targetVolume: number) {
+    if (sessionId.startsWith('placeholder_')) return;
     
-    // Called when user finishes dragging - apply to backend and refresh
+    dragTargets.set(sessionId, targetVolume);
+    
+    // Start animation loop if not already running
+    if (!dragAnimationFrames.has(sessionId)) {
+      const session = audioSessions.find(s => s.session_id === sessionId);
+      if (!session) return;
+      
+      const animate = () => {
+        const target = dragTargets.get(sessionId);
+        if (target === undefined) {
+          dragAnimationFrames.delete(sessionId);
+          return;
+        }
+        
+        const currentSession = audioSessions.find(s => s.session_id === sessionId);
+        if (!currentSession) {
+          dragAnimationFrames.delete(sessionId);
+          dragTargets.delete(sessionId);
+          return;
+        }
+        
+        const current = currentSession.volume;
+        const diff = target - current;
+        
+        // Smooth interpolation - move 25% of the way to target each frame
+        const smoothingFactor = 0.25;
+        const newVolume = current + (diff * smoothingFactor);
+        
+        // Stop if very close to target
+        if (Math.abs(diff) < 0.001) {
+          setSessionVolumeImmediate(sessionId, target);
+          dragAnimationFrames.delete(sessionId);
+          dragTargets.delete(sessionId);
+          return;
+        }
+        
+        setSessionVolumeImmediate(sessionId, newVolume);
+        const frameId = requestAnimationFrame(animate);
+        dragAnimationFrames.set(sessionId, frameId);
+      };
+      
+      const frameId = requestAnimationFrame(animate);
+      dragAnimationFrames.set(sessionId, frameId);
+    }
+  }
+  
+  function stopDragAnimation(sessionId: string) {
+    const frameId = dragAnimationFrames.get(sessionId);
+    if (frameId !== undefined) {
+      cancelAnimationFrame(frameId);
+    }
+    dragAnimationFrames.delete(sessionId);
+    dragTargets.delete(sessionId);
+  }
+  
+  // Apply volume to backend after animation completes
+  async function setSessionVolumeFinal(sessionId: string, volume: number) {
+    if (sessionId.startsWith('placeholder_')) return;
+    
     try {
       await invoke("set_session_volume", { sessionId, volume });
-      
-      // Auto-update mute state based on volume
-      const shouldBeMuted = volume === 0;
-      await invoke("set_session_mute", { sessionId, muted: shouldBeMuted });
-      
+      await invoke("set_session_mute", { sessionId, muted: volume === 0 });
       await refreshAudioSessions();
     } catch (error) {
-      console.error("[ClearComms] Error setting volume:", error);
+      console.error("Error setting volume:", error);
       errorMsg = `Audio error: ${error}`;
     }
   }
-  
-  async function animateVolumeUI(sessionId: string, fromVolume: number, toVolume: number, durationMs: number = 300) {
-    // Skip placeholder sessions (inactive apps)
-    if (sessionId.startsWith('placeholder_')) {
-      return;
-    }
-    
-    const startTime = Date.now();
-    const volumeDelta = toVolume - fromVolume;
-    
-    const animate = () => {
-      const elapsed = Date.now() - startTime;
-      const progress = Math.min(elapsed / durationMs, 1);
-      
-      // Ease-out curve for smooth deceleration
-      const easeOut = 1 - Math.pow(1 - progress, 3);
-      const currentVolume = fromVolume + (volumeDelta * easeOut);
-      
-      // Update UI only (no backend calls during animation)
-      setSessionVolumeImmediate(sessionId, currentVolume);
-      
-      if (progress < 1) {
-        requestAnimationFrame(animate);
-      }
-    };
-    
-    animate();
-    
-    // Wait for animation to complete
-    await new Promise(resolve => setTimeout(resolve, durationMs));
-  }
-
-  async function animateVolume(sessionId: string, fromVolume: number, toVolume: number, durationMs: number = 300) {
-    // Skip placeholder sessions (inactive apps)
-    if (sessionId.startsWith('placeholder_')) {
-      return;
-    }
-    
-    const startTime = Date.now();
-    const volumeDelta = toVolume - fromVolume;
-    
-    const animate = async () => {
-      const elapsed = Date.now() - startTime;
-      const progress = Math.min(elapsed / durationMs, 1);
-      
-      // Ease-out curve for smooth deceleration
-      const easeOut = 1 - Math.pow(1 - progress, 3);
-      const currentVolume = fromVolume + (volumeDelta * easeOut);
-      
-      try {
-        await invoke("set_session_volume", { sessionId, volume: currentVolume });
-        await refreshAudioSessions();
-      } catch (error) {
-        console.error("[ClearComms] Error animating volume:", error);
-        return;
-      }
-      
-      if (progress < 1) {
-        requestAnimationFrame(animate);
-      }
-    };
-    
-    await animate();
-  }
 
   async function setSessionMute(sessionId: string, muted: boolean) {
-    // Skip placeholder sessions (inactive apps)
-    if (sessionId.startsWith('placeholder_')) {
-      return;
-    }
+    if (sessionId.startsWith('placeholder_')) return;
     
     try {
-      // Find the current session
       const session = audioSessions.find(s => s.session_id === sessionId);
       
-      if (muted && session) {
-        // Store current volume before muting (only if not already zero)
-        if (session.volume > 0) {
-          preMuteVolumes.set(sessionId, session.volume);
+      if (muted && session && session.volume > 0) {
+        preMuteVolumes.set(sessionId, session.volume);
+        await animateVolumeTo(sessionId, 0);
+        await invoke("set_session_mute", { sessionId, muted: true });
+        
+        const sessionIndex = audioSessions.findIndex(s => s.session_id === sessionId);
+        if (sessionIndex !== -1) {
+          audioSessions[sessionIndex].is_muted = true;
+          audioSessions[sessionIndex].volume = 0;
         }
-        // Animate volume to 0
-        await animateVolume(sessionId, session.volume, 0);
       } else if (!muted) {
-        // Restore previous volume or default to 0.5
         const previousVolume = preMuteVolumes.get(sessionId) ?? 0.5;
-        await animateVolume(sessionId, 0, previousVolume);
+        
+        // Unmute backend first, then animate slider up
+        await invoke("set_session_volume", { sessionId, volume: previousVolume });
+        await invoke("set_session_mute", { sessionId, muted: false });
+        
+        const sessionIndex = audioSessions.findIndex(s => s.session_id === sessionId);
+        if (sessionIndex !== -1) {
+          audioSessions[sessionIndex].is_muted = false;
+        }
+        
+        await animateVolumeTo(sessionId, previousVolume, 200);
         preMuteVolumes.delete(sessionId);
       }
-      
-      await invoke("set_session_mute", { sessionId, muted });
-      console.log(`[ClearComms] Set mute for ${sessionId} to ${muted}`);
-      await refreshAudioSessions();
     } catch (error) {
-      console.error("[ClearComms] Error setting mute:", error);
+      console.error("Error setting mute:", error);
       errorMsg = `Audio error: ${error}`;
     }
   }
@@ -512,37 +509,31 @@
     for (const device of axisData) {
       previousAxisValues.set(device.device_handle, { ...device.axes });
     }
-    
-    console.log(`[ClearComms] Binding mode activated for ${sessionName}. Move an axis to bind it...`);
   }
 
   function cancelBinding() {
     isBindingMode = false;
     pendingBinding = null;
     previousAxisValues.clear();
-    console.log("[ClearComms] Binding mode cancelled");
   }
 
   function startButtonBinding(sessionId: string, sessionName: string, processId: number, processName: string) {
     isButtonBindingMode = true;
     pendingButtonBinding = { sessionId, sessionName, processId, processName };
     
-    // Store current button states
     previousButtonStates.clear();
     for (const device of axisData) {
       previousButtonStates.set(device.device_handle, { ...device.buttons });
     }
-    
-    console.log(`[ClearComms] Button binding mode activated for ${sessionName}. Press a button to bind it...`);
   }
 
   function cancelButtonBinding() {
     isButtonBindingMode = false;
     pendingButtonBinding = null;
     previousButtonStates.clear();
-    console.log("[ClearComms] Button binding mode cancelled");
   }
 
+  // Detect significant axis movement (>5% change)
   function detectAxisMovement(): { deviceHandle: string; deviceName: string; axisName: string } | null {
     for (const device of axisData) {
       const previousValues = previousAxisValues.get(device.device_handle);
@@ -554,7 +545,6 @@
 
         const change = Math.abs(currentValue - previousValue);
         if (change > 0.05) {
-          console.log(`[ClearComms] Detected movement on ${device.device_name} ${axisName}: ${previousValue.toFixed(3)} → ${currentValue.toFixed(3)} (Δ ${change.toFixed(3)})`);
           return { deviceHandle: device.device_handle, deviceName: device.device_name, axisName };
         }
       }
@@ -562,6 +552,7 @@
     return null;
   }
 
+  // Detect button press (false → true transition)
   function detectButtonPress(): { deviceHandle: string; deviceName: string; buttonName: string } | null {
     for (const device of axisData) {
       const previousStates = previousButtonStates.get(device.device_handle);
@@ -571,9 +562,7 @@
         const previousState = previousStates[buttonName];
         if (previousState === undefined) continue;
 
-        // Detect button press (false → true transition)
         if (!previousState && currentState) {
-          console.log(`[ClearComms] Detected button press on ${device.device_name} ${buttonName}`);
           return { deviceHandle: device.device_handle, deviceName: device.device_name, buttonName };
         }
       }
@@ -656,13 +645,12 @@
       if (device && device.axes[mapping.axisName] !== undefined) {
         let axisValue = device.axes[mapping.axisName];
         
-        // Apply inversion if enabled
         if (mapping.inverted) {
           axisValue = 1.0 - axisValue;
         }
         
-        // Apply deadzones at extremes (snap to 0% or 100%)
-        const deadzoneThreshold = 0.01; // 1% deadzone at each end
+        // 1% deadzone at each end
+        const deadzoneThreshold = 0.01;
         if (axisValue < deadzoneThreshold) {
           axisValue = 0.0;
         } else if (axisValue > (1.0 - deadzoneThreshold)) {
@@ -672,29 +660,24 @@
         const mappingKey = `${mapping.deviceHandle}-${mapping.axisName}-${mapping.processName}`;
         const lastHardwareValue = lastHardwareAxisValues.get(mappingKey);
         
-        // Only update if the hardware axis value has actually changed
+        // Only update if hardware value changed by >1%
         if (lastHardwareValue === undefined || Math.abs(lastHardwareValue - axisValue) > 0.01) {
-          // Find session by process name (survives app restarts)
           const session = audioSessions.find(s => s.process_name === mapping.processName);
           
-          if (session) {
+          // Skip if user is manually controlling this session
+          if (session && !manuallyControlledSessions.has(session.session_id)) {
             try {
               await invoke("set_session_volume", { sessionId: session.session_id, volume: axisValue });
+              await invoke("set_session_mute", { sessionId: session.session_id, muted: axisValue === 0 });
               
-              // Auto-update mute state based on volume
-              const shouldBeMuted = axisValue === 0;
-              await invoke("set_session_mute", { sessionId: session.session_id, muted: shouldBeMuted });
-              
-              // Update local state immediately for responsive UI
               const sessionIndex = audioSessions.findIndex(s => s.session_id === session.session_id);
               if (sessionIndex !== -1) {
                 audioSessions[sessionIndex].volume = axisValue;
-                audioSessions[sessionIndex].is_muted = shouldBeMuted;
+                audioSessions[sessionIndex].is_muted = axisValue === 0;
               }
-              // Store the new hardware value
               lastHardwareAxisValues.set(mappingKey, axisValue);
             } catch (error) {
-              console.error(`[ClearComms] Error applying mapping for ${mapping.sessionName}:`, error);
+              console.error(`Error applying mapping for ${mapping.sessionName}:`, error);
             }
           }
         }
@@ -719,7 +702,6 @@
         isButtonBindingMode = false;
         pendingButtonBinding = null;
       }
-      // Update previous button states for next poll
       for (const device of axisData) {
         previousButtonStates.set(device.device_handle, { ...device.buttons });
       }
@@ -728,16 +710,14 @@
 
     if (!audioInitialised || buttonMappings.length === 0) return;
 
-    // Check for button presses and toggle mute
     for (const mapping of buttonMappings) {
       const device = axisData.find(d => d.device_handle === mapping.deviceHandle);
       if (device && device.buttons[mapping.buttonName] !== undefined) {
         const currentState = device.buttons[mapping.buttonName];
         const previousState = previousButtonStates.get(device.device_handle)?.[mapping.buttonName];
         
-        // Detect button press (false → true transition)
+        // Button press = false → true transition
         if (!previousState && currentState) {
-          // Find session by process name (survives app restarts)
           const session = audioSessions.find(s => s.process_name === mapping.processName);
           if (session) {
             const newMuteState = !session.is_muted;
@@ -747,9 +727,8 @@
               if (sessionIndex !== -1) {
                 audioSessions[sessionIndex].is_muted = newMuteState;
               }
-              console.log(`[ClearComms] Button ${mapping.buttonName} toggled mute for ${mapping.sessionName}: ${newMuteState ? 'MUTED' : 'UNMUTED'}`);
             } catch (error) {
-              console.error(`[ClearComms] Error toggling mute for ${mapping.sessionName}:`, error);
+              console.error(`Error toggling mute for ${mapping.sessionName}:`, error);
             }
           }
         }
@@ -762,62 +741,46 @@
     }
   }
 
+  // Mappings persist even when apps are closed
   function cleanupStaleMappings() {
-    // DISABLED: We want mappings to persist even when apps are closed
-    // This allows placeholders to show inactive bound apps
-    // Mappings are now matched by processName which persists across app restarts
     return;
   }
 
   function saveMappings() {
     try {
       localStorage.setItem('clearcomms_axis_mappings', JSON.stringify(axisMappings));
-      console.log("[ClearComms] Axis mappings saved:", axisMappings);
     } catch (error) {
-      console.error("[ClearComms] Error saving mappings:", error);
+      console.error("Error saving mappings:", error);
     }
   }
 
   function loadMappings() {
-    console.log("[ClearComms] loadMappings() called");
     try {
       const saved = localStorage.getItem('clearcomms_axis_mappings');
-      console.log("[ClearComms] localStorage data:", saved);
       if (saved) {
         axisMappings = JSON.parse(saved);
-        console.log(`[ClearComms] Loaded ${axisMappings.length} axis mapping(s):`);
-        console.log(axisMappings);
-      } else {
-        console.log("[ClearComms] No saved axis mappings found");
       }
     } catch (error) {
-      console.error("[ClearComms] Error loading mappings:", error);
+      console.error("Error loading mappings:", error);
     }
   }
 
   function saveButtonMappings() {
     try {
       localStorage.setItem('clearcomms_button_mappings', JSON.stringify(buttonMappings));
-      console.log("[ClearComms] Button mappings saved:", buttonMappings);
     } catch (error) {
-      console.error("[ClearComms] Error saving button mappings:", error);
+      console.error("Error saving button mappings:", error);
     }
   }
 
   function loadButtonMappings() {
-    console.log("[ClearComms] loadButtonMappings() called");
     try {
       const saved = localStorage.getItem('clearcomms_button_mappings');
-      console.log("[ClearComms] localStorage data:", saved);
       if (saved) {
         buttonMappings = JSON.parse(saved);
-        console.log(`[ClearComms] Loaded ${buttonMappings.length} button mapping(s):`);
-        console.log(buttonMappings);
-      } else {
-        console.log("[ClearComms] No saved button mappings found");
       }
     } catch (error) {
-      console.error("[ClearComms] Error loading button mappings:", error);
+      console.error("Error loading button mappings:", error);
     }
   }
 </script>
@@ -875,57 +838,92 @@
                   value={session.volume}
                   style="--volume-percent: {session.volume * 100}%"
                   onpointerdown={(e) => {
-                    // Ignore if currently animating
-                    if (isAnimatingSlider.get(session.session_id)) {
-                      e.preventDefault();
+                    animatingSliders.delete(session.session_id);
+                    manuallyControlledSessions.add(session.session_id);
+                    cancelVolumeAnimation(session.session_id);
+                    
+                    const slider = e.currentTarget as HTMLInputElement;
+                    slider.dataset.isDragging = 'pending';
+                    slider.dataset.startVolume = session.volume.toString();
+                    delete slider.dataset.wasTrackClick;
+                    try {
+                      slider.setPointerCapture(e.pointerId);
+                    } catch (captureError) {
+                      // Ignore if pointer capture not available
+                    }
+                  }}
+                  onpointermove={(e) => {
+                    if (e.buttons !== 1) {
                       return;
                     }
-                    
-                    // Store start position
-                    isDraggingSlider.set(session.session_id, false);
+
+                    const slider = e.currentTarget as HTMLInputElement;
+                    if (slider.dataset.isDragging !== 'true') {
+                      slider.dataset.isDragging = 'true';
+                      cancelVolumeAnimation(session.session_id);
+                      delete slider.dataset.wasTrackClick;
+                    }
                   }}
                   oninput={(e) => {
                     const slider = e.currentTarget as HTMLInputElement;
                     const newValue = parseFloat(slider.value);
-                    const currentValue = session.volume;
+                    const startVolume = parseFloat(slider.dataset.startVolume ?? session.volume.toString());
                     
-                    // Don't allow input during animation
-                    if (isAnimatingSlider.get(session.session_id)) {
-                      e.preventDefault();
-                      slider.value = currentValue.toString();
+                    if (slider.dataset.wasTrackClick === 'true' && slider.dataset.isDragging !== 'true') {
+                      return;
+                    }
+
+                    if (slider.dataset.isDragging !== 'true') {
+                      slider.dataset.wasTrackClick = 'true';
+                      slider.value = startVolume.toString();
+
+                      (async () => {
+                        const completed = await animateVolumeTo(session.session_id, newValue, 250);
+                        if (completed) {
+                          await setSessionVolumeFinal(session.session_id, newValue);
+                          manuallyControlledSessions.delete(session.session_id);
+                          delete slider.dataset.wasTrackClick;
+                          delete slider.dataset.startVolume;
+                          delete slider.dataset.isDragging;
+                        }
+                      })();
                       return;
                     }
                     
-                    // Check if this is the first input event (click) or a drag
-                    const wasDragging = isDraggingSlider.get(session.session_id);
-                    
-                    if (!wasDragging && Math.abs(newValue - currentValue) > 0.02) {
-                      // First input after mousedown with significant difference = track click
-                      // Prevent the instant snap and animate instead
-                      e.preventDefault();
-                      slider.value = currentValue.toString();
-                      console.log(`[Volume Click] Track click detected: from ${currentValue.toFixed(3)} to ${newValue.toFixed(3)}`);
-                      setSessionVolumeAnimated(session.session_id, newValue);
-                      // Don't set dragging flag - this was a click
-                    } else {
-                      // Mark as dragging for subsequent inputs
-                      isDraggingSlider.set(session.session_id, true);
-                      setSessionVolumeImmediate(session.session_id, newValue);
+                    const sessionIndex = audioSessions.findIndex(s => s.session_id === session.session_id);
+                    if (sessionIndex !== -1) {
+                      audioSessions[sessionIndex].volume = newValue;
+                      audioSessions[sessionIndex].is_muted = newValue === 0;
                     }
                   }}
-                  onchange={async (e) => {
-                    if (isDraggingSlider.get(session.session_id)) {
-                      // User was dragging - just finalize without animation
-                      const targetVolume = parseFloat((e.target as HTMLInputElement).value);
-                      await setSessionVolumeFinal(session.session_id, targetVolume);
-                      isDraggingSlider.delete(session.session_id);
+                  onpointerup={async (e) => {
+                    const slider = e.currentTarget as HTMLInputElement;
+                    
+                    if (slider.dataset.isDragging === 'true') {
+                      const finalValue = parseFloat(slider.value);
+                      await setSessionVolumeFinal(session.session_id, finalValue);
+                    }
+                    
+                    manuallyControlledSessions.delete(session.session_id);
+                    delete slider.dataset.wasTrackClick;
+                    delete slider.dataset.startVolume;
+                    delete slider.dataset.isDragging;
+                    if (slider.hasPointerCapture?.(e.pointerId)) {
+                      try {
+                        slider.releasePointerCapture(e.pointerId);
+                      } catch (releaseError) {
+                        // Ignore if pointer capture not available
+                      }
                     }
                   }}
                   onwheel={async (e) => {
                     e.preventDefault();
                     const delta = e.deltaY > 0 ? -0.05 : 0.05;
                     const newVolume = Math.max(0, Math.min(1, session.volume + delta));
-                    await setSessionVolumeAnimated(session.session_id, newVolume);
+                    const completed = await animateVolumeTo(session.session_id, newVolume, 150);
+                    if (completed) {
+                      await setSessionVolumeFinal(session.session_id, newVolume);
+                    }
                   }}
                 />
               </div>
@@ -1180,7 +1178,6 @@
     letter-spacing: -0.3px;
   }
 
-  /* ===== BASE BUTTON STYLES ===== */
   .btn {
     padding: 0;
     background: var(--text-primary);
@@ -1202,17 +1199,10 @@
     transform: scale(0.95);
   }
 
-  /* Round button variant */
   .btn-round {
     border-radius: 50%;
   }
 
-  /* Pill button variant */
-  .btn-pill {
-    border-radius: 20px;
-  }
-
-  /* Window control button */
   .btn-close {
     width: 32px;
     height: 32px;
@@ -1231,13 +1221,6 @@
     font-weight: 500;
   }
 
-  /* Edit mode button */
-  .btn-edit {
-    font-size: 0.85rem;
-    font-weight: 600;
-  }
-
-  /* Icon button */
   .btn-icon {
     width: 34px;
     height: 34px;
@@ -1303,7 +1286,6 @@
   /* ===== GHOST COLUMN ===== */
   .channel-strip.ghost-column {
     opacity: 0.5;
-    border: 2px dashed var(--border-color);
   }
 
   .channel-strip.ghost-column:hover {
@@ -1343,29 +1325,6 @@
   .app-dropdown-inline option {
     background: var(--bg-dark);
     color: var(--text-primary);
-  }
-
-  .app-dropdown {
-    width: 100%;
-    padding: 8px;
-    background: var(--bg-light);
-    border: 1px solid var(--border-color);
-    border-radius: 8px;
-    color: var(--text-primary);
-    font-size: 0.75rem;
-    font-weight: 500;
-    cursor: pointer;
-    transition: all 0.2s ease;
-  }
-
-  .app-dropdown:hover {
-    border-color: var(--text-secondary);
-    background: var(--bg-medium);
-  }
-
-  .app-dropdown:focus {
-    outline: none;
-    border-color: var(--text-primary);
   }
 
   /* ===== APP NAME ===== */
@@ -1422,7 +1381,6 @@
     );
     border-radius: 23px;
     cursor: pointer;
-    transition: background 0.3s ease-out;
   }
 
   .volume-slider::-moz-range-track {
@@ -1431,7 +1389,6 @@
     background: var(--bg-light);
     border-radius: 23px;
     cursor: pointer;
-    transition: background 0.3s ease-out;
   }
 
   /* Progress fill for Firefox */
@@ -1439,7 +1396,6 @@
     width: 46px;
     background: #fff;
     border-radius: 0 0 23px 23px;
-    transition: background 0.3s ease-out;
   }
 
   /* Hide the thumb - we want just the fill effect */

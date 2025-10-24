@@ -1,22 +1,23 @@
 // Prevents additional console window on Windows in release, DO NOT REMOVE!!
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
-use tauri::{Manager, PhysicalPosition};
+use tauri::Manager;
 use tauri::tray::{TrayIconBuilder, MouseButton, MouseButtonState};
 
 mod audio_management;
 mod hardware_input;
 mod simvar_input;
 mod native_menu;
+mod window_utils;
+
+use window_utils::position_window_bottom_right;
 
 /// Resize window to fit content width and height
 #[tauri::command]
 fn resize_window_to_content(app: tauri::AppHandle, session_count: usize) -> Result<String, String> {
     let base_width = 400;
-    let channel_width = 109; // 95px channel + 14px gap
+    let channel_width = 109;
     
-    // 0 or 1 session: base width only
-    // 2+ sessions: base + additional channels
     let new_width = if session_count <= 1 {
         base_width
     } else {
@@ -26,18 +27,14 @@ fn resize_window_to_content(app: tauri::AppHandle, session_count: usize) -> Resu
     let new_height = 1000;
     
     if let Some(window) = app.get_webview_window("main") {
-        match window.set_size(tauri::Size::Physical(tauri::PhysicalSize {
+        let _ = window.set_size(tauri::Size::Physical(tauri::PhysicalSize {
             width: new_width,
             height: new_height,
-        })) {
-            Ok(_) => {},
-            Err(e) => eprintln!("[ClearComms] ERROR setting window size: {:?}", e),
-        }
+        }));
         
-        // Re-position window after resize to keep it bottom-right with proper padding
         position_window_bottom_right(&window);
         
-        return Ok(format!("Window resized to {}x{} for {} session(s)", new_width, new_height, session_count));
+        return Ok(format!("Resized to {}x{} for {} session(s)", new_width, new_height, session_count));
     }
     
     Err("Main window not found".to_string())
@@ -78,6 +75,16 @@ fn toggle_pin_window(app: tauri::AppHandle) -> Result<(), String> {
         let current_state = window.is_always_on_top().unwrap_or(false);
         let _ = window.set_always_on_top(!current_state);
         Ok(())
+    } else {
+        Err("Main window not found".to_string())
+    }
+}
+
+/// Check if window is pinned on top
+#[tauri::command]
+fn is_window_pinned(app: tauri::AppHandle) -> Result<bool, String> {
+    if let Some(window) = app.get_webview_window("main") {
+        Ok(window.is_always_on_top().unwrap_or(false))
     } else {
         Err("Main window not found".to_string())
     }
@@ -124,6 +131,8 @@ fn main() {
                             // Left click: Toggle main window
                             if let Some(window) = app.get_webview_window("main") {
                                 if window.is_visible().unwrap_or(false) {
+                                    // Hiding window - also unpin if pinned
+                                    let _ = window.set_always_on_top(false);
                                     let _ = window.hide();
                                 } else {
                                     position_window_bottom_right(&window);
@@ -185,6 +194,7 @@ fn main() {
             show_main_window,
             hide_main_window,
             toggle_pin_window,
+            is_window_pinned,
             quit_application,
             open_url,
         ])
@@ -193,32 +203,4 @@ fn main() {
         .expect("error while running tauri application");
 
     clearcomms_lib::run()
-}
-
-/// Position window in the bottom-right corner of the primary monitor
-fn position_window_bottom_right(window: &tauri::WebviewWindow) {
-    if let Ok(Some(monitor)) = window.primary_monitor() {
-        if let Ok(window_size) = window.outer_size() {
-            let screen_size = monitor.size();
-            
-            // Work with physical pixels
-            let screen_width = screen_size.width as i32;
-            let screen_height = screen_size.height as i32;
-            let window_width = window_size.width as i32;
-            let window_height = window_size.height as i32;
-            
-            // Padding from edges (in physical pixels)
-            let padding = 18;
-            
-            // Windows taskbar height (typically 48-72px in physical pixels depending on scaling)
-            // For 150% scaling on 4K: taskbar is ~72px in physical pixels
-            let taskbar_height = 72;
-            
-            let x = screen_width - window_width - padding;
-            let y = screen_height - window_height - taskbar_height - padding;
-            
-            let position = PhysicalPosition::new(x, y);
-            let _ = window.set_position(position);
-        }
-    }
 }
