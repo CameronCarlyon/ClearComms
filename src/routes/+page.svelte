@@ -176,6 +176,24 @@
     loadMappings();
     loadButtonMappings();
     await autoInitialise();
+
+    // Exit edit mode when window loses focus (minimised or switched away)
+    const handleBlur = () => {
+      if (isEditMode) {
+        isEditMode = false;
+        isBindingMode = false;
+        isButtonBindingMode = false;
+        pendingBinding = null;
+        pendingButtonBinding = null;
+      }
+    };
+
+    window.addEventListener('blur', handleBlur);
+
+    // Clean up event listener on component destroy
+    return () => {
+      window.removeEventListener('blur', handleBlur);
+    };
   });
 
   onDestroy(() => {
@@ -619,6 +637,35 @@
     saveButtonMappings();
   }
 
+  function removeApplication(processName: string) {
+    // Remove axis mapping
+    const axisMapping = axisMappings.find(m => m.processName === processName);
+    if (axisMapping) {
+      console.log(`[ClearComms] Removed axis mapping for ${axisMapping.sessionName}`);
+    }
+    axisMappings = axisMappings.filter(m => m.processName !== processName);
+    
+    // Remove button mapping
+    const btnMapping = buttonMappings.find(m => m.processName === processName);
+    if (btnMapping) {
+      console.log(`[ClearComms] Removed button mapping for ${btnMapping.sessionName}`);
+    }
+    buttonMappings = buttonMappings.filter(m => m.processName !== processName);
+    
+    // Clear any cached pre-mute volumes
+    const sessionsToClean = audioSessions.filter(s => s.process_name === processName);
+    for (const session of sessionsToClean) {
+      preMuteVolumes.delete(session.session_id);
+      animatingSliders.delete(session.session_id);
+      manuallyControlledSessions.delete(session.session_id);
+      cancelVolumeAnimation(session.session_id);
+    }
+    
+    console.log(`[ClearComms] ✓ Completely removed application: ${processName}`);
+    saveMappings();
+    saveButtonMappings();
+  }
+
   async function applyAxisMappings() {
     if (isBindingMode && pendingBinding) {
       const movement = detectAxisMovement();
@@ -789,7 +836,6 @@
   <!-- Main Application -->
   <main class="container">
     <header class="app-header">
-      <h1>ClearComms</h1>
       <div class="header-right">
         <button 
           class="btn btn-round btn-icon" 
@@ -823,7 +869,7 @@
             {@const buttonMapping = buttonMappings.find(m => m.processName === session.process_name)}
             {@const isPlaceholder = session.session_id.startsWith('placeholder_')}
             
-            <div class="channel-strip" class:has-mapping={!!mapping || !!buttonMapping} class:inactive={isPlaceholder}>
+            <div class="channel-strip" class:has-mapping={!!mapping || !!buttonMapping} class:inactive={isPlaceholder} class:inactive-edit-mode={isPlaceholder && isEditMode}>
               <!-- Application Name -->
               <span class="app-name" title={session.display_name}>{formatProcessName(session.process_name)}</span>
 
@@ -984,6 +1030,15 @@
                     🎮
                   </button>
                 {/if}
+
+                <!-- Remove Application Button -->
+                <button 
+                  class="btn btn-round btn-channel btn-remove-app" 
+                  onclick={() => removeApplication(session.process_name)} 
+                  title="Remove Application"
+                >
+                  ✕
+                </button>
               {/if}
             </div>
           {/each}
@@ -1057,7 +1112,7 @@
 
   <footer>
     <p style="font-size: 0.8rem; color: var(--text-muted); text-align: center;">
-      Crafted by <a href="https://cameroncarlyon.com" onclick={async (e) => { e.preventDefault(); await invoke('open_url', { url: 'https://cameroncarlyon.com' }); }} style="color: var(--text-secondary); text-decoration: none; cursor: pointer;">Cameron Carlyon</a> | &copy; {new Date().getFullYear()}
+      ClearComms | Crafted by <a href="https://cameroncarlyon.com" onclick={async (e) => { e.preventDefault(); await invoke('open_url', { url: 'https://cameroncarlyon.com' }); }} style="color: var(--text-secondary); text-decoration: none; cursor: pointer;">Cameron Carlyon</a> | &copy; {new Date().getFullYear()}
     </p>
   </footer>
 </main>
@@ -1275,6 +1330,10 @@
     opacity: 0.5;
   }
 
+  .channel-strip.inactive-edit-mode {
+    opacity: 1;
+  }
+
   .channel-strip.inactive .volume-slider {
     pointer-events: none;
   }
@@ -1472,6 +1531,18 @@
 
   .btn-invert.active:hover {
     background: var(--text-secondary);
+  }
+
+  .btn-remove-app {
+    font-size: 1.2rem;
+    background: #ff4444;
+    color: white;
+    border: 2px solid #ff4444;
+  }
+
+  .btn-remove-app:hover {
+    background: #cc0000;
+    border-color: #cc0000;
   }
 
   .mapping-badge {
