@@ -1,7 +1,7 @@
 [package]
-name = "clearcomms"
+name = "ClearComms"
 version = "0.1.0"
-description = "A Tauri App"
+description = "Radio companion application for Microsoft Flight Simulator."
 authors = ["you"]
 edition = "2021"
 
@@ -36,3 +36,8 @@ windows = { version = "0.58", features = [
     "Win32_Media_Multimedia",
 ] }
 
+[profile.release]
+lto = "fat"
+codegen-units = 1
+panic = "abort"
+opt-level = "z"
