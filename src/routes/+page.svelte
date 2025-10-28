@@ -72,6 +72,24 @@
   let dragTargets = $state<Map<string, number>>(new Map());
   let dragAnimationFrames = $state<Map<string, number>>(new Map());
   let manuallyControlledSessions = $state<Set<string>>(new Set());
+  let showCloseConfirmation = $state(false);
+
+  const POLL_LOG_INTERVAL = 200;
+  const BUTTON_CACHE_LOG_INTERVAL = 200;
+  const LIVE_UPDATE_MIN_INTERVAL_MS = 40;
+  let pollInFlight = false;
+  let pollIterations = 0;
+  let skippedPolls = 0;
+  let buttonCachePruneCounter = 0;
+
+  interface LiveVolumeState {
+    inFlight: boolean;
+    lastSent: number;
+    queuedVolume?: number;
+    timerId?: number;
+  }
+
+  const liveVolumeState = new Map<string, LiveVolumeState>();
 
   // Track display count and resize window when bindings change
   $effect(() => {
@@ -168,6 +186,25 @@
     isEditMode = !isEditMode;
   }
 
+  function showCloseDialog() {
+    showCloseConfirmation = true;
+  }
+
+  function cancelClose() {
+    showCloseConfirmation = false;
+  }
+
+  async function confirmClose() {
+    showCloseConfirmation = false;
+    await invoke("quit_application");
+  }
+
+  async function minimiseToTray() {
+    showCloseConfirmation = false;
+    const window = (await import("@tauri-apps/api/window")).Window.getCurrent();
+    await window.hide();
+  }
+
   async function quitApplication() {
     await invoke("quit_application");
   }
@@ -249,12 +286,27 @@
     
     isPolling = true;
     pollingInterval = setInterval(async () => {
+      if (pollInFlight) {
+        skippedPolls += 1;
+        if (skippedPolls % POLL_LOG_INTERVAL === 0) {
+          console.debug(`[ClearComms] Polling skipped ${skippedPolls} times due to in-flight iteration`);
+        }
+        return;
+      }
+
+      pollInFlight = true;
       try {
         await getAxisValues();
         await applyAxisMappings();
         await applyButtonMappings();
+        pollIterations += 1;
+        if (pollIterations % POLL_LOG_INTERVAL === 0) {
+          console.debug(`[ClearComms] Polling iteration ${pollIterations}; cached sessions ${audioSessions.length}; button cache size ${previousButtonStates.size}`);
+        }
       } catch (error) {
         console.error("Polling error:", error);
+      } finally {
+        pollInFlight = false;
       }
     }, 50);
     
@@ -267,6 +319,7 @@
       pollingInterval = null;
     }
     isPolling = false;
+    pollInFlight = false;
     stopAudioMonitoring();
   }
 
@@ -345,6 +398,96 @@
       audioSessions[sessionIndex].volume = volume;
       audioSessions[sessionIndex].is_muted = volume === 0;
     }
+  }
+
+  function scheduleLiveVolumeUpdate(sessionId: string, volume: number) {
+    if (sessionId.startsWith('placeholder_')) return;
+
+    let state = liveVolumeState.get(sessionId);
+    if (!state) {
+      state = { inFlight: false, lastSent: 0 };
+      liveVolumeState.set(sessionId, state);
+    }
+
+    state.queuedVolume = volume;
+
+    const attemptSend = () => {
+      const currentState = liveVolumeState.get(sessionId);
+      if (!currentState) {
+        return;
+      }
+
+      const queued = currentState.queuedVolume;
+      if (queued === undefined) {
+        return;
+      }
+
+      if (currentState.inFlight) {
+        return;
+      }
+
+      const now = performance.now();
+      const elapsed = now - currentState.lastSent;
+
+      if (elapsed < LIVE_UPDATE_MIN_INTERVAL_MS) {
+        if (currentState.timerId !== undefined) {
+          clearTimeout(currentState.timerId);
+        }
+
+        const delay = Math.max(0, LIVE_UPDATE_MIN_INTERVAL_MS - elapsed);
+        currentState.timerId = window.setTimeout(() => {
+          const refreshedState = liveVolumeState.get(sessionId);
+          if (!refreshedState) {
+            return;
+          }
+          refreshedState.timerId = undefined;
+          attemptSend();
+        }, delay);
+
+        return;
+      }
+
+      currentState.inFlight = true;
+      currentState.lastSent = now;
+      currentState.queuedVolume = undefined;
+      if (currentState.timerId !== undefined) {
+        clearTimeout(currentState.timerId);
+        currentState.timerId = undefined;
+      }
+
+      const volumeToSend = queued;
+
+      (async () => {
+        try {
+          await invoke("set_session_volume", { sessionId, volume: volumeToSend });
+          await invoke("set_session_mute", { sessionId, muted: volumeToSend === 0 });
+        } catch (error) {
+          console.error(`Error applying live volume for ${sessionId}:`, error);
+        } finally {
+          const finalState = liveVolumeState.get(sessionId);
+          if (!finalState) {
+            return;
+          }
+          finalState.inFlight = false;
+          attemptSend();
+        }
+      })();
+    };
+
+    attemptSend();
+  }
+
+  function clearLiveVolumeState(sessionId: string) {
+    const state = liveVolumeState.get(sessionId);
+    if (!state) {
+      return;
+    }
+
+    if (state.timerId !== undefined) {
+      clearTimeout(state.timerId);
+    }
+
+    liveVolumeState.delete(sessionId);
   }
 
   function cancelVolumeAnimation(sessionId: string) {
@@ -755,27 +898,31 @@
       return;
     }
 
-    if (!audioInitialised || buttonMappings.length === 0) return;
+    if (!audioInitialised) return;
 
-    for (const mapping of buttonMappings) {
-      const device = axisData.find(d => d.device_handle === mapping.deviceHandle);
-      if (device && device.buttons[mapping.buttonName] !== undefined) {
-        const currentState = device.buttons[mapping.buttonName];
-        const previousState = previousButtonStates.get(device.device_handle)?.[mapping.buttonName];
-        
-        // Button press = false → true transition
-        if (!previousState && currentState) {
-          const session = audioSessions.find(s => s.process_name === mapping.processName);
-          if (session) {
-            const newMuteState = !session.is_muted;
-            try {
-              await invoke("set_session_mute", { sessionId: session.session_id, muted: newMuteState });
-              const sessionIndex = audioSessions.findIndex(s => s.session_id === session.session_id);
-              if (sessionIndex !== -1) {
-                audioSessions[sessionIndex].is_muted = newMuteState;
+    const activeHandles = new Set(axisData.map(d => d.device_handle));
+
+    if (buttonMappings.length > 0) {
+      for (const mapping of buttonMappings) {
+        const device = axisData.find(d => d.device_handle === mapping.deviceHandle);
+        if (device && device.buttons[mapping.buttonName] !== undefined) {
+          const currentState = device.buttons[mapping.buttonName];
+          const previousState = previousButtonStates.get(device.device_handle)?.[mapping.buttonName];
+          
+          // Button press = false → true transition
+          if (!previousState && currentState) {
+            const session = audioSessions.find(s => s.process_name === mapping.processName);
+            if (session) {
+              const newMuteState = !session.is_muted;
+              try {
+                await invoke("set_session_mute", { sessionId: session.session_id, muted: newMuteState });
+                const sessionIndex = audioSessions.findIndex(s => s.session_id === session.session_id);
+                if (sessionIndex !== -1) {
+                  audioSessions[sessionIndex].is_muted = newMuteState;
+                }
+              } catch (error) {
+                console.error(`Error toggling mute for ${mapping.sessionName}:`, error);
               }
-            } catch (error) {
-              console.error(`Error toggling mute for ${mapping.sessionName}:`, error);
             }
           }
         }
@@ -785,6 +932,17 @@
     // Update previous button states for next poll
     for (const device of axisData) {
       previousButtonStates.set(device.device_handle, { ...device.buttons });
+    }
+
+    for (const handle of Array.from(previousButtonStates.keys())) {
+      if (!activeHandles.has(handle)) {
+        previousButtonStates.delete(handle);
+      }
+    }
+
+    buttonCachePruneCounter += 1;
+    if (buttonCachePruneCounter % BUTTON_CACHE_LOG_INTERVAL === 0) {
+      console.debug(`[ClearComms] Button state cache size ${previousButtonStates.size}; active handles ${activeHandles.size}`);
     }
   }
 
@@ -846,7 +1004,7 @@
         >
           {isEditMode ? '✓' : '✏️'}
         </button>
-        <button class="btn btn-round btn-close" onclick={quitApplication} title="Quit">
+        <button class="btn btn-round btn-close" onclick={showCloseDialog} title="Quit">
           ✕
         </button>
       </div>
@@ -887,6 +1045,7 @@
                     animatingSliders.delete(session.session_id);
                     manuallyControlledSessions.add(session.session_id);
                     cancelVolumeAnimation(session.session_id);
+                    clearLiveVolumeState(session.session_id);
                     
                     const slider = e.currentTarget as HTMLInputElement;
                     slider.dataset.isDragging = 'pending';
@@ -941,6 +1100,8 @@
                       audioSessions[sessionIndex].volume = newValue;
                       audioSessions[sessionIndex].is_muted = newValue === 0;
                     }
+
+                    scheduleLiveVolumeUpdate(session.session_id, newValue);
                   }}
                   onpointerup={async (e) => {
                     const slider = e.currentTarget as HTMLInputElement;
@@ -951,6 +1112,7 @@
                     }
                     
                     manuallyControlledSessions.delete(session.session_id);
+                    clearLiveVolumeState(session.session_id);
                     delete slider.dataset.wasTrackClick;
                     delete slider.dataset.startVolume;
                     delete slider.dataset.isDragging;
@@ -1112,9 +1274,33 @@
 
   <footer>
     <p style="font-size: 0.8rem; color: var(--text-muted); text-align: center;">
-      ClearComms | Crafted by <a href="https://cameroncarlyon.com" onclick={async (e) => { e.preventDefault(); await invoke('open_url', { url: 'https://cameroncarlyon.com' }); }} style="color: var(--text-secondary); text-decoration: none; cursor: pointer;">Cameron Carlyon</a> | &copy; {new Date().getFullYear()}
+      ClearComms
+    </p>
+    <p style="font-size: 0.8rem; color: var(--text-muted); text-align: center;">
+      Crafted by <a href="https://cameroncarlyon.com" onclick={async (e) => { e.preventDefault(); await invoke('open_url', { url: 'https://cameroncarlyon.com' }); }} style="color: var(--text-secondary); text-decoration: none; cursor: pointer;">Cameron Carlyon</a> | &copy; {new Date().getFullYear()}
     </p>
   </footer>
+
+  <!-- Close Confirmation Dialog -->
+  {#if showCloseConfirmation}
+    <div class="modal-overlay" onclick={cancelClose}>
+      <div class="modal-dialog" onclick={(e) => e.stopPropagation()}>
+        <h2 class="modal-title">Close ClearComms</h2>
+        <p class="modal-message">Are you sure you would like to close ClearComms?</p>
+        <div class="modal-buttons">
+          <button class="btn btn-modal btn-close-confirm" onclick={confirmClose}>
+            Close
+          </button>
+          <button class="btn btn-modal btn-minimise" onclick={minimiseToTray}>
+            Minimise to System Tray
+          </button>
+          <button class="btn btn-modal btn-cancel" onclick={cancelClose}>
+            Nevermind
+          </button>
+        </div>
+      </div>
+    </div>
+  {/if}
 </main>
 {:else}
   <!-- Boot Screen -->
@@ -1294,6 +1480,7 @@
 
   footer {
     display: flex;
+    flex-direction: column;
     justify-content: center;
     align-items: center;
     color: var(--text-muted);
@@ -1664,5 +1851,98 @@
   .btn-restart:hover {
     background: var(--text-secondary);
     transform: translateY(-2px);
+  }
+
+  /* ===== MODAL DIALOG ===== */
+  .modal-overlay {
+    position: fixed;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    background: rgba(0, 0, 0, 0.8);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    z-index: 1000;
+    backdrop-filter: blur(4px);
+  }
+
+  .modal-dialog {
+    background: var(--bg-dark);
+    border: 2px solid var(--border-color);
+    border-radius: 12px;
+    padding: 2rem;
+    max-width: 400px;
+    width: 90%;
+    box-shadow: 0 8px 32px var(--shadow-soft);
+  }
+
+  .modal-title {
+    font-size: 1.5rem;
+    font-weight: 600;
+    color: var(--text-primary);
+    margin: 0 0 1rem 0;
+    text-align: center;
+  }
+
+  .modal-message {
+    font-size: 1rem;
+    color: var(--text-secondary);
+    margin: 0 0 1.5rem 0;
+    text-align: center;
+    line-height: 1.5;
+  }
+
+  .modal-buttons {
+    display: flex;
+    flex-direction: column;
+    gap: 0.75rem;
+  }
+
+  .btn-modal {
+    padding: 12px 24px;
+    font-size: 1rem;
+    border-radius: 8px;
+    font-weight: 500;
+    transition: all 0.15s ease;
+    cursor: pointer;
+    border: 2px solid transparent;
+  }
+
+  .btn-close-confirm {
+    background: #ff4444;
+    color: white;
+    border-color: #ff4444;
+  }
+
+  .btn-close-confirm:hover {
+    background: #cc0000;
+    border-color: #cc0000;
+    transform: translateY(-1px);
+  }
+
+  .btn-minimise {
+    background: var(--text-primary);
+    color: var(--bg-dark);
+    border-color: var(--text-primary);
+  }
+
+  .btn-minimise:hover {
+    background: var(--text-secondary);
+    border-color: var(--text-secondary);
+    transform: translateY(-1px);
+  }
+
+  .btn-cancel {
+    background: transparent;
+    color: var(--text-secondary);
+    border-color: var(--border-color);
+  }
+
+  .btn-cancel:hover {
+    background: var(--bg-light);
+    border-color: var(--text-secondary);
+    color: var(--text-primary);
   }
 </style>

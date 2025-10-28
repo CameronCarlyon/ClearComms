@@ -17,7 +17,7 @@ pub struct AxisData {
     pub manufacturer: String,
     pub product_id: u16,
     pub vendor_id: u16,
-    pub axes: HashMap<String, f32>, // axis name -> normalized value (0.0-1.0)
+    pub axes: HashMap<String, f32>, // axis name -> normalised value (0.0-1.0)
     pub buttons: HashMap<String, bool>, // button name -> pressed state
 }
 

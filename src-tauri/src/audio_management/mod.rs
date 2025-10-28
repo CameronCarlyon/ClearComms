@@ -1,5 +1,5 @@
 use std::sync::Mutex;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use serde::{Serialize, Deserialize};
 
 #[cfg(windows)]
@@ -26,6 +26,8 @@ pub struct AudioSession {
 pub struct AudioManager {
     sessions: HashMap<String, AudioSession>,
     current_device_id: String,
+    enumerate_calls: usize,
+    last_logged_counts: Option<(usize, usize)>,
 }
 
 #[cfg(windows)]
@@ -99,6 +101,8 @@ impl AudioManager {
         Ok(Self {
             sessions: HashMap::new(),
             current_device_id: device_id,
+            enumerate_calls: 0,
+            last_logged_counts: None,
         })
     }
     
@@ -156,6 +160,7 @@ impl AudioManager {
                 .map_err(|e: Error| format!("Failed to get device count: {}", e))?;
 
             let mut sessions = Vec::new();
+            let mut live_session_ids: HashSet<String> = HashSet::new();
 
             // Iterate through all audio devices
             for device_index in 0..device_count {
@@ -224,6 +229,7 @@ impl AudioManager {
                                     is_muted,
                                 };
 
+                                live_session_ids.insert(session_id.clone());
                                 sessions.push(session.clone());
                                 self.sessions.insert(session_id, session);
                             }
@@ -231,6 +237,27 @@ impl AudioManager {
                     }
                 }
             } // End device loop
+
+            // Remove sessions that are no longer active to prevent cache growth
+            self.sessions.retain(|id, _| live_session_ids.contains(id));
+
+            self.enumerate_calls = self.enumerate_calls.wrapping_add(1);
+            let active_count = live_session_ids.len();
+            let cache_count = self.sessions.len();
+
+            let counts_changed = match self.last_logged_counts {
+                Some((last_active, last_cache)) => last_active != active_count || last_cache != cache_count,
+                None => true,
+            };
+
+            if counts_changed || self.enumerate_calls % 200 == 0 {
+                eprintln!(
+                    "[Audio] enumerate_sessions: {} active (cache size {})",
+                    active_count,
+                    cache_count
+                );
+                self.last_logged_counts = Some((active_count, cache_count));
+            }
 
             Ok(sessions)
         }
