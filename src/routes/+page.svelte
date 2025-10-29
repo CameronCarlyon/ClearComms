@@ -187,6 +187,7 @@
   }
 
   function showCloseDialog() {
+    console.log("[ClearComms] showCloseDialog called, setting showCloseConfirmation to true");
     showCloseConfirmation = true;
   }
 
@@ -195,18 +196,12 @@
   }
 
   async function confirmClose() {
-    showCloseConfirmation = false;
     await invoke("quit_application");
   }
 
   async function minimiseToTray() {
-    showCloseConfirmation = false;
     const window = (await import("@tauri-apps/api/window")).Window.getCurrent();
     await window.hide();
-  }
-
-  async function quitApplication() {
-    await invoke("quit_application");
   }
 
   onMount(async () => {
@@ -990,7 +985,23 @@
   }
 </script>
 
-{#if initStatus === 'Ready'}
+{#if showCloseConfirmation}
+  <!-- Close Confirmation Screen -->
+  <div class="close-screen">
+    <h1 class="close-title">Close ClearComms?</h1>    
+    <div class="close-buttons">
+      <button class="btn btn-pill btn-confirm-close" onclick={confirmClose}>
+        Close
+      </button>
+      <button class="btn btn-pill btn-minimise" onclick={minimiseToTray}>
+        Minimise to System Tray
+      </button>
+      <button class="btn btn-pill btn-cancel" onclick={cancelClose}>
+        Return to Application
+      </button>
+    </div>
+  </div>
+{:else if initStatus === 'Ready'}
   <!-- Main Application -->
   <main class="container">
     <header class="app-header">
@@ -1280,27 +1291,6 @@
       Crafted by <a href="https://cameroncarlyon.com" onclick={async (e) => { e.preventDefault(); await invoke('open_url', { url: 'https://cameroncarlyon.com' }); }} style="color: var(--text-secondary); text-decoration: none; cursor: pointer;">Cameron Carlyon</a> | &copy; {new Date().getFullYear()}
     </p>
   </footer>
-
-  <!-- Close Confirmation Dialog -->
-  {#if showCloseConfirmation}
-    <div class="modal-overlay" onclick={cancelClose}>
-      <div class="modal-dialog" onclick={(e) => e.stopPropagation()}>
-        <h2 class="modal-title">Close ClearComms</h2>
-        <p class="modal-message">Are you sure you would like to close ClearComms?</p>
-        <div class="modal-buttons">
-          <button class="btn btn-modal btn-close-confirm" onclick={confirmClose}>
-            Close
-          </button>
-          <button class="btn btn-modal btn-minimise" onclick={minimiseToTray}>
-            Minimise to System Tray
-          </button>
-          <button class="btn btn-modal btn-cancel" onclick={cancelClose}>
-            Nevermind
-          </button>
-        </div>
-      </div>
-    </div>
-  {/if}
 </main>
 {:else}
   <!-- Boot Screen -->
@@ -1341,12 +1331,14 @@
   main {
     display: flex;
     gap: 1rem;
-    padding: 1rem;
     flex-direction: column;
-    height: 100vh;
-    max-height: 100vh;
+    height: calc(100vh - 2px);
+    max-height: calc(100vh - 2px);
+    width: calc(100vw - 2px);
     justify-content: space-between;
     overflow: hidden;
+    box-sizing: border-box;
+    margin: 1px;
   }
 
   .container {
@@ -1358,7 +1350,10 @@
     display: flex;
     flex-direction: column;
     position: relative;
-    border-radius: 20px;
+    border-radius: 3rem;
+    border: 1px solid var(--border-color);
+    box-sizing: border-box;
+    padding: 1rem;
   }
 
   /* Main glass content - inset from edges */
@@ -1691,7 +1686,6 @@
   .btn-mute.muted {
     background: var(--bg-light);
     color: var(--text-primary);
-    border: 2px solid var(--text-primary);
   }
 
   .btn-mute.muted:hover {
@@ -1853,96 +1847,116 @@
     transform: translateY(-2px);
   }
 
-  /* ===== MODAL DIALOG ===== */
-  .modal-overlay {
-    position: fixed;
-    top: 0;
-    left: 0;
-    right: 0;
-    bottom: 0;
-    background: rgba(0, 0, 0, 0.8);
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    z-index: 1000;
-    backdrop-filter: blur(4px);
-  }
-
-  .modal-dialog {
-    background: var(--bg-dark);
-    border: 2px solid var(--border-color);
-    border-radius: 12px;
-    padding: 2rem;
-    max-width: 400px;
-    width: 90%;
-    box-shadow: 0 8px 32px var(--shadow-soft);
-  }
-
-  .modal-title {
-    font-size: 1.5rem;
-    font-weight: 600;
-    color: var(--text-primary);
-    margin: 0 0 1rem 0;
-    text-align: center;
-  }
-
-  .modal-message {
-    font-size: 1rem;
-    color: var(--text-secondary);
-    margin: 0 0 1.5rem 0;
-    text-align: center;
-    line-height: 1.5;
-  }
-
-  .modal-buttons {
+  /* ===== CLOSE CONFIRMATION SCREEN ===== */
+  .close-screen {
     display: flex;
     flex-direction: column;
-    gap: 0.75rem;
+    align-items: center;
+    justify-content: center;
+    border-radius: 3rem;
+    height: calc(100vh - 2px);
+    width: calc(100vw - 2px);
+    background: var(--bg-dark);
+    gap: 2rem;
+    padding: 2rem;
+    border: 1px solid var(--border-color);
+    box-sizing: border-box;
+    margin: 1px;
   }
 
-  .btn-modal {
-    padding: 12px 24px;
-    font-size: 1rem;
-    border-radius: 8px;
+  .close-title {
+    font-size: 2rem;
+    font-weight: 600;
+    color: var(--text-primary);
+    margin: 0;
+    text-align: center;
+  }
+
+  .close-message {
+    font-size: 1.1rem;
+    color: var(--text-secondary);
+    margin: 0;
+    text-align: center;
+    line-height: 1.6;
+    max-width: 400px;
+  }
+
+  .close-buttons {
+    display: flex;
+    flex-direction: column;
+    gap: 1rem;
+    width: 100%;
+    max-width: 400px;
+  }
+
+  .btn-pill {
+    width: 100%;
+    align-items: center;
+  }
+
+  .btn-confirm-close {
+    padding: 16px 32px;
+    font-size: 1.1rem;
+    border-radius: 2rem;
     font-weight: 500;
-    transition: all 0.15s ease;
-    cursor: pointer;
-    border: 2px solid transparent;
-  }
-
-  .btn-close-confirm {
     background: #ff4444;
     color: white;
-    border-color: #ff4444;
+    border: 2px solid #ff4444;
+    cursor: pointer;
+    transition: all 0.15s ease;
   }
 
-  .btn-close-confirm:hover {
+  .btn-close:hover {
     background: #cc0000;
     border-color: #cc0000;
-    transform: translateY(-1px);
+    box-shadow: 0 0px 80px rgba(255, 68, 68, 0.3);
+  }
+
+  .btn-close-confirm:active {
+    transform: scale(0.98);
   }
 
   .btn-minimise {
+    padding: 16px 32px;
+    font-size: 1.1rem;
+    border-radius: 8px;
+    font-weight: 500;
     background: var(--text-primary);
     color: var(--bg-dark);
-    border-color: var(--text-primary);
+    border: 2px solid var(--text-primary);
+    cursor: pointer;
+    transition: all 0.15s ease;
   }
 
   .btn-minimise:hover {
     background: var(--text-secondary);
     border-color: var(--text-secondary);
-    transform: translateY(-1px);
+    box-shadow: 0 4px 12px rgba(255, 255, 255, 0.2);
+  }
+
+  .btn-minimise:active {
+    transform: scale(0.98);
   }
 
   .btn-cancel {
+    padding: 16px 32px;
+    font-size: 1.1rem;
+    border-radius: 8px;
+    font-weight: 500;
     background: transparent;
     color: var(--text-secondary);
-    border-color: var(--border-color);
+    border: 2px solid var(--border-color);
+    cursor: pointer;
+    transition: all 0.15s ease;
   }
 
   .btn-cancel:hover {
     background: var(--bg-light);
     border-color: var(--text-secondary);
     color: var(--text-primary);
+  }
+
+  .btn-cancel:active {
+    transform: scale(0.98);
   }
 </style>
