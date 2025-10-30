@@ -1003,7 +1003,7 @@
   </div>
 {:else if initStatus === 'Ready'}
   <!-- Main Application -->
-  <main class="container">
+  <main>
     <header class="app-header">
       <div class="header-right">
         <button 
@@ -1308,22 +1308,6 @@
 {/if}
 
 <style>
-  :root {
-    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
-    font-size: 14px;
-    line-height: 1.4;
-    
-    /* Monochrome color palette */
-    --bg-dark: #1a1a1a;
-    --bg-medium: #2a2a2a;
-    --bg-light: #3a3a3a;
-    --text-primary: #ffffff;
-    --text-secondary: #cccccc;
-    --text-muted: #888888;
-    --border-color: rgba(255, 255, 255, 0.1);
-    --shadow-soft: rgba(0, 0, 0, 0.3);
-  }
-
   * {
     box-sizing: border-box;
   }
@@ -1332,57 +1316,14 @@
     display: flex;
     gap: 1rem;
     flex-direction: column;
-    height: calc(100vh - 2px);
-    max-height: calc(100vh - 2px);
-    width: calc(100vw - 2px);
+    height: 100vh;
+    max-height: 100vh;
+    width: 100vw;
     justify-content: space-between;
     overflow: hidden;
     box-sizing: border-box;
-    margin: 1px;
-  }
-
-  .container {
-    flex: 1;
-    min-height: 0;
-    overflow-y: auto;
-    overflow-x: hidden;
-    background: transparent;
-    display: flex;
-    flex-direction: column;
-    position: relative;
-    border-radius: 3rem;
-    border: 1px solid var(--border-color);
-    box-sizing: border-box;
     padding: 1rem;
-  }
-
-  /* Main glass content - inset from edges */
-  .container::before {
-    content: '';
-    position: absolute;
-    top: 0;
-    left: 0;
-    right: 0;
-    bottom: 0;
-    background: rgba(26, 26, 26, 0.92);
-    border-radius: 20px;
-    box-shadow: 
-      0 0 0 1px rgba(255, 255, 255, 0.08),
-      0 20px 60px var(--shadow-soft);
-    z-index: 0;
-  }
-
-  /* Clean overlay */
-  .container::after {
-    content: '';
-    position: absolute;
-    top: 0;
-    left: 0;
-    right: 0;
-    bottom: 0;
-    pointer-events: none;
-    z-index: 1;
-    border-radius: 20px;
+    position: relative;
   }
 
   /* Ensure content is above overlay */
@@ -1418,7 +1359,7 @@
     padding: 0;
     background: var(--text-primary);
     border: none;
-    color: var(--bg-dark);
+    color: var(--bg-primary);
     cursor: pointer;
     transition: all 0.2s ease;
     display: flex;
@@ -1449,7 +1390,7 @@
   .error-banner {
     padding: 10px 14px;
     margin-bottom: 12px;
-    background: var(--bg-medium);
+    background: var(--bg-secondary);
     border: 1px solid var(--border-color);
     border-radius: 12px;
     color: var(--text-primary);
@@ -1564,7 +1505,7 @@
   }
 
   .app-dropdown-inline option {
-    background: var(--bg-dark);
+    background: var(--bg-primary);
     color: var(--text-primary);
   }
 
@@ -1598,8 +1539,8 @@
   }
 
   .volume-slider {
-    -webkit-appearance: slider-vertical;
-    appearance: slider-vertical;
+    -webkit-appearance: none;
+    appearance: none;
     width: 46px;
     flex: 1;
     min-height: 0;
@@ -1607,6 +1548,8 @@
     outline: none;
     cursor: pointer;
     position: relative;
+    writing-mode: vertical-lr;
+    direction: rtl;
   }
 
   /* Track styling */
@@ -1617,8 +1560,8 @@
       to top,
       #fff 0%,
       #fff var(--volume-percent, 0%),
-      var(--bg-light) var(--volume-percent, 0%),
-      var(--bg-light) 100%
+      var(--bg-card) var(--volume-percent, 0%),
+      var(--bg-card) 100%
     );
     border-radius: 23px;
     cursor: pointer;
@@ -1627,7 +1570,7 @@
   .volume-slider::-moz-range-track {
     width: 46px;
     height: 100%;
-    background: var(--bg-light);
+    background: var(--bg-card);
     border-radius: 23px;
     cursor: pointer;
   }
@@ -1684,29 +1627,29 @@
   }
 
   .btn-mute.muted {
-    background: var(--bg-light);
+    background: var(--bg-card);
     color: var(--text-primary);
   }
 
   .btn-mute.muted:hover {
-    background: var(--bg-medium);
+    background: var(--bg-secondary);
   }
 
   .btn-invert {
     font-size: 1.2rem;
-    background: var(--bg-light);
+    background: var(--bg-card);
     color: var(--text-secondary);
     border: 2px solid var(--border-color);
   }
 
   .btn-invert.active {
     background: var(--text-primary);
-    color: var(--bg-dark);
+    color: var(--bg-primary);
     border-color: var(--text-primary);
   }
 
   .btn-invert:hover {
-    background: var(--bg-medium);
+    background: var(--bg-secondary);
     border-color: var(--text-secondary);
   }
 
@@ -1731,7 +1674,7 @@
     height: 46px;
     aspect-ratio: 1 / 1;
     position: relative;
-    background: var(--bg-light);
+    background: var(--bg-card);
     border: 2px solid var(--text-primary);
     border-radius: 50%;
     font-size: 1.3rem;
@@ -1742,7 +1685,7 @@
   }
 
   .mapping-badge.button {
-    background: var(--bg-light);
+    background: var(--bg-card);
     border-color: var(--text-primary);
   }
 
@@ -1763,7 +1706,7 @@
     height: 46px;
     aspect-ratio: 1 / 1;
     position: relative;
-    background: var(--bg-light);
+    background: var(--bg-card);
     border: 2px solid var(--text-primary);
     border-radius: 50%;
     font-size: 1.3rem;
@@ -1780,7 +1723,7 @@
   }
 
   .btn-badge-cancel {
-    background: var(--bg-light);
+    background: var(--bg-card);
     border: 1px solid var(--text-secondary);
     color: var(--text-primary);
   }
@@ -1837,7 +1780,7 @@
     padding: 12px 24px;
     font-size: 1rem;
     background: var(--text-primary);
-    color: var(--bg-dark);
+    color: var(--bg-primary);
     border-radius: 8px;
     font-weight: 500;
   }
@@ -1853,15 +1796,12 @@
     flex-direction: column;
     align-items: center;
     justify-content: center;
-    border-radius: 3rem;
-    height: calc(100vh - 2px);
-    width: calc(100vw - 2px);
-    background: var(--bg-dark);
+    height: 100vh;
+    width: 100vw;
+    background: transparent;
     gap: 2rem;
     padding: 2rem;
-    border: 1px solid var(--border-color);
     box-sizing: border-box;
-    margin: 1px;
   }
 
   .close-title {
@@ -1922,7 +1862,7 @@
     border-radius: 8px;
     font-weight: 500;
     background: var(--text-primary);
-    color: var(--bg-dark);
+    color: var(--bg-primary);
     border: 2px solid var(--text-primary);
     cursor: pointer;
     transition: all 0.15s ease;
@@ -1951,7 +1891,7 @@
   }
 
   .btn-cancel:hover {
-    background: var(--bg-light);
+    background: var(--bg-card);
     border-color: var(--text-secondary);
     color: var(--text-primary);
   }
@@ -1960,3 +1900,4 @@
     transform: scale(0.98);
   }
 </style>
+

@@ -114,6 +114,29 @@ fn main() {
         .setup(move |app| {
             // Get main window and position it
             if let Some(window) = app.get_webview_window("main") {
+                // Apply Windows Acrylic effect and rounded corners
+                #[cfg(target_os = "windows")]
+                {
+                    use window_vibrancy::apply_acrylic;
+                    use windows::Win32::Graphics::Dwm::*;
+                    use windows::Win32::Foundation::HWND;
+                    
+                    // Apply acrylic with automatic color matching to Windows theme
+                    let _ = apply_acrylic(&window, None);
+                    
+                    // Apply rounded corners
+                    let hwnd = HWND(window.hwnd().unwrap().0 as *mut std::ffi::c_void);
+                    let corner_preference: i32 = DWMWCP_ROUND.0;
+                    unsafe {
+                        let _ = DwmSetWindowAttribute(
+                            hwnd,
+                            DWMWA_WINDOW_CORNER_PREFERENCE,
+                            &corner_preference as *const _ as *const _,
+                            std::mem::size_of::<i32>() as u32,
+                        );
+                    }
+                }
+                
                 // Position window in bottom-right corner
                 position_window_bottom_right(&window);
                 
