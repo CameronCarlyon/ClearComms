@@ -1039,8 +1039,6 @@
             {@const isPlaceholder = session.session_id.startsWith('placeholder_')}
             
             <div class="channel-strip" class:has-mapping={!!mapping || !!buttonMapping} class:inactive={isPlaceholder} class:inactive-edit-mode={isPlaceholder && isEditMode}>
-              <!-- Application Name -->
-              <span class="app-name" title={session.display_name}>{formatProcessName(session.process_name)}</span>
 
               <!-- Horizontal Volume Bar -->
               <div class="volume-bar-container">
@@ -1213,6 +1211,10 @@
                   ✕
                 </button>
               {/if}
+
+              <!-- Application Name -->
+              <span class="app-name" title={session.display_name}>{formatProcessName(session.process_name)}</span>
+              
             </div>
           {/each}
 
@@ -1550,6 +1552,7 @@
     position: relative;
     writing-mode: vertical-lr;
     direction: rtl;
+    border-radius: 2rem;
   }
 
   /* Track styling */
@@ -1563,7 +1566,7 @@
       var(--bg-card) var(--volume-percent, 0%),
       var(--bg-card) 100%
     );
-    border-radius: 23px;
+    border-radius: 2rem;
     cursor: pointer;
   }
 
@@ -1582,20 +1585,26 @@
     border-radius: 0 0 23px 23px;
   }
 
-  /* Hide the thumb - we want just the fill effect */
+  /* Thumb styling - white circle */
   .volume-slider::-webkit-slider-thumb {
     -webkit-appearance: none;
     appearance: none;
-    width: 0;
-    height: 0;
-    opacity: 0;
+    width: 46px;
+    height: 46px;
+    border-radius: 50%;
+    background: #fff;
+    cursor: pointer;
+    border: none;
   }
 
   .volume-slider::-moz-range-thumb {
-    width: 0;
-    height: 0;
+    width: 46px;
+    height: 46px;
+    border-radius: 50%;
+    background: #fff;
+    cursor: pointer;
     border: none;
-    opacity: 0;
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.2);
   }
 
   /* Hover effect */
