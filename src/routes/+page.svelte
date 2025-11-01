@@ -1214,7 +1214,7 @@
 
               <!-- Application Name -->
               <span class="app-name" title={session.display_name}>{formatProcessName(session.process_name)}</span>
-              
+
             </div>
           {/each}
 
@@ -1561,10 +1561,10 @@
     height: 100%;
     background: linear-gradient(
       to top,
-      #fff 0%,
-      #fff var(--volume-percent, 0%),
-      var(--bg-card) var(--volume-percent, 0%),
-      var(--bg-card) 100%
+      #fff 5.7%,
+      #fff calc(5.7% + var(--volume-percent, 0%) * 0.886),
+      var(--bg-card) calc(5.7% + var(--volume-percent, 0%) * 0.886),
+      var(--bg-card) 94.3%
     );
     border-radius: 2rem;
     cursor: pointer;
