@@ -909,15 +909,7 @@
             const session = audioSessions.find(s => s.process_name === mapping.processName);
             if (session) {
               const newMuteState = !session.is_muted;
-              try {
-                await invoke("set_session_mute", { sessionId: session.session_id, muted: newMuteState });
-                const sessionIndex = audioSessions.findIndex(s => s.session_id === session.session_id);
-                if (sessionIndex !== -1) {
-                  audioSessions[sessionIndex].is_muted = newMuteState;
-                }
-              } catch (error) {
-                console.error(`Error toggling mute for ${mapping.sessionName}:`, error);
-              }
+              setSessionMute(session.session_id, newMuteState);
             }
           }
         }
