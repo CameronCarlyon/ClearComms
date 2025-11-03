@@ -77,10 +77,15 @@
   const POLL_LOG_INTERVAL = 200;
   const BUTTON_CACHE_LOG_INTERVAL = 200;
   const LIVE_UPDATE_MIN_INTERVAL_MS = 40;
+  const HARDWARE_VOLUME_SMOOTHING = 0.3; // Interpolation factor (0-1, higher = faster)
   let pollInFlight = false;
   let pollIterations = 0;
   let skippedPolls = 0;
   let buttonCachePruneCounter = 0;
+
+  // Hardware volume interpolation state
+  const hardwareVolumeTargets = new Map<string, number>();
+  const hardwareVolumeAnimations = new Map<string, number>();
 
   interface LiveVolumeState {
     inFlight: boolean;
@@ -605,6 +610,61 @@
     dragAnimationFrames.delete(sessionId);
     dragTargets.delete(sessionId);
   }
+
+  // Smooth hardware volume interpolation (front-end only)
+  function startHardwareVolumeInterpolation(sessionId: string, targetVolume: number) {
+    if (sessionId.startsWith('placeholder_')) return;
+    
+    hardwareVolumeTargets.set(sessionId, targetVolume);
+    
+    // Start animation loop if not already running
+    if (!hardwareVolumeAnimations.has(sessionId)) {
+      const animate = () => {
+        const target = hardwareVolumeTargets.get(sessionId);
+        if (target === undefined) {
+          hardwareVolumeAnimations.delete(sessionId);
+          return;
+        }
+        
+        const session = audioSessions.find(s => s.session_id === sessionId);
+        if (!session) {
+          hardwareVolumeAnimations.delete(sessionId);
+          hardwareVolumeTargets.delete(sessionId);
+          return;
+        }
+        
+        const current = session.volume;
+        const diff = target - current;
+        
+        // Smooth interpolation
+        const newVolume = current + (diff * HARDWARE_VOLUME_SMOOTHING);
+        
+        // Stop if very close to target
+        if (Math.abs(diff) < 0.001) {
+          setSessionVolumeImmediate(sessionId, target);
+          hardwareVolumeAnimations.delete(sessionId);
+          hardwareVolumeTargets.delete(sessionId);
+          return;
+        }
+        
+        setSessionVolumeImmediate(sessionId, newVolume);
+        const frameId = requestAnimationFrame(animate);
+        hardwareVolumeAnimations.set(sessionId, frameId);
+      };
+      
+      const frameId = requestAnimationFrame(animate);
+      hardwareVolumeAnimations.set(sessionId, frameId);
+    }
+  }
+
+  function stopHardwareVolumeInterpolation(sessionId: string) {
+    const frameId = hardwareVolumeAnimations.get(sessionId);
+    if (frameId !== undefined) {
+      cancelAnimationFrame(frameId);
+    }
+    hardwareVolumeAnimations.delete(sessionId);
+    hardwareVolumeTargets.delete(sessionId);
+  }
   
   // Apply volume to backend after animation completes
   async function setSessionVolumeFinal(sessionId: string, volume: number) {
@@ -852,14 +912,13 @@
           // Skip if user is manually controlling this session
           if (session && !manuallyControlledSessions.has(session.session_id)) {
             try {
+              // Update backend immediately (real control)
               await invoke("set_session_volume", { sessionId: session.session_id, volume: axisValue });
               await invoke("set_session_mute", { sessionId: session.session_id, muted: axisValue === 0 });
               
-              const sessionIndex = audioSessions.findIndex(s => s.session_id === session.session_id);
-              if (sessionIndex !== -1) {
-                audioSessions[sessionIndex].volume = axisValue;
-                audioSessions[sessionIndex].is_muted = axisValue === 0;
-              }
+              // Smoothly interpolate UI display (cosmetic)
+              startHardwareVolumeInterpolation(session.session_id, axisValue);
+              
               lastHardwareAxisValues.set(mappingKey, axisValue);
             } catch (error) {
               console.error(`Error applying mapping for ${mapping.sessionName}:`, error);
