@@ -209,10 +209,10 @@
     await window.hide();
   }
 
-  onMount(async () => {
+  onMount(() => {
     loadMappings();
     loadButtonMappings();
-    await autoInitialise();
+    autoInitialise();
 
     // Exit edit mode when window loses focus (minimised or switched away)
     const handleBlur = () => {
@@ -1872,15 +1872,6 @@
     text-align: center;
   }
 
-  .close-message {
-    font-size: 1.1rem;
-    color: var(--text-secondary);
-    margin: 0;
-    text-align: center;
-    line-height: 1.6;
-    max-width: 400px;
-  }
-
   .close-buttons {
     display: flex;
     flex-direction: column;
@@ -1910,10 +1901,6 @@
     background: #cc0000;
     border-color: #cc0000;
     box-shadow: 0 0px 80px rgba(255, 68, 68, 0.3);
-  }
-
-  .btn-close-confirm:active {
-    transform: scale(0.98);
   }
 
   .btn-minimise {
