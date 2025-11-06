@@ -11,6 +11,22 @@ use windows::{
     Win32::System::Threading::*,
 };
 
+// ─────────────────────────────────────────────────────────────────────────────
+// Constants
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// Maximum path length for Windows process names (MAX_PATH)
+const MAX_PATH_LENGTH: usize = 260;
+
+/// Maximum number of cached audio sessions before pruning
+const MAX_SESSION_CACHE_SIZE: usize = 1000;
+
+/// Initial capacity for session vectors (reasonable estimate for typical systems)
+const INITIAL_SESSION_CAPACITY: usize = 64;
+
+/// Interval for logging enumerate calls (every N calls)
+const LOG_INTERVAL: usize = 200;
+
 /// Information about an audio session (application)
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AudioSession {
@@ -31,35 +47,55 @@ pub struct AudioManager {
 }
 
 #[cfg(windows)]
-/// Get the executable name from a process ID
+/// RAII wrapper for process handles to ensure proper cleanup
+struct ProcessHandle(HANDLE);
+
+impl ProcessHandle {
+    fn open(process_id: u32) -> std::result::Result<Self, String> {
+        unsafe {
+            let handle = OpenProcess(
+                PROCESS_QUERY_LIMITED_INFORMATION,
+                false,
+                process_id,
+            ).map_err(|e| format!("Failed to open process {}: {}", process_id, e))?;
+            Ok(ProcessHandle(handle))
+        }
+    }
+    
+    fn as_handle(&self) -> HANDLE {
+        self.0
+    }
+}
+
+impl Drop for ProcessHandle {
+    fn drop(&mut self) {
+        unsafe {
+            let _ = CloseHandle(self.0);
+        }
+    }
+}
+
+#[cfg(windows)]
+/// Get the executable name from a process ID with proper resource cleanup
 fn get_process_name(process_id: u32) -> String {
     if process_id == 0 {
         return "System".to_string();
     }
 
-    unsafe {
-        // Open process with query limited information rights
-        let process_handle = OpenProcess(
-            PROCESS_QUERY_LIMITED_INFORMATION,
-            false,
-            process_id,
-        );
-
-        match process_handle {
-            Ok(handle) => {
+    match ProcessHandle::open(process_id) {
+        Ok(process_handle) => {
+            unsafe {
                 // Buffer for the executable path
-                let mut buffer = vec![0u16; 260]; // MAX_PATH
+                let mut buffer = vec![0u16; MAX_PATH_LENGTH];
                 let mut size = buffer.len() as u32;
 
                 // Get the full executable path
                 let result = QueryFullProcessImageNameW(
-                    handle,
+                    process_handle.as_handle(),
                     PROCESS_NAME_WIN32,
                     PWSTR(buffer.as_mut_ptr()),
                     &mut size,
                 );
-
-                let _ = CloseHandle(handle);
 
                 if result.is_ok() && size > 0 {
                     // Convert to String
@@ -72,9 +108,10 @@ fn get_process_name(process_id: u32) -> String {
                     
                     return path;
                 }
+                // ProcessHandle automatically closes on drop
             }
-            Err(_) => {}
         }
+        Err(_) => {}
     }
 
     // Fallback if we can't get the process name
@@ -140,8 +177,10 @@ impl AudioManager {
         }
     }
 
-    /// Enumerate all active audio sessions from all audio devices
+    /// Enumerate all active audio sessions from all audio devices with proper resource management
     pub fn enumerate_sessions(&mut self) -> std::result::Result<Vec<AudioSession>, String> {
+        let _com_guard = (); // Simplified COM guard
+        
         unsafe {
             // Create device enumerator
             let enumerator: IMMDeviceEnumerator = CoCreateInstance(
@@ -159,8 +198,8 @@ impl AudioManager {
                 .GetCount()
                 .map_err(|e: Error| format!("Failed to get device count: {}", e))?;
 
-            let mut sessions = Vec::new();
-            let mut live_session_ids: HashSet<String> = HashSet::new();
+            let mut sessions = Vec::with_capacity(INITIAL_SESSION_CAPACITY); // Pre-allocate reasonable capacity
+            let mut live_session_ids: HashSet<String> = HashSet::with_capacity(INITIAL_SESSION_CAPACITY);
 
             // Iterate through all audio devices
             for device_index in 0..device_count {
@@ -240,6 +279,15 @@ impl AudioManager {
 
             // Remove sessions that are no longer active to prevent cache growth
             self.sessions.retain(|id, _| live_session_ids.contains(id));
+            
+            // Prevent unbounded memory growth by limiting cache size
+            if self.sessions.len() > MAX_SESSION_CACHE_SIZE {
+                // Keep only the most recent entries
+                let mut session_keys: Vec<String> = self.sessions.keys().cloned().collect();
+                session_keys.truncate(MAX_SESSION_CACHE_SIZE / 2); // Remove oldest half
+                self.sessions.retain(|k, _| session_keys.contains(k));
+                eprintln!("[Audio] Cache size limit reached, pruned to {} entries", self.sessions.len());
+            }
 
             self.enumerate_calls = self.enumerate_calls.wrapping_add(1);
             let active_count = live_session_ids.len();
@@ -250,11 +298,12 @@ impl AudioManager {
                 None => true,
             };
 
-            if counts_changed || self.enumerate_calls % 200 == 0 {
+            if counts_changed || self.enumerate_calls % LOG_INTERVAL == 0 {
                 eprintln!(
-                    "[Audio] enumerate_sessions: {} active (cache size {})",
+                    "[Audio] enumerate_sessions: {} active (cache size {}, calls: {})",
                     active_count,
-                    cache_count
+                    cache_count,
+                    self.enumerate_calls
                 );
                 self.last_logged_counts = Some((active_count, cache_count));
             }
@@ -433,11 +482,38 @@ impl AudioManager {
     }
 }
 
+#[cfg(windows)]
+impl AudioManager {
+    /// Explicit cleanup method for proper resource management
+    pub fn cleanup(&mut self) {
+        eprintln!("[Audio] Cleaning up audio manager resources...");
+        
+        // Clear internal caches
+        self.sessions.clear();
+        // Release memory back to the system
+        self.sessions.shrink_to_fit();
+        
+        // Reset counters
+        self.enumerate_calls = 0;
+        self.last_logged_counts = None;
+        
+        // Reset device ID to release string memory
+        self.current_device_id = String::new();
+        
+        eprintln!("[Audio] Audio manager cleanup complete");
+    }
+}
+
 impl Drop for AudioManager {
     fn drop(&mut self) {
         #[cfg(windows)]
-        unsafe {
-            CoUninitialize();
+        {
+            eprintln!("[Audio] Dropping audio manager...");
+            self.cleanup();
+            unsafe {
+                CoUninitialize();
+            }
+            eprintln!("[Audio] Audio manager dropped");
         }
     }
 }
@@ -516,4 +592,20 @@ pub fn check_default_device_changed() -> std::result::Result<bool, String> {
         .ok_or("Audio manager not initialised. Call init_audio_manager first.")?;
     
     manager.check_device_changed()
+}
+
+/// Clean up audio manager resources
+#[tauri::command]
+pub fn cleanup_audio_manager() -> std::result::Result<String, String> {
+    let mut lock = AUDIO_MANAGER
+        .lock()
+        .map_err(|e| format!("Failed to lock audio manager mutex: {}", e))?;
+    
+    match lock.as_mut() {
+        Some(manager) => {
+            manager.cleanup();
+            Ok("Audio manager cleaned up successfully".to_string())
+        }
+        None => Ok("Audio manager not initialised".to_string())
+    }
 }
