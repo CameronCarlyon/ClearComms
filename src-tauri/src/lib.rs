@@ -1,14 +1,13 @@
-// Learn more about Tauri commands at https://tauri.app/develop/calling-rust/
-#[tauri::command]
-fn greet(name: &str) -> String {
-    format!("Hello, {}! You've been greeted from Rust!", name)
-}
+//! ClearComms library entry point.
+//!
+//! This module exists to satisfy Tauri's build requirements but the main
+//! application logic is in main.rs. For desktop-only applications like
+//! ClearComms, we use main.rs directly.
 
+/// Empty run function to satisfy Tauri's library requirements.
+/// The actual application is initialised in main.rs.
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-    tauri::Builder::default()
-        .plugin(tauri_plugin_opener::init())
-        .invoke_handler(tauri::generate_handler![greet])
-        .run(tauri::generate_context!())
-        .expect("error while running tauri application");
+    // Desktop application uses main.rs directly.
+    // This function exists only for Tauri's build system compatibility.
 }
