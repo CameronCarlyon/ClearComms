@@ -9,6 +9,28 @@ use windows::Win32::Media::Multimedia::{
     JOY_USEDEADZONE, JOYERR_NOERROR,
 };
 
+// ─────────────────────────────────────────────────────────────────────────────
+// Constants
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// Maximum number of joystick devices Windows supports
+const MAX_JOYSTICK_DEVICES: u32 = 16;
+
+/// Maximum axis value from Windows Joystick API (for normalisation)
+const MAX_AXIS_VALUE: f32 = 65535.0;
+
+/// Maximum number of buttons per device
+const MAX_BUTTONS_PER_DEVICE: u32 = 32;
+
+/// Initial capacity for device and cache collections
+const INITIAL_DEVICE_CAPACITY: usize = 16;
+
+/// Initial capacity for HID device map
+const INITIAL_HID_DEVICE_CAPACITY: usize = 32;
+
+/// Maximum cache size before forced cleanup
+const MAX_CACHE_SIZE: usize = 100;
+
 /// Axis and button data from a hardware device
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AxisData {
@@ -63,14 +85,31 @@ impl HidInputManager {
             .map_err(|e| format!("Failed to initialise HID API: {}", e))?;
         
         Ok(Self {
-            devices: Vec::new(),
-            axis_cache: HashMap::new(),
-            button_cache: HashMap::new(),
+            devices: Vec::with_capacity(INITIAL_DEVICE_CAPACITY), // Pre-allocate for typical device count
+            axis_cache: HashMap::with_capacity(INITIAL_DEVICE_CAPACITY),
+            button_cache: HashMap::with_capacity(INITIAL_DEVICE_CAPACITY),
             hid_api,
         })
     }
+    
+    /// Clean up resources and caches
+    pub fn cleanup(&mut self) {
+        eprintln!("[Input] Cleaning up HID input manager resources...");
+        
+        // Clear all caches
+        self.devices.clear();
+        self.axis_cache.clear();
+        self.button_cache.clear();
+        
+        // Release allocated memory back to the system
+        self.devices.shrink_to_fit();
+        self.axis_cache.shrink_to_fit();
+        self.button_cache.shrink_to_fit();
+        
+        eprintln!("[Input] HID input manager cleanup complete");
+    }
 
-    /// Enumerate all connected game controllers
+    /// Enumerate all connected game controllers with improved memory management
     pub fn enumerate_devices(&mut self) -> Result<(), String> {
         self.devices.clear();
         
@@ -79,7 +118,7 @@ impl HidInputManager {
             .map_err(|e| format!("Failed to refresh HID devices: {}", e))?;
         
         // Build a map of joystick devices from HID (for names)
-        let mut hid_devices: HashMap<(u16, u16), (String, String)> = HashMap::new();
+        let mut hid_devices: HashMap<(u16, u16), (String, String)> = HashMap::with_capacity(INITIAL_HID_DEVICE_CAPACITY);
         for device in self.hid_api.device_list() {
             // Filter for game controllers (Usage Page 0x01, Usage 0x04/0x05/0x08)
             if device.usage_page() == 0x01 {
@@ -94,8 +133,8 @@ impl HidInputManager {
             }
         }
         
-        // Windows supports up to 16 joysticks (JOYSTICKID1 through JOYSTICKID16)
-        for joy_id in 0..16u32 {
+        // Windows supports up to MAX_JOYSTICK_DEVICES joysticks (JOYSTICKID1 through JOYSTICKID16)
+        for joy_id in 0..MAX_JOYSTICK_DEVICES {
             unsafe {
                 let mut caps: JOYCAPSW = std::mem::zeroed();
                 let result = joyGetDevCapsW(
@@ -135,8 +174,19 @@ impl HidInputManager {
             }
         }
 
+        // Clear old cache entries to prevent unbounded growth
         self.axis_cache.clear();
         self.button_cache.clear();
+        
+        // Prevent excessive memory usage
+        if self.axis_cache.len() > MAX_CACHE_SIZE {
+            self.axis_cache.clear();
+            eprintln!("[Input] Cleared axis cache due to size limit");
+        }
+        if self.button_cache.len() > MAX_CACHE_SIZE {
+            self.button_cache.clear();
+            eprintln!("[Input] Cleared button cache due to size limit");
+        }
         
         Ok(())
     }
@@ -146,9 +196,9 @@ impl HidInputManager {
         &self.devices
     }
 
-    /// Read axis values from all devices
+    /// Read axis values from all devices with memory management
     pub fn read_all_axes(&mut self) -> Result<Vec<AxisData>, String> {
-        let mut all_axes = Vec::new();
+        let mut all_axes = Vec::with_capacity(self.devices.len());
         
         for device in &self.devices {
             unsafe {
@@ -163,30 +213,29 @@ impl HidInputManager {
                     let mut buttons = HashMap::new();
                     
                     // Windows Joystick API provides raw values (typically 0-65535)
-                    // Normalize to 0.0-1.0
-                    let max_val = 65535.0;
+                    // Normalise to 0.0-1.0
                     
                     // X axis
-                    axes.insert("X".to_string(), (joy_info.dwXpos as f32 / max_val).clamp(0.0, 1.0));
+                    axes.insert("X".to_string(), (joy_info.dwXpos as f32 / MAX_AXIS_VALUE).clamp(0.0, 1.0));
                     
                     // Y axis
-                    axes.insert("Y".to_string(), (joy_info.dwYpos as f32 / max_val).clamp(0.0, 1.0));
+                    axes.insert("Y".to_string(), (joy_info.dwYpos as f32 / MAX_AXIS_VALUE).clamp(0.0, 1.0));
                     
                     // Z axis (throttle on many devices)
-                    axes.insert("Z".to_string(), (joy_info.dwZpos as f32 / max_val).clamp(0.0, 1.0));
+                    axes.insert("Z".to_string(), (joy_info.dwZpos as f32 / MAX_AXIS_VALUE).clamp(0.0, 1.0));
                     
                     // R axis (rudder/twist)
-                    axes.insert("R".to_string(), (joy_info.dwRpos as f32 / max_val).clamp(0.0, 1.0));
+                    axes.insert("R".to_string(), (joy_info.dwRpos as f32 / MAX_AXIS_VALUE).clamp(0.0, 1.0));
                     
                     // U axis
-                    axes.insert("U".to_string(), (joy_info.dwUpos as f32 / max_val).clamp(0.0, 1.0));
+                    axes.insert("U".to_string(), (joy_info.dwUpos as f32 / MAX_AXIS_VALUE).clamp(0.0, 1.0));
                     
                     // V axis
-                    axes.insert("V".to_string(), (joy_info.dwVpos as f32 / max_val).clamp(0.0, 1.0));
+                    axes.insert("V".to_string(), (joy_info.dwVpos as f32 / MAX_AXIS_VALUE).clamp(0.0, 1.0));
                     
-                    // Read button states (up to 32 buttons)
+                    // Read button states (up to MAX_BUTTONS_PER_DEVICE buttons)
                     let button_mask = joy_info.dwButtons;
-                    for btn_num in 0..32 {
+                    for btn_num in 0..MAX_BUTTONS_PER_DEVICE {
                         let is_pressed = (button_mask & (1 << btn_num)) != 0;
                         if is_pressed || btn_num < device.num_buttons {
                             // Only include buttons that exist or are currently pressed
@@ -238,6 +287,15 @@ impl HidInputManager {
         }
         
         Ok(all_axes)
+    }
+}
+
+#[cfg(windows)]
+impl Drop for HidInputManager {
+    fn drop(&mut self) {
+        eprintln!("[Input] Dropping HID input manager...");
+        self.cleanup();
+        eprintln!("[Input] HID input manager dropped");
     }
 }
 
@@ -352,4 +410,20 @@ pub fn get_all_axis_values() -> Result<Vec<AxisData>, String> {
 #[tauri::command]
 pub fn update_test_axis_value(_device_handle: String, _axis_name: String, _value: f32) -> Result<String, String> {
     Err("Test axis updates are no longer supported. Reading real hardware data now.".to_string())
+}
+
+/// Clean up input manager resources
+#[tauri::command]
+pub fn cleanup_input_manager() -> Result<String, String> {
+    let mut lock = INPUT_MANAGER
+        .lock()
+        .map_err(|e| format!("Failed to lock input mutex: {}", e))?;
+    
+    match lock.as_mut() {
+        Some(manager) => {
+            manager.cleanup();
+            Ok("Input manager cleaned up successfully".to_string())
+        }
+        None => Ok("Input manager not initialised".to_string())
+    }
 }
