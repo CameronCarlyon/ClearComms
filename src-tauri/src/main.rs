@@ -1,3 +1,24 @@
+//! ClearComms - Aviation Audio Control for Microsoft Flight Simulator
+//!
+//! A lightweight companion application that provides synchronised intercom volume
+//! control by linking cockpit audio controls, hardware, and external applications
+//! into one seamless system.
+//!
+//! ## Architecture
+//!
+//! - **Frontend**: SvelteKit with TypeScript for the UI
+//! - **Backend**: Rust with Tauri 2.x for native functionality
+//! - **Audio**: Windows Core Audio API for application volume control
+//! - **Input**: Windows Joystick API + HID for hardware device input
+//!
+//! ## Modules
+//!
+//! - [`audio_management`] - Windows Core Audio API integration
+//! - [`hardware_input`] - DirectInput/HID device polling
+//! - [`simvar_input`] - SimConnect integration (planned)
+//! - [`native_menu`] - Windows system tray context menu
+//! - [`window_utils`] - Window positioning utilities
+
 // Prevents additional console window on Windows in release, DO NOT REMOVE!!
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
@@ -14,29 +35,51 @@ mod window_utils;
 
 use window_utils::position_window_bottom_right;
 
-/// Resize window to fit content width and height
+// ─────────────────────────────────────────────────────────────────────────────
+// Constants
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// Base window width in pixels (for single channel)
+const BASE_WINDOW_WIDTH: u32 = 400;
+
+/// Additional width per audio channel in pixels
+const CHANNEL_WIDTH: u32 = 109;
+
+/// Fixed window height in pixels
+const WINDOW_HEIGHT: u32 = 1000;
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Tauri Commands - Window Management
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// Resize the main window to accommodate the number of audio channels.
+///
+/// Calculates the appropriate width based on the number of bound audio sessions
+/// and repositions the window to the bottom-right corner.
+///
+/// # Arguments
+/// * `app` - Tauri application handle
+/// * `session_count` - Number of audio sessions to display
+///
+/// # Returns
+/// Success message with new dimensions or error if window not found
 #[tauri::command]
 fn resize_window_to_content(app: tauri::AppHandle, session_count: usize) -> Result<String, String> {
-    let base_width = 400;
-    let channel_width = 109;
-    
     let new_width = if session_count <= 1 {
-        base_width
+        BASE_WINDOW_WIDTH
     } else {
-        base_width + (channel_width * (session_count - 1) as u32)
+        BASE_WINDOW_WIDTH + (CHANNEL_WIDTH * (session_count - 1) as u32)
     };
-    
-    let new_height = 1000;
     
     if let Some(window) = app.get_webview_window("main") {
         let _ = window.set_size(tauri::Size::Physical(tauri::PhysicalSize {
             width: new_width,
-            height: new_height,
+            height: WINDOW_HEIGHT,
         }));
         
         position_window_bottom_right(&window);
         
-        return Ok(format!("Resized to {}x{} for {} session(s)", new_width, new_height, session_count));
+        return Ok(format!("Resized to {}x{} for {} session(s)", new_width, WINDOW_HEIGHT, session_count));
     }
     
     Err("Main window not found".to_string())
@@ -240,11 +283,13 @@ fn main() {
             hardware_input::enumerate_input_devices,
             hardware_input::get_all_axis_values,
             hardware_input::update_test_axis_value,
+            hardware_input::cleanup_input_manager,
             audio_management::init_audio_manager,
             audio_management::get_audio_sessions,
             audio_management::set_session_volume,
             audio_management::set_session_mute,
             audio_management::check_default_device_changed,
+            audio_management::cleanup_audio_manager,
             resize_window_to_content,
             show_main_window,
             hide_main_window,
@@ -256,6 +301,4 @@ fn main() {
         .plugin(tauri_plugin_opener::init())
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
-
-    clearcomms_lib::run()
 }
