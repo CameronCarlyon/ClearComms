@@ -95,6 +95,12 @@
   }
 
   const liveVolumeState = new Map<string, LiveVolumeState>();
+  
+  // Memory monitoring variables
+  let memoryMonitorInterval: number | null = null;
+  let lastMemoryCleanup = Date.now();
+  const MEMORY_CLEANUP_INTERVAL = 300000; // 5 minutes
+  const MAX_CACHE_SIZE = 1000;
 
   // Track display count and resize window when bindings change
   $effect(() => {
@@ -234,7 +240,24 @@
   });
 
   onDestroy(() => {
+    console.log("[ClearComms] Component destroying, cleaning up resources...");
+    
+    // Stop all polling and intervals
     stopPolling();
+    
+    // Clean up all animation frames
+    cleanupAllAnimations();
+    
+    // Clean up live volume state timers
+    cleanupAllLiveVolumeStates();
+    
+    // Clear all Maps and Sets to free memory
+    cleanupAllCaches();
+    
+    // Clean up backend resources
+    // cleanupBackendResources(); // Commented out to prevent HMR crashes
+    
+    console.log("[ClearComms] Component cleanup complete");
   });
 
   async function autoInitialise() {
@@ -300,6 +323,11 @@
         await applyAxisMappings();
         await applyButtonMappings();
         pollIterations += 1;
+        // Prevent counter overflow after extended runs (reset at 1 million)
+        if (pollIterations > 1000000) {
+          pollIterations = 0;
+          skippedPolls = 0;
+        }
         if (pollIterations % POLL_LOG_INTERVAL === 0) {
           console.debug(`[ClearComms] Polling iteration ${pollIterations}; cached sessions ${audioSessions.length}; button cache size ${previousButtonStates.size}`);
         }
@@ -311,6 +339,7 @@
     }, 50);
     
     startAudioMonitoring();
+    startMemoryMonitoring();
   }
   
   function stopPolling() {
@@ -321,6 +350,7 @@
     isPolling = false;
     pollInFlight = false;
     stopAudioMonitoring();
+    stopMemoryMonitoring();
   }
 
   function startAudioMonitoring() {
@@ -379,6 +409,17 @@
       console.error("Error getting audio sessions:", error);
       errorMsg = `Audio error: ${error}`;
     }
+  }
+
+  // Clean up mappings for sessions that are no longer active
+  function cleanupStaleMappings() {
+    // Note: We intentionally keep mappings for inactive applications
+    // so they appear as "ghost columns" and automatically reconnect
+    // when the applications start again. This preserves user bindings.
+    
+    // Only perform minimal cleanup if needed (e.g., remove duplicate mappings)
+    // For now, this is a no-op to preserve the intended functionality
+    return;
   }
 
   async function resizeWindowToFit(sessionCount: number) {
@@ -657,13 +698,108 @@
     }
   }
 
-  function stopHardwareVolumeInterpolation(sessionId: string) {
-    const frameId = hardwareVolumeAnimations.get(sessionId);
-    if (frameId !== undefined) {
-      cancelAnimationFrame(frameId);
+  function startMemoryMonitoring() {
+    if (memoryMonitorInterval) return;
+    
+    memoryMonitorInterval = setInterval(() => {
+      const now = Date.now();
+      
+      // Periodic memory cleanup
+      if (now - lastMemoryCleanup > MEMORY_CLEANUP_INTERVAL) {
+        performPeriodicCleanup();
+        lastMemoryCleanup = now;
+      }
+      
+      // Monitor cache sizes
+      if (previousAxisValues.size > MAX_CACHE_SIZE) {
+        console.warn("[ClearComms] Axis cache size exceeded limit, clearing");
+        previousAxisValues.clear();
+      }
+      
+      if (previousButtonStates.size > MAX_CACHE_SIZE) {
+        console.warn("[ClearComms] Button cache size exceeded limit, clearing");
+        previousButtonStates.clear();
+      }
+      
+      if (lastHardwareAxisValues.size > MAX_CACHE_SIZE) {
+        console.warn("[ClearComms] Hardware axis cache size exceeded limit, clearing");
+        lastHardwareAxisValues.clear();
+      }
+      
+      // Check liveVolumeState Map size
+      if (liveVolumeState.size > MAX_CACHE_SIZE) {
+        console.warn("[ClearComms] Live volume state cache size exceeded limit, clearing");
+        cleanupAllLiveVolumeStates();
+      }
+      
+      // Check hardwareVolumeTargets Map size
+      if (hardwareVolumeTargets.size > MAX_CACHE_SIZE) {
+        console.warn("[ClearComms] Hardware volume targets cache size exceeded limit, clearing");
+        for (const [_, frameId] of hardwareVolumeAnimations) {
+          cancelAnimationFrame(frameId);
+        }
+        hardwareVolumeAnimations.clear();
+        hardwareVolumeTargets.clear();
+      }
+    }, 30000); // Check every 30 seconds
+  }
+  
+  function stopMemoryMonitoring() {
+    if (memoryMonitorInterval) {
+      clearInterval(memoryMonitorInterval);
+      memoryMonitorInterval = null;
     }
-    hardwareVolumeAnimations.delete(sessionId);
-    hardwareVolumeTargets.delete(sessionId);
+  }
+  
+  function performPeriodicCleanup() {
+    // Clean up any stale animation states
+    const activeSessionIds = new Set(audioSessions.map(s => s.session_id));
+    
+    for (const sessionId of animatingSliders) {
+      if (!activeSessionIds.has(sessionId)) {
+        animatingSliders.delete(sessionId);
+      }
+    }
+    
+    for (const sessionId of manuallyControlledSessions) {
+      if (!activeSessionIds.has(sessionId)) {
+        manuallyControlledSessions.delete(sessionId);
+      }
+    }
+    
+    // Clean up stale pre-mute volumes
+    for (const [sessionId] of preMuteVolumes) {
+      if (!activeSessionIds.has(sessionId)) {
+        preMuteVolumes.delete(sessionId);
+      }
+    }
+    
+    // Clean up stale hardware volume interpolations
+    for (const [sessionId, frameId] of hardwareVolumeAnimations) {
+      if (!activeSessionIds.has(sessionId)) {
+        cancelAnimationFrame(frameId);
+        hardwareVolumeAnimations.delete(sessionId);
+        hardwareVolumeTargets.delete(sessionId);
+      }
+    }
+    
+    // Clean up stale drag animations
+    for (const [sessionId, frameId] of dragAnimationFrames) {
+      if (!activeSessionIds.has(sessionId)) {
+        cancelAnimationFrame(frameId);
+        dragAnimationFrames.delete(sessionId);
+        dragTargets.delete(sessionId);
+      }
+    }
+    
+    // Clean up stale live volume states
+    for (const [sessionId] of liveVolumeState) {
+      if (!activeSessionIds.has(sessionId)) {
+        clearLiveVolumeState(sessionId);
+      }
+    }
+    
+    console.log("[ClearComms] Periodic memory cleanup completed");
   }
   
   // Apply volume to backend after animation completes
@@ -987,14 +1123,78 @@
     }
 
     buttonCachePruneCounter += 1;
+    // Prevent counter overflow
+    if (buttonCachePruneCounter > 1000000) {
+      buttonCachePruneCounter = 0;
+    }
     if (buttonCachePruneCounter % BUTTON_CACHE_LOG_INTERVAL === 0) {
       console.debug(`[ClearComms] Button state cache size ${previousButtonStates.size}; active handles ${activeHandles.size}`);
     }
   }
 
   // Mappings persist even when apps are closed
-  function cleanupStaleMappings() {
-    return;
+  function cleanupAllAnimations() {
+    // Cancel all volume animations
+    for (const [sessionId] of animationSignals) {
+      cancelVolumeAnimation(sessionId);
+    }
+    animationSignals.clear();
+    animatingSliders.clear();
+    
+    // Cancel all drag animations
+    for (const [sessionId, frameId] of dragAnimationFrames) {
+      cancelAnimationFrame(frameId);
+    }
+    dragAnimationFrames.clear();
+    dragTargets.clear();
+    
+    // Cancel all hardware volume animations
+    for (const [sessionId, frameId] of hardwareVolumeAnimations) {
+      cancelAnimationFrame(frameId);
+    }
+    hardwareVolumeAnimations.clear();
+    hardwareVolumeTargets.clear();
+    
+    console.log("[ClearComms] All animations cleaned up");
+  }
+  
+  function cleanupAllLiveVolumeStates() {
+    for (const [sessionId] of liveVolumeState) {
+      clearLiveVolumeState(sessionId);
+    }
+    liveVolumeState.clear();
+    console.log("[ClearComms] Live volume states cleaned up");
+  }
+  
+  function cleanupAllCaches() {
+    // Clear all Maps
+    previousAxisValues.clear();
+    previousButtonStates.clear();
+    lastHardwareAxisValues.clear();
+    preMuteVolumes.clear();
+    manuallyControlledSessions.clear();
+    hardwareVolumeTargets.clear();
+    hardwareVolumeAnimations.clear();
+    dragTargets.clear();
+    dragAnimationFrames.clear();
+    
+    // Clear arrays to release memory
+    axisData = [];
+    audioSessions = [];
+    axisMappings = [];
+    buttonMappings = [];
+    
+    console.log("[ClearComms] All caches cleared");
+  }
+  
+  async function cleanupBackendResources() {
+    try {
+      await invoke("cleanup_audio_manager");
+      await invoke("cleanup_input_manager");
+      console.log("[ClearComms] Backend resources cleaned up");
+    } catch (error) {
+      console.warn("[ClearComms] Backend cleanup failed (non-critical):", error);
+    }
   }
 
   function saveMappings() {
