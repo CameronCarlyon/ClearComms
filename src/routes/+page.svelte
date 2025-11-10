@@ -1400,10 +1400,15 @@
               {#if isEditMode}
                 <!-- Button Binding Control (Edit Mode) -->
                 {#if buttonMapping}
-                  <div class="mapping-badge button" title="Mute: {buttonMapping.buttonName}">
-                    <span>🔘</span>
-                    <button class="btn btn-round btn-badge-small btn-badge-remove" onclick={() => removeButtonMapping(session.process_name)}>✕</button>
-                  </div>
+                  <button
+                    class="mapping-badge button mapping-removable"
+                    title="Mute: {buttonMapping.buttonName}"
+                    onclick={() => removeButtonMapping(session.process_name)}
+                    type="button"
+                  >
+                    <span class="mapping-icon default">🔘</span>
+                    <span class="mapping-icon remove">✕</span>
+                  </button>
                 {:else if isButtonBindingMode && pendingButtonBinding?.sessionId === session.session_id}
                   <div class="binding-active">
                     <span class="pulse">⏺</span>
@@ -1429,10 +1434,15 @@
               <!-- Axis Binding Control (Edit Mode Only) -->
               {#if isEditMode}
                 {#if mapping}
-                  <div class="mapping-badge" title="Volume: {mapping.axisName}">
-                    <span>🎮</span>
-                    <button class="btn btn-round btn-badge-small btn-badge-remove" onclick={() => removeMapping(session.process_name)}>✕</button>
-                  </div>
+                  <button
+                    class="mapping-badge mapping-removable"
+                    title="Volume: {mapping.axisName}"
+                    onclick={() => removeMapping(session.process_name)}
+                    type="button"
+                  >
+                    <span class="mapping-icon default">🎮</span>
+                    <span class="mapping-icon remove">✕</span>
+                  </button>
                   <!-- Axis Inversion Toggle -->
                   <button 
                     class="btn btn-round btn-channel btn-invert" 
@@ -1897,9 +1907,10 @@
 
   .btn-invert {
     font-size: 1.2rem;
-    background: var(--bg-card);
-    color: var(--text-secondary);
-    border: 2px solid var(--border-color);
+    background: var(--text-primary);
+    color: var(--bg-primary);
+    border: 2px solid var(--text-primary);
+    transition: background 0.2s ease, color 0.2s ease;
   }
 
   .btn-invert.active {
@@ -1909,12 +1920,13 @@
   }
 
   .btn-invert:hover {
-    background: var(--bg-secondary);
-    border-color: var(--text-secondary);
+    background: transparent;
+    color: var(--text-primary);
   }
 
   .btn-invert.active:hover {
-    background: var(--text-secondary);
+    background: transparent;
+    color: var(--text-primary);
   }
 
   .btn-remove-app {
@@ -1922,11 +1934,12 @@
     background: #ff4444;
     color: white;
     border: 2px solid #ff4444;
+    transition: background 0.2s ease, color 0.2s ease;
   }
 
   .btn-remove-app:hover {
-    background: #cc0000;
-    border-color: #cc0000;
+    background: transparent;
+    color: #ff4444;
   }
 
   .mapping-badge {
@@ -1934,19 +1947,43 @@
     height: 46px;
     aspect-ratio: 1 / 1;
     position: relative;
-    background: var(--bg-card);
+    background: var(--text-primary);
     border: 2px solid var(--text-primary);
     border-radius: 50%;
     font-size: 1.3rem;
     display: flex;
     align-items: center;
     justify-content: center;
-    color: var(--text-primary);
+    color: var(--bg-primary);
+    cursor: pointer;
+    transition: background 0.2s ease, color 0.2s ease, border-color 0.2s ease;
   }
 
   .mapping-badge.button {
-    background: var(--bg-card);
-    border-color: var(--text-primary);
+    background: var(--text-primary);
+    color: var(--bg-primary);
+  }
+
+  .mapping-badge .mapping-icon {
+    display: block;
+    line-height: 1;
+  }
+
+  .mapping-badge .mapping-icon.remove {
+    display: none;
+  }
+
+  .mapping-badge:hover {
+    background: transparent;
+    color: var(--text-primary);
+  }
+
+  .mapping-badge:hover .mapping-icon.default {
+    display: none;
+  }
+
+  .mapping-badge:hover .mapping-icon.remove {
+    display: block;
   }
 
   /* Small badge buttons */
