@@ -1571,6 +1571,13 @@
 {/if}
 
 <style>
+  /* Prevent text selection across the app for a cleaner control surface */
+  :global(body) {
+    -webkit-user-select: none;
+    -ms-user-select: none;
+    user-select: none;
+  }
+
   * {
     box-sizing: border-box;
   }
