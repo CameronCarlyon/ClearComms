@@ -102,6 +102,146 @@
   const MEMORY_CLEANUP_INTERVAL = 300000; // 5 minutes
   const MAX_CACHE_SIZE = 1000;
 
+  // ─────────────────────────────────────────────────────────────────────────────
+  // Memory Profiling (Dev Mode)
+  // ─────────────────────────────────────────────────────────────────────────────
+  
+  const IS_DEV = import.meta.env.DEV;
+  let memoryProfilerInterval: number | null = null;
+  let memorySnapshots: { timestamp: number; heapUsed: number; heapTotal: number }[] = [];
+  const MEMORY_PROFILER_INTERVAL = 60000; // Log every 60 seconds
+  const MAX_MEMORY_SNAPSHOTS = 120; // Keep 2 hours of data at 60s intervals
+  
+  interface MemoryInfo {
+    jsHeapSizeLimit?: number;
+    totalJSHeapSize?: number;
+    usedJSHeapSize?: number;
+  }
+  
+  function getMemoryUsage(): MemoryInfo | null {
+    // Chrome/Chromium-based browsers expose memory info
+    const perf = performance as Performance & { memory?: MemoryInfo };
+    return perf.memory || null;
+  }
+  
+  function formatBytes(bytes: number): string {
+    if (bytes < 1024) return `${bytes} B`;
+    if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+    return `${(bytes / (1024 * 1024)).toFixed(2)} MB`;
+  }
+  
+  function startMemoryProfiler() {
+    if (!IS_DEV || memoryProfilerInterval) return;
+    
+    console.log("[MemoryProfiler] Starting memory profiler (dev mode)");
+    
+    // Initial snapshot
+    logMemorySnapshot();
+    
+    memoryProfilerInterval = setInterval(() => {
+      logMemorySnapshot();
+      checkForMemoryLeaks();
+    }, MEMORY_PROFILER_INTERVAL);
+  }
+  
+  function stopMemoryProfiler() {
+    if (memoryProfilerInterval) {
+      clearInterval(memoryProfilerInterval);
+      memoryProfilerInterval = null;
+    }
+  }
+  
+  function logMemorySnapshot() {
+    const memory = getMemoryUsage();
+    if (!memory || !memory.usedJSHeapSize || !memory.totalJSHeapSize) {
+      return;
+    }
+    
+    const snapshot = {
+      timestamp: Date.now(),
+      heapUsed: memory.usedJSHeapSize,
+      heapTotal: memory.totalJSHeapSize
+    };
+    
+    memorySnapshots.push(snapshot);
+    
+    // Keep only recent snapshots to prevent the profiler itself from leaking
+    if (memorySnapshots.length > MAX_MEMORY_SNAPSHOTS) {
+      memorySnapshots = memorySnapshots.slice(-MAX_MEMORY_SNAPSHOTS);
+    }
+    
+    // Log current state
+    console.log(
+      `[MemoryProfiler] Heap: ${formatBytes(snapshot.heapUsed)} / ${formatBytes(snapshot.heapTotal)} | ` +
+      `Caches: axis=${previousAxisValues.size}, btn=${previousButtonStates.size}, hw=${lastHardwareAxisValues.size}, ` +
+      `live=${liveVolumeState.size}, anim=${animatingSliders.size}, drag=${dragAnimationFrames.size}`
+    );
+  }
+  
+  function checkForMemoryLeaks() {
+    if (memorySnapshots.length < 10) return; // Need enough data points
+    
+    // Compare first and last 5 snapshots to detect growth trend
+    const earlySnapshots = memorySnapshots.slice(0, 5);
+    const recentSnapshots = memorySnapshots.slice(-5);
+    
+    const earlyAvg = earlySnapshots.reduce((sum, s) => sum + s.heapUsed, 0) / earlySnapshots.length;
+    const recentAvg = recentSnapshots.reduce((sum, s) => sum + s.heapUsed, 0) / recentSnapshots.length;
+    
+    const growthPercent = ((recentAvg - earlyAvg) / earlyAvg) * 100;
+    const growthBytes = recentAvg - earlyAvg;
+    
+    if (growthPercent > 50) {
+      console.warn(
+        `[MemoryProfiler] ⚠️ MEMORY GROWTH DETECTED: +${formatBytes(growthBytes)} (+${growthPercent.toFixed(1)}%) ` +
+        `over ${memorySnapshots.length} snapshots`
+      );
+      logDetailedCacheStats();
+    }
+  }
+  
+  function logDetailedCacheStats() {
+    console.group("[MemoryProfiler] Detailed Cache Statistics");
+    console.log(`previousAxisValues: ${previousAxisValues.size} entries`);
+    console.log(`previousButtonStates: ${previousButtonStates.size} entries`);
+    console.log(`lastHardwareAxisValues: ${lastHardwareAxisValues.size} entries`);
+    console.log(`liveVolumeState: ${liveVolumeState.size} entries`);
+    console.log(`hardwareVolumeTargets: ${hardwareVolumeTargets.size} entries`);
+    console.log(`hardwareVolumeAnimations: ${hardwareVolumeAnimations.size} entries`);
+    console.log(`animatingSliders: ${animatingSliders.size} entries`);
+    console.log(`animationSignals: ${animationSignals.size} entries`);
+    console.log(`dragTargets: ${dragTargets.size} entries`);
+    console.log(`dragAnimationFrames: ${dragAnimationFrames.size} entries`);
+    console.log(`manuallyControlledSessions: ${manuallyControlledSessions.size} entries`);
+    console.log(`preMuteVolumes: ${preMuteVolumes.size} entries`);
+    console.log(`audioSessions: ${audioSessions.length} entries`);
+    console.log(`axisData: ${axisData.length} entries`);
+    console.log(`axisMappings: ${axisMappings.length} entries`);
+    console.log(`buttonMappings: ${buttonMappings.length} entries`);
+    console.groupEnd();
+  }
+  
+  // Expose debug functions to window in dev mode
+  if (IS_DEV && typeof window !== 'undefined') {
+    (window as any).clearCommsDebug = {
+      logMemory: logMemorySnapshot,
+      logCaches: logDetailedCacheStats,
+      getSnapshots: () => memorySnapshots,
+      forceCleanup: () => {
+        performPeriodicCleanup();
+        console.log("[MemoryProfiler] Forced cleanup completed");
+        logMemorySnapshot();
+      },
+      forceGC: () => {
+        // Attempt to trigger garbage collection (may not work in all browsers)
+        cleanupAllCaches();
+        console.log("[MemoryProfiler] Caches cleared, GC should run soon");
+        setTimeout(logMemorySnapshot, 1000);
+      }
+    };
+    console.log("[MemoryProfiler] Debug functions available: window.clearCommsDebug.{logMemory, logCaches, getSnapshots, forceCleanup, forceGC}");
+  }
+
   // Track display count and resize window when bindings change
   $effect(() => {
     const boundProcessNames = new Set([
@@ -340,6 +480,7 @@
     
     startAudioMonitoring();
     startMemoryMonitoring();
+    startMemoryProfiler();
   }
   
   function stopPolling() {
@@ -351,6 +492,7 @@
     pollInFlight = false;
     stopAudioMonitoring();
     stopMemoryMonitoring();
+    stopMemoryProfiler();
   }
 
   function startAudioMonitoring() {
@@ -1178,6 +1320,9 @@
     dragTargets.clear();
     dragAnimationFrames.clear();
     
+    // Clear memory profiler snapshots
+    memorySnapshots = [];
+    
     // Clear arrays to release memory
     axisData = [];
     audioSessions = [];
@@ -1551,7 +1696,7 @@
       ClearComms
     </p>
     <p style="font-size: 0.8rem; color: var(--text-muted); text-align: center;">
-      Crafted by <a href="https://cameroncarlyon.com" onclick={async (e) => { e.preventDefault(); await invoke('open_url', { url: 'https://cameroncarlyon.com' }); }} style="color: var(--text-secondary); text-decoration: none; cursor: pointer;">Cameron Carlyon</a> | &copy; {new Date().getFullYear()}
+      Crafted by <a href="https://cameroncarlyon.com" onclick={async (e) => { e.preventDefault(); await invoke('open_url', { url: 'https://cameroncarlyon.com' }); }} style="text-decoration: none; cursor: pointer;">Cameron Carlyon</a>
     </p>
   </footer>
 </main>
