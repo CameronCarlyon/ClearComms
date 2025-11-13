@@ -141,11 +141,40 @@ fn quit_application() {
     std::process::exit(0);
 }
 
-/// Open a URL in the default browser
+/// Open a URL in the default browser and bring it to the foreground
 #[tauri::command]
 async fn open_url(url: String) -> Result<(), String> {
-    tauri_plugin_opener::open_url(url, None::<&str>)
-        .map_err(|e| format!("Failed to open URL: {}", e))
+    use std::os::windows::ffi::OsStrExt;
+    use std::ffi::OsStr;
+    
+    // Use ShellExecuteW with SW_SHOWNORMAL to ensure the browser window is shown and focused
+    let url_wide: Vec<u16> = OsStr::new(&url)
+        .encode_wide()
+        .chain(std::iter::once(0))
+        .collect();
+    
+    let operation: Vec<u16> = OsStr::new("open")
+        .encode_wide()
+        .chain(std::iter::once(0))
+        .collect();
+    
+    let result = unsafe {
+        windows::Win32::UI::Shell::ShellExecuteW(
+            windows::Win32::Foundation::HWND::default(),
+            windows::core::PCWSTR(operation.as_ptr()),
+            windows::core::PCWSTR(url_wide.as_ptr()),
+            windows::core::PCWSTR::null(),
+            windows::core::PCWSTR::null(),
+            windows::Win32::UI::WindowsAndMessaging::SW_SHOWNORMAL,
+        )
+    };
+    
+    // ShellExecuteW returns a value > 32 on success
+    if result.0 as usize > 32 {
+        Ok(())
+    } else {
+        Err(format!("Failed to open URL: error code {}", result.0 as usize))
+    }
 }
 
 fn main() {
