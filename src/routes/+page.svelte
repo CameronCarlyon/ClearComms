@@ -1735,7 +1735,7 @@
     max-height: 100vh;
     width: 100vw;
     justify-content: space-between;
-    overflow: hidden;
+    overflow: visible;
     box-sizing: border-box;
     padding: 1rem;
     position: relative;
@@ -1800,6 +1800,10 @@
     height: 32px;
     font-size: 1rem;
     font-weight: 600;
+    background: #ff4444;
+    color: white;
+    border: 2px solid #ff4444;
+    transition: background 0.2s ease, color 0.2s ease, box-shadow 0.2s ease;
   }
 
   .error-banner {
@@ -1817,6 +1821,21 @@
     width: 34px;
     height: 34px;
     font-size: 1rem;
+    transition: all 0.2s ease, box-shadow 0.2s ease;
+  }
+
+  .btn-icon:hover:not(:disabled) {
+    box-shadow: 0 0 100px rgba(255, 255, 255, 0.75);
+  }
+
+  .btn-icon.active {
+    background: var(--text-primary);
+    color: var(--bg-primary);
+    border-color: var(--text-primary);
+  }
+
+  .btn-icon.active:hover {
+    box-shadow: 0 0 100px rgba(255, 255, 255, 0.75);
   }
 
   .status-text {
@@ -1843,8 +1862,7 @@
     flex-direction: row;
     justify-content: center;
     gap: 14px;
-    overflow-y: auto;
-    overflow-x: hidden;
+    overflow: visible;
     flex: 1;
     min-height: 0;
     align-items: center;
@@ -2025,6 +2043,14 @@
     border-color: rgba(255, 255, 255, 0.25);
   }
 
+  .volume-slider:hover:not(:disabled) {
+    filter: drop-shadow(0 0 40px rgba(255, 255, 255, 0.25));
+  }
+
+  .volume-slider {
+    transition: filter 0.2s ease;
+  }
+
   /* Disabled state */
   .volume-slider:disabled {
     opacity: 0.4;
@@ -2041,6 +2067,11 @@
     height: 46px;
     aspect-ratio: 1 / 1;
     font-size: 1.3rem;
+    transition: all 0.2s ease, box-shadow 0.2s ease;
+  }
+
+  .btn-channel:hover:not(:disabled) {
+    box-shadow: 0 0 100px rgba(255, 255, 255, 0.75);
   }
 
   /* Mute button */
@@ -2062,7 +2093,7 @@
     background: var(--text-primary);
     color: var(--bg-primary);
     border: 2px solid var(--text-primary);
-    transition: background 0.2s ease, color 0.2s ease;
+    transition: background 0.2s ease, color 0.2s ease, box-shadow 0.2s ease;
   }
 
   .btn-invert.active {
@@ -2074,6 +2105,7 @@
   .btn-invert:hover {
     background: transparent;
     color: var(--text-primary);
+    box-shadow: 0 0 100px rgba(255, 255, 255, 0.75);
   }
 
   .btn-invert.active:hover {
@@ -2086,12 +2118,13 @@
     background: #ff4444;
     color: white;
     border: 2px solid #ff4444;
-    transition: background 0.2s ease, color 0.2s ease;
+    transition: background 0.2s ease, color 0.2s ease, box-shadow 0.2s ease;
   }
 
-  .btn-remove-app:hover {
+  .btn-channel.btn-remove-app:hover {
     background: transparent;
     color: #ff4444;
+    box-shadow: 0 0 100px rgba(255, 68, 68, 0.35);
   }
 
   .mapping-badge {
@@ -2108,7 +2141,7 @@
     justify-content: center;
     color: var(--bg-primary);
     cursor: pointer;
-    transition: background 0.2s ease, color 0.2s ease, border-color 0.2s ease;
+    transition: background 0.2s ease, color 0.2s ease, border-color 0.2s ease, box-shadow 0.2s ease;
   }
 
   .mapping-badge.button {
@@ -2128,6 +2161,7 @@
   .mapping-badge:hover {
     background: transparent;
     color: var(--text-primary);
+    box-shadow: 0 0 100px rgba(255, 255, 255, 0.75);
   }
 
   .mapping-badge:hover .mapping-icon.default {
@@ -2175,6 +2209,14 @@
     background: var(--bg-card);
     border: 1px solid var(--text-secondary);
     color: var(--text-primary);
+    transition: all 0.2s ease, box-shadow 0.2s ease;
+  }
+
+  .btn-badge-cancel:hover {
+    background: var(--text-primary);
+    border-color: var(--text-primary);
+    color: var(--bg-primary);
+    box-shadow: 0 0 80px rgba(255, 255, 255, 0.75);
   }
 
   @keyframes pulse-border {
@@ -2287,9 +2329,9 @@
   }
 
   .btn-close:hover {
-    background: #cc0000;
-    border-color: #cc0000;
-    box-shadow: 0 0px 80px rgba(255, 68, 68, 0.3);
+    background: transparent;
+    color: #ff4444;
+    box-shadow: 0 0 100px rgba(255, 68, 68, 0.35);
   }
 
   .btn-minimise {
@@ -2307,7 +2349,7 @@
   .btn-minimise:hover {
     background: var(--text-secondary);
     border-color: var(--text-secondary);
-    box-shadow: 0 4px 12px rgba(255, 255, 255, 0.2);
+    box-shadow: 0 0 100px rgba(255, 255, 255, 0.75);
   }
 
   .btn-minimise:active {
@@ -2330,6 +2372,7 @@
     background: var(--bg-card);
     border-color: var(--text-secondary);
     color: var(--text-primary);
+    box-shadow: 0 0 100px rgba(255, 255, 255, 0.75);
   }
 
   .btn-cancel:active {
