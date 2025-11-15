@@ -4,6 +4,46 @@
 
   console.log("[ClearComms] Component script loaded");
 
+  // ─────────────────────────────────────────────────────────────────────────────
+  // DEBUG CONFIGURATION - Set these to preview different UI states
+  // ─────────────────────────────────────────────────────────────────────────────
+  
+  const DEBUG = {
+    // Master toggle - set to true to enable debug overrides
+    ENABLED: true,
+    
+    // Force specific application states (only one should be true at a time)
+    FORCE_BOOT_SCREEN: false,           // Show boot/loading screen indefinitely
+    FORCE_BOOT_ERROR: false,            // Show boot screen with error state
+    FORCE_CLOSE_CONFIRMATION: false,    // Show close confirmation dialog
+    FORCE_MAIN_APP: false,              // Skip boot and show main app immediately
+    
+    // Boot screen options (when FORCE_BOOT_SCREEN or FORCE_BOOT_ERROR is true)
+    BOOT_STATUS_TEXT: "Initialising...",  // Custom boot status text
+    BOOT_ERROR_MESSAGE: "Failed to initialise audio subsystem: Device not found", // Error message when FORCE_BOOT_ERROR is true
+    
+    // Main app state overrides (when main app is shown)
+    FORCE_EDIT_MODE: false,             // Start in edit mode
+    FORCE_NO_SESSIONS: false,           // Show empty state (no audio sessions)
+    FORCE_ERROR_BANNER: false,          // Show error banner in main app
+    ERROR_BANNER_TEXT: "Hardware device disconnected", // Custom error banner text
+    
+    // Mock data (when main app is shown with FORCE_MOCK_SESSIONS)
+    FORCE_MOCK_SESSIONS: false,         // Use mock audio sessions instead of real ones
+    MOCK_SESSIONS: [
+      { session_id: "mock_1", display_name: "Discord", process_id: 1234, process_name: "Discord.exe", volume: 0.75, is_muted: false },
+      { session_id: "mock_2", display_name: "Spotify", process_id: 5678, process_name: "Spotify.exe", volume: 0.50, is_muted: false },
+      { session_id: "mock_3", display_name: "Microsoft Flight Simulator", process_id: 9012, process_name: "FlightSimulator.exe", volume: 1.0, is_muted: true },
+    ] as AudioSession[],
+    
+    // Binding state previews
+    FORCE_BINDING_MODE: false,          // Show axis binding in progress
+    FORCE_BUTTON_BINDING_MODE: false,   // Show button binding in progress
+    
+    // Misc UI states
+    FORCE_AUDIO_NOT_INITIALISED: false, // Disable edit button (audio not ready)
+  };
+
   // Audio session types
   interface AudioSession {
     session_id: string;
@@ -356,6 +396,13 @@
   }
 
   onMount(() => {
+    // Apply debug overrides if enabled
+    if (DEBUG.ENABLED) {
+      console.log("[DEBUG] Debug mode enabled - applying overrides");
+      applyDebugOverrides();
+      return; // Skip normal initialisation if forcing a specific state
+    }
+    
     loadMappings();
     loadButtonMappings();
     autoInitialise();
@@ -378,6 +425,96 @@
       window.removeEventListener('blur', handleBlur);
     };
   });
+
+  // ─────────────────────────────────────────────────────────────────────────────
+  // Debug Overrides
+  // ─────────────────────────────────────────────────────────────────────────────
+  
+  function applyDebugOverrides() {
+    // Close confirmation screen
+    if (DEBUG.FORCE_CLOSE_CONFIRMATION) {
+      showCloseConfirmation = true;
+      initStatus = "Ready";
+      audioInitialised = true;
+      console.log("[DEBUG] Forcing close confirmation screen");
+      return;
+    }
+    
+    // Boot screen with error
+    if (DEBUG.FORCE_BOOT_ERROR) {
+      initStatus = "Failed";
+      errorMsg = DEBUG.BOOT_ERROR_MESSAGE;
+      console.log("[DEBUG] Forcing boot error screen");
+      return;
+    }
+    
+    // Boot screen (loading)
+    if (DEBUG.FORCE_BOOT_SCREEN) {
+      initStatus = DEBUG.BOOT_STATUS_TEXT;
+      console.log("[DEBUG] Forcing boot screen with status:", DEBUG.BOOT_STATUS_TEXT);
+      return;
+    }
+    
+    // Main application
+    if (DEBUG.FORCE_MAIN_APP) {
+      initStatus = "Ready";
+      showCloseConfirmation = false;
+      
+      // Audio initialisation state
+      audioInitialised = !DEBUG.FORCE_AUDIO_NOT_INITIALISED;
+      
+      // Edit mode
+      if (DEBUG.FORCE_EDIT_MODE) {
+        isEditMode = true;
+      }
+      
+      // Error banner
+      if (DEBUG.FORCE_ERROR_BANNER) {
+        errorMsg = DEBUG.ERROR_BANNER_TEXT;
+      }
+      
+      // Mock sessions
+      if (DEBUG.FORCE_MOCK_SESSIONS && !DEBUG.FORCE_NO_SESSIONS) {
+        audioSessions = DEBUG.MOCK_SESSIONS;
+        console.log("[DEBUG] Using mock audio sessions:", audioSessions.length);
+      } else if (DEBUG.FORCE_NO_SESSIONS) {
+        audioSessions = [];
+        console.log("[DEBUG] Forcing no audio sessions (empty state)");
+      }
+      
+      // Binding modes
+      if (DEBUG.FORCE_BINDING_MODE && audioSessions.length > 0) {
+        isBindingMode = true;
+        pendingBinding = {
+          sessionId: audioSessions[0].session_id,
+          sessionName: audioSessions[0].display_name,
+          processId: audioSessions[0].process_id,
+          processName: audioSessions[0].process_name
+        };
+        console.log("[DEBUG] Forcing axis binding mode");
+      }
+      
+      if (DEBUG.FORCE_BUTTON_BINDING_MODE && audioSessions.length > 0) {
+        isButtonBindingMode = true;
+        pendingButtonBinding = {
+          sessionId: audioSessions[0].session_id,
+          sessionName: audioSessions[0].display_name,
+          processId: audioSessions[0].process_id,
+          processName: audioSessions[0].process_name
+        };
+        console.log("[DEBUG] Forcing button binding mode");
+      }
+      
+      console.log("[DEBUG] Forcing main app view");
+      return;
+    }
+    
+    // If no specific state forced, run normal init
+    console.log("[DEBUG] No specific state forced, running normal initialisation");
+    loadMappings();
+    loadButtonMappings();
+    autoInitialise();
+  }
 
   onDestroy(() => {
     console.log("[ClearComms] Component destroying, cleaning up resources...");
@@ -1401,7 +1538,6 @@
   <!-- Main Application -->
   <main>
     <header class="app-header">
-      <div class="header-right">
         <button 
           class="btn btn-round btn-icon" 
           class:active={isEditMode}
@@ -1414,7 +1550,6 @@
         <button class="btn btn-round btn-close" onclick={showCloseDialog} title="Quit">
           ✕
         </button>
-      </div>
     </header>
 
     {#if errorMsg}
@@ -1692,11 +1827,11 @@
     {/if}
 
   <footer>
-    <p style="font-size: 0.8rem; color: var(--text-muted); text-align: center;">
+    <p style="font-size: 0.8rem; color: var(--text-muted); text-align: center; margin: 0 0 4px 0;">
       ClearComms
     </p>
-    <p style="font-size: 0.8rem; color: var(--text-muted); text-align: center;">
-      Crafted by <a href="https://cameroncarlyon.com" onclick={async (e) => { e.preventDefault(); await invoke('open_url', { url: 'https://cameroncarlyon.com' }); }} style="text-decoration: none; cursor: pointer;">Cameron Carlyon</a>
+    <p style="font-size: 0.8rem; color: var(--text-muted); text-align: center; margin: 0;">
+      Crafted by <a href="https://cameroncarlyon.com" onclick={async (e) => { e.preventDefault(); await invoke('open_url', { url: 'https://cameroncarlyon.com' }); }} class="author-link">Cameron Carlyon</a>
     </p>
   </footer>
 </main>
@@ -1754,12 +1889,7 @@
     display: flex;
     justify-content: space-between;
     align-items: center;
-  }
-
-  .header-right {
-    display: flex;
-    align-items: center;
-    gap: 12px;
+    width: 100%;
   }
 
   h1 {
@@ -1796,9 +1926,9 @@
   }
 
   .btn-close {
-    width: 32px;
-    height: 32px;
-    font-size: 1rem;
+    width: 46px;
+    height: 46px;
+    font-size: 1.3rem;
     font-weight: 600;
     background: #ff4444;
     color: white;
@@ -1818,9 +1948,10 @@
   }
 
   .btn-icon {
-    width: 34px;
-    height: 34px;
-    font-size: 1rem;
+    width: 46px;
+    height: 46px;
+    font-size: 1.3rem;
+    border: 2px solid var(--text-primary);
     transition: all 0.2s ease, box-shadow 0.2s ease;
   }
 
@@ -1854,6 +1985,19 @@
     justify-content: center;
     align-items: center;
     color: var(--text-muted);
+  }
+
+  .author-link {
+    color: var(--text-muted);
+    text-decoration: none;
+    cursor: pointer;
+    transition: color 0.2s ease, filter 0.2s ease;
+    display: inline-block;
+  }
+
+  .author-link:hover {
+    color: var(--text-primary);
+    filter: drop-shadow(0 0 15px rgba(255, 255, 255, 1)) drop-shadow(0 0 40px rgba(255, 255, 255, 0.8)) drop-shadow(0 0 80px rgba(255, 255, 255, 0.6)) drop-shadow(0 0 120px rgba(255, 255, 255, 0.4));
   }
 
   /* ===== MIXER LAYOUT ===== */
@@ -2077,15 +2221,13 @@
   /* Mute button */
   .btn-mute {
     font-size: 1.4rem;
+    border: 2px solid var(--text-primary);
   }
 
   .btn-mute.muted {
     background: var(--bg-card);
     color: var(--text-primary);
-  }
-
-  .btn-mute.muted:hover {
-    background: var(--bg-secondary);
+    border-color: var(--text-primary);
   }
 
   .btn-invert {
@@ -2103,14 +2245,7 @@
   }
 
   .btn-invert:hover {
-    background: transparent;
-    color: var(--text-primary);
     box-shadow: 0 0 100px rgba(255, 255, 255, 0.75);
-  }
-
-  .btn-invert.active:hover {
-    background: transparent;
-    color: var(--text-primary);
   }
 
   .btn-remove-app {
@@ -2122,8 +2257,6 @@
   }
 
   .btn-channel.btn-remove-app:hover {
-    background: transparent;
-    color: #ff4444;
     box-shadow: 0 0 100px rgba(255, 68, 68, 0.35);
   }
 
@@ -2159,8 +2292,6 @@
   }
 
   .mapping-badge:hover {
-    background: transparent;
-    color: var(--text-primary);
     box-shadow: 0 0 100px rgba(255, 255, 255, 0.75);
   }
 
@@ -2213,9 +2344,6 @@
   }
 
   .btn-badge-cancel:hover {
-    background: var(--text-primary);
-    border-color: var(--text-primary);
-    color: var(--bg-primary);
     box-shadow: 0 0 80px rgba(255, 255, 255, 0.75);
   }
 
@@ -2277,8 +2405,7 @@
   }
 
   .btn-restart:hover {
-    background: var(--text-secondary);
-    transform: translateY(-2px);
+    box-shadow: 0 0 100px rgba(255, 255, 255, 0.75);
   }
 
   /* ===== CLOSE CONFIRMATION SCREEN ===== */
@@ -2329,8 +2456,6 @@
   }
 
   .btn-close:hover {
-    background: transparent;
-    color: #ff4444;
     box-shadow: 0 0 100px rgba(255, 68, 68, 0.35);
   }
 
@@ -2347,8 +2472,6 @@
   }
 
   .btn-minimise:hover {
-    background: var(--text-secondary);
-    border-color: var(--text-secondary);
     box-shadow: 0 0 100px rgba(255, 255, 255, 0.75);
   }
 
@@ -2369,9 +2492,6 @@
   }
 
   .btn-cancel:hover {
-    background: var(--bg-card);
-    border-color: var(--text-secondary);
-    color: var(--text-primary);
     box-shadow: 0 0 100px rgba(255, 255, 255, 0.75);
   }
 
