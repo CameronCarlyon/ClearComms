@@ -1527,10 +1527,10 @@
         Close
       </button>
       <button class="btn btn-pill btn-minimise" onclick={minimiseToTray}>
-        Minimise to System Tray
+        Minimise
       </button>
       <button class="btn btn-pill btn-cancel" onclick={cancelClose}>
-        Return to Application
+        Return
       </button>
     </div>
   </div>
@@ -1827,7 +1827,7 @@
     {/if}
 
   <footer>
-    <p style="font-size: 0.8rem; color: var(--text-muted); text-align: center; margin: 0 0 4px 0;">
+    <p style="font-size: 0.8rem; color: var(--text-muted); text-align: center; margin: 0.5;">
       ClearComms
     </p>
     <p style="font-size: 0.8rem; color: var(--text-muted); text-align: center; margin: 0;">
@@ -1936,6 +1936,10 @@
     transition: background 0.2s ease, color 0.2s ease, box-shadow 0.2s ease;
   }
 
+  .btn-close:hover {
+    box-shadow: 0 0 100px rgba(255, 68, 68, 0.35);
+  }
+
   .error-banner {
     padding: 10px 14px;
     margin-bottom: 12px;
@@ -1997,7 +2001,7 @@
 
   .author-link:hover {
     color: var(--text-primary);
-    filter: drop-shadow(0 0 15px rgba(255, 255, 255, 1)) drop-shadow(0 0 40px rgba(255, 255, 255, 0.8)) drop-shadow(0 0 80px rgba(255, 255, 255, 0.6)) drop-shadow(0 0 120px rgba(255, 255, 255, 0.4));
+    filter: drop-shadow(0 0 30px rgba(255, 255, 255, 1)) drop-shadow(0 0 60px rgba(255, 255, 255, 0.8)) drop-shadow(0 0 100px rgba(255, 255, 255, 0.6)) drop-shadow(0 0 140px rgba(255, 255, 255, 0.4));
   }
 
   /* ===== MIXER LAYOUT ===== */
@@ -2439,36 +2443,30 @@
   }
 
   .btn-pill {
+    padding: 16px 32px;
+    font-size: 1rem;
+    font-weight: 500;
     width: 100%;
     align-items: center;
-  }
-
-  .btn-confirm-close {
-    padding: 16px 32px;
-    font-size: 1.1rem;
-    border-radius: 2rem;
-    font-weight: 500;
-    background: #ff4444;
-    color: white;
-    border: 2px solid #ff4444;
+    border-radius: 3rem;
     cursor: pointer;
     transition: all 0.15s ease;
   }
 
-  .btn-close:hover {
+  .btn-confirm-close {
+    background: #ff4444;
+    border: 2px solid #ff4444;
+    color: white;
+  }
+
+  .btn-confirm-close:hover {
     box-shadow: 0 0 100px rgba(255, 68, 68, 0.35);
   }
 
   .btn-minimise {
-    padding: 16px 32px;
-    font-size: 1.1rem;
-    border-radius: 8px;
-    font-weight: 500;
     background: var(--text-primary);
     color: var(--bg-primary);
-    border: 2px solid var(--text-primary);
-    cursor: pointer;
-    transition: all 0.15s ease;
+    border: 2px solid white;
   }
 
   .btn-minimise:hover {
@@ -2480,15 +2478,9 @@
   }
 
   .btn-cancel {
-    padding: 16px 32px;
-    font-size: 1.1rem;
-    border-radius: 8px;
-    font-weight: 500;
     background: transparent;
-    color: var(--text-secondary);
-    border: 2px solid var(--border-color);
-    cursor: pointer;
-    transition: all 0.15s ease;
+    color: white;
+    border: 2px solid white;
   }
 
   .btn-cancel:hover {
