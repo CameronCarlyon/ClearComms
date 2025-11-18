@@ -1523,37 +1523,41 @@
   <div class="close-screen">
     <h1 class="close-title">Close ClearComms?</h1>    
     <div class="close-buttons">
-      <button class="btn btn-pill btn-confirm-close" onclick={confirmClose}>
+      <button class="btn btn-pill btn-confirm-close" onclick={confirmClose} aria-label="Close application">
         Close
       </button>
-      <button class="btn btn-pill btn-minimise" onclick={minimiseToTray}>
+      <button class="btn btn-pill btn-minimise" onclick={minimiseToTray} aria-label="Minimise to system tray">
         Minimise
       </button>
-      <button class="btn btn-pill btn-cancel" onclick={cancelClose}>
+      <button class="btn btn-pill btn-cancel" onclick={cancelClose} aria-label="Cancel and return to application">
         Return
       </button>
     </div>
   </div>
 {:else if initStatus === 'Ready'}
   <!-- Main Application -->
-  <main>
-    <header class="app-header">
+  <main role="application" aria-label="ClearComms Audio Mixer">
+    <a href="#main-content" class="skip-link">Skip to main content</a>
+    <header class="app-header" id="app-header">
         <button 
           class="btn btn-round btn-icon" 
           class:active={isEditMode}
           onclick={toggleEditMode} 
           disabled={!audioInitialised}
+          aria-label={isEditMode ? 'Exit edit mode' : 'Enter edit mode to configure bindings'}
           title={isEditMode ? 'Exit Edit Mode' : 'Edit Bindings'}
         >
           {isEditMode ? '✓' : '✏️'}
         </button>
-        <button class="btn btn-round btn-close" onclick={showCloseDialog} title="Quit">
-          ✕
+        <button class="btn btn-round btn-close" onclick={showCloseDialog} aria-label="Quit application" title="Quit">
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 640 640" width="24" height="24" fill="currentColor">
+            <path d="M183.1 137.4C170.6 124.9 150.3 124.9 137.8 137.4C125.3 149.9 125.3 170.2 137.8 182.7L275.2 320L137.9 457.4C125.4 469.9 125.4 490.2 137.9 502.7C150.4 515.2 170.7 515.2 183.2 502.7L320.5 365.3L457.9 502.6C470.4 515.1 490.7 515.1 503.2 502.6C515.7 490.1 515.7 469.8 503.2 457.3L365.8 320L503.1 182.6C515.6 170.1 515.6 149.8 503.1 137.3C490.6 124.8 470.3 124.8 457.8 137.3L320.5 274.7L183.1 137.4z"/>
+          </svg>
         </button>
     </header>
 
     {#if errorMsg}
-      <div class="error-banner">{errorMsg}</div>
+      <div class="error-banner" role="alert" aria-live="assertive">{errorMsg}</div>
     {/if}
 
     <!-- Audio Management Section -->
@@ -1563,13 +1567,13 @@
       {@const availableSessions = getAvailableSessions()}
       
       {#if boundSessions.length > 0 || isEditMode}
-        <div class="mixer-container">
+        <div class="mixer-container" id="main-content">
           {#each boundSessions as session (session.session_id)}
             {@const mapping = axisMappings.find(m => m.processName === session.process_name)}
             {@const buttonMapping = buttonMappings.find(m => m.processName === session.process_name)}
             {@const isPlaceholder = session.session_id.startsWith('placeholder_')}
             
-            <div class="channel-strip" class:has-mapping={!!mapping || !!buttonMapping} class:inactive={isPlaceholder} class:inactive-edit-mode={isPlaceholder && isEditMode}>
+            <div class="channel-strip" class:has-mapping={!!mapping || !!buttonMapping} class:inactive={isPlaceholder} class:inactive-edit-mode={isPlaceholder && isEditMode} role="group" aria-label="Audio controls for {session.display_name}">
 
               <!-- Horizontal Volume Bar -->
               <div class="volume-bar-container">
@@ -1580,6 +1584,11 @@
                   max="1"
                   step="0.01"
                   value={session.volume}
+                  aria-label="Volume for {session.display_name}"
+                  aria-valuemin="0"
+                  aria-valuemax="100"
+                  aria-valuenow={Math.round(session.volume * 100)}
+                  aria-valuetext="{Math.round(session.volume * 100)} percent"
                   style="--volume-percent: {session.volume * 100}%"
                   onpointerdown={(e) => {
                     animatingSliders.delete(session.session_id);
@@ -1682,20 +1691,21 @@
                 {#if buttonMapping}
                   <button
                     class="mapping-badge button mapping-removable"
+                    aria-label="Remove mute button binding for {session.display_name}: {buttonMapping.buttonName}"
                     title="Mute: {buttonMapping.buttonName}"
                     onclick={() => removeButtonMapping(session.process_name)}
                     type="button"
                   >
-                    <span class="mapping-icon default">🔘</span>
-                    <span class="mapping-icon remove">✕</span>
+                    <span class="mapping-icon default" aria-hidden="true">🔘</span>
+                    <span class="mapping-icon remove" aria-hidden="true">✕</span>
                   </button>
                 {:else if isButtonBindingMode && pendingButtonBinding?.sessionId === session.session_id}
-                  <div class="binding-active">
-                    <span class="pulse">⏺</span>
-                    <button class="btn btn-round btn-badge-small btn-badge-cancel" onclick={cancelButtonBinding}>✕</button>
+                  <div class="binding-active" role="status" aria-live="polite" aria-label="Press a button on your controller to bind mute function">
+                    <span class="pulse" aria-hidden="true">⏺</span>
+                    <button class="btn btn-round btn-badge-small btn-badge-cancel" onclick={cancelButtonBinding} aria-label="Cancel button binding">✕</button>
                   </div>
                 {:else}
-                  <button class="btn btn-round btn-channel btn-bind" onclick={() => startButtonBinding(session.session_id, session.display_name, session.process_id, session.process_name)} title="Bind Mute Button">
+                  <button class="btn btn-round btn-channel btn-bind" onclick={() => startButtonBinding(session.session_id, session.display_name, session.process_id, session.process_name)} aria-label="Bind hardware button to mute {session.display_name}" title="Bind Mute Button">
                     🔘
                   </button>
                 {/if}
@@ -1705,9 +1715,11 @@
                   class="btn btn-round btn-channel btn-mute"
                   class:muted={session.is_muted}
                   onclick={() => setSessionMute(session.session_id, !session.is_muted)}
+                  aria-label="{session.is_muted ? 'Unmute' : 'Mute'} {session.display_name}"
+                  aria-pressed={session.is_muted}
                   title={session.is_muted ? 'Unmute' : 'Mute'}
                 >
-                  {session.is_muted ? '🔇' : '🔊'}
+                  <span aria-hidden="true">{session.is_muted ? '🔇' : '🔊'}</span>
                 </button>
               {/if}
 
@@ -1716,29 +1728,32 @@
                 {#if mapping}
                   <button
                     class="mapping-badge mapping-removable"
+                    aria-label="Remove volume axis binding for {session.display_name}: {mapping.axisName}"
                     title="Volume: {mapping.axisName}"
                     onclick={() => removeMapping(session.process_name)}
                     type="button"
                   >
-                    <span class="mapping-icon default">🎮</span>
-                    <span class="mapping-icon remove">✕</span>
+                    <span class="mapping-icon default" aria-hidden="true">🎮</span>
+                    <span class="mapping-icon remove" aria-hidden="true">✕</span>
                   </button>
                   <!-- Axis Inversion Toggle -->
                   <button 
                     class="btn btn-round btn-channel btn-invert" 
                     class:active={mapping.inverted}
                     onclick={() => toggleAxisInversion(session.process_name)} 
+                    aria-label="{mapping.inverted ? 'Disable' : 'Enable'} axis inversion for {session.display_name}"
+                    aria-pressed={mapping.inverted}
                     title={mapping.inverted ? 'Axis Inverted' : 'Normal Axis Direction'}
                   >
-                    ↕️
+                    <span aria-hidden="true">↕️</span>
                   </button>
                 {:else if isBindingMode && pendingBinding?.sessionId === session.session_id}
-                  <div class="binding-active">
-                    <span class="pulse">⏺</span>
-                    <button class="btn btn-round btn-badge-small btn-badge-cancel" onclick={cancelBinding}>✕</button>
+                  <div class="binding-active" role="status" aria-live="polite" aria-label="Move an axis on your controller to bind volume control">
+                    <span class="pulse" aria-hidden="true">⏺</span>
+                    <button class="btn btn-round btn-badge-small btn-badge-cancel" onclick={cancelBinding} aria-label="Cancel axis binding">✕</button>
                   </div>
                 {:else}
-                  <button class="btn btn-round btn-channel btn-bind" onclick={() => startAxisBinding(session.session_id, session.display_name, session.process_id, session.process_name)} title="Bind Volume Axis">
+                  <button class="btn btn-round btn-channel btn-bind" onclick={() => startAxisBinding(session.session_id, session.display_name, session.process_id, session.process_name)} aria-label="Bind hardware axis to control volume for {session.display_name}" title="Bind Volume Axis">
                     🎮
                   </button>
                 {/if}
@@ -1747,9 +1762,10 @@
                 <button 
                   class="btn btn-round btn-channel btn-remove-app" 
                   onclick={() => removeApplication(session.process_name)} 
+                  aria-label="Remove {session.display_name} from mixer"
                   title="Remove Application"
                 >
-                  ✕
+                  <span aria-hidden="true">✕</span>
                 </button>
               {/if}
 
@@ -1761,11 +1777,11 @@
 
           <!-- Ghost Column (Add New Binding) - Only in Edit Mode -->
           {#if isEditMode}
-            <div class="channel-strip ghost-column">
+            <div class="channel-strip ghost-column" role="group" aria-label="Add new application binding">
               <!-- Application Name -->
               <span class="app-name ghost">
                 {#if availableSessions.length > 0}
-                  <select class="app-dropdown-inline" onchange={(e) => {
+                  <select class="app-dropdown-inline" aria-label="Select application to bind" onchange={(e) => {
                     const sessionId = (e.target as HTMLSelectElement).value;
                     if (sessionId) {
                       const session = audioSessions.find(s => s.session_id === sessionId);
@@ -1800,13 +1816,13 @@
               </div>
 
               <!-- Ghost Mute Button -->
-              <button class="btn btn-round btn-channel btn-bind" disabled title="Select an app first">
-                🔘
+              <button class="btn btn-round btn-channel btn-bind" disabled aria-label="Bind mute button (select an app first)" title="Select an app first">
+                <span aria-hidden="true">🔘</span>
               </button>
 
               <!-- Ghost Axis Binding Button -->
-              <button class="btn btn-round btn-channel btn-bind" disabled title="Select an app first">
-                🎮
+              <button class="btn btn-round btn-channel btn-bind" disabled aria-label="Bind volume axis (select an app first)" title="Select an app first">
+                <span aria-hidden="true">🎮</span>
               </button>
             </div>
           {/if}
@@ -1826,24 +1842,24 @@
       <p class="status-text">Initialising...</p>
     {/if}
 
-  <footer>
-    <p style="font-size: 0.8rem; color: var(--text-muted); text-align: center; margin: 0.5;">
+  <footer role="contentinfo">
+    <!-- <p style="font-size: 0.8rem; color: var(--text-muted); text-align: center; margin: 0.5;">
       ClearComms
-    </p>
+    </p> -->
     <p style="font-size: 0.8rem; color: var(--text-muted); text-align: center; margin: 0;">
-      Crafted by <a href="https://cameroncarlyon.com" onclick={async (e) => { e.preventDefault(); await invoke('open_url', { url: 'https://cameroncarlyon.com' }); }} class="author-link">Cameron Carlyon</a>
+      Crafted by <a href="https://cameroncarlyon.com" onclick={async (e) => { e.preventDefault(); await invoke('open_url', { url: 'https://cameroncarlyon.com' }); }} class="author-link" aria-label="Visit Cameron Carlyon's website (opens in external browser)">Cameron Carlyon</a>
     </p>
   </footer>
 </main>
 {:else}
   <!-- Boot Screen -->
-  <div class="boot-screen">
+  <div class="boot-screen" role="status" aria-live="polite">
     <h1 class="boot-title">ClearComms</h1>
-    <p class="boot-status" class:error={initStatus === 'Failed'}>
+    <p class="boot-status" class:error={initStatus === 'Failed'} role={initStatus === 'Failed' ? 'alert' : 'status'}>
       {initStatus === 'Failed' ? errorMsg : initStatus}
     </p>
     {#if initStatus === 'Failed'}
-      <button class="btn btn-round btn-restart" onclick={() => window.location.reload()}>
+      <button class="btn btn-round btn-restart" onclick={() => window.location.reload()} aria-label="Restart application">
         Restart Application
       </button>
     {/if}
@@ -1860,6 +1876,26 @@
 
   * {
     box-sizing: border-box;
+  }
+
+  /* Skip link for keyboard navigation accessibility */
+  .skip-link {
+    position: absolute;
+    top: -40px;
+    left: 0;
+    background: var(--text-primary);
+    color: var(--bg-primary);
+    padding: 8px 16px;
+    text-decoration: none;
+    border-radius: 0 0 4px 0;
+    z-index: 100;
+    font-weight: 600;
+  }
+
+  .skip-link:focus {
+    top: 0;
+    outline: 2px solid var(--text-primary);
+    outline-offset: 2px;
   }
 
   main {
@@ -1915,6 +1951,11 @@
   .btn:disabled {
     opacity: 0.3;
     cursor: not-allowed;
+  }
+
+  .btn:focus-visible {
+    outline: 2px solid var(--text-primary);
+    outline-offset: 2px;
   }
 
   .btn:active:not(:disabled) {
@@ -2085,6 +2126,11 @@
     color: var(--text-secondary);
   }
 
+  .app-dropdown-inline:focus-visible {
+    outline: 2px solid var(--text-primary);
+    outline-offset: 2px;
+  }
+
   .app-dropdown-inline option {
     background: var(--bg-primary);
     color: var(--text-primary);
@@ -2140,8 +2186,8 @@
     height: 100%;
     background: linear-gradient(
       to top,
-      #fff 5.7%,
-      #fff calc(5.7% + var(--volume-percent, 0%) * 0.886),
+      var(--text-primary) 5.7%,
+      var(--text-primary) calc(5.7% + var(--volume-percent, 0%) * 0.886),
       var(--bg-card) calc(5.7% + var(--volume-percent, 0%) * 0.886),
       var(--bg-card) 94.3%
     );
@@ -2160,18 +2206,18 @@
   /* Progress fill for Firefox */
   .volume-slider::-moz-range-progress {
     width: 46px;
-    background: #fff;
+    background: var(--text-primary);
     border-radius: 0 0 23px 23px;
   }
 
-  /* Thumb styling - white circle */
+  /* Thumb styling - responsive circle */
   .volume-slider::-webkit-slider-thumb {
     -webkit-appearance: none;
     appearance: none;
     width: 46px;
     height: 46px;
     border-radius: 50%;
-    background: #fff;
+    background: var(--text-primary);
     cursor: pointer;
     border: none;
   }
@@ -2180,7 +2226,7 @@
     width: 46px;
     height: 46px;
     border-radius: 50%;
-    background: #fff;
+    background: var(--text-primary);
     cursor: pointer;
     border: none;
     box-shadow: 0 2px 8px rgba(0, 0, 0, 0.2);
@@ -2197,6 +2243,13 @@
 
   .volume-slider {
     transition: filter 0.2s ease;
+  }
+
+  /* Focus state for accessibility */
+  .volume-slider:focus-visible {
+    outline: 2px solid var(--text-primary);
+    outline-offset: 4px;
+    border-radius: 2rem;
   }
 
   /* Disabled state */
