@@ -1526,7 +1526,7 @@
       <button class="btn btn-pill btn-confirm-close" onclick={confirmClose} aria-label="Close application">
         Close
       </button>
-      <button class="btn btn-pill btn-minimise" onclick={minimiseToTray} aria-label="Minimise to system tray">
+      <button class="btn btn-pill btn-white" onclick={minimiseToTray} aria-label="Minimise to system tray">
         Minimise
       </button>
       <button class="btn btn-pill btn-cancel" onclick={cancelClose} aria-label="Cancel and return to application">
@@ -1773,7 +1773,9 @@
                     aria-pressed={mapping.inverted}
                     title={mapping.inverted ? 'Axis Inverted' : 'Normal Axis Direction'}
                   >
-                    <span aria-hidden="true">↕️</span>
+                    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 640 640" width="20" height="20" fill="currentColor" aria-hidden="true">
+                      <path d="M342.6 41.4C330.1 28.9 309.8 28.9 297.3 41.4L201.3 137.4C188.8 149.9 188.8 170.2 201.3 182.7C213.8 195.2 234.1 195.2 246.6 182.7L288 141.3L288 498.7L246.6 457.4C234.1 444.9 213.8 444.9 201.3 457.4C188.8 469.9 188.8 490.2 201.3 502.7L297.3 598.7C303.3 604.7 311.4 608.1 319.9 608.1C328.4 608.1 336.5 604.7 342.5 598.7L438.5 502.7C451 490.2 451 469.9 438.5 457.4C426 444.9 405.7 444.9 393.2 457.4L351.8 498.8L351.8 141.3L393.2 182.7C405.7 195.2 426 195.2 438.5 182.7C451 170.2 451 149.9 438.5 137.4L342.5 41.4z"/>
+                    </svg>
                   </button>
                 {:else if isBindingMode && pendingBinding?.sessionId === session.session_id}
                   <div class="binding-active" role="status" aria-live="polite" aria-label="Move an axis on your controller to bind volume control">
@@ -1877,7 +1879,7 @@
           {:else if isEditMode}
             No active audio sessions available
           {:else}
-            No bound applications. Click "Edit" to add bindings.
+            <button class="btn btn-pill btn-white">Add Binding</button>
           {/if}
         </p>
       {/if}
@@ -2591,17 +2593,17 @@
     box-shadow: 0 0 100px rgba(255, 68, 68, 0.35);
   }
 
-  .btn-minimise {
+  .btn-white {
     background: var(--text-primary);
     color: var(--bg-primary);
     border: 2px solid white;
   }
 
-  .btn-minimise:hover {
+  .btn-white:hover {
     box-shadow: 0 0 100px rgba(255, 255, 255, 0.75);
   }
 
-  .btn-minimise:active {
+  .btn-white:active {
     transform: scale(0.98);
   }
 
