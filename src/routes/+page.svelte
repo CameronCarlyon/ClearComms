@@ -1710,7 +1710,6 @@
                 {:else if isButtonBindingMode && pendingButtonBinding?.sessionId === session.session_id}
                   <div class="binding-active" role="status" aria-live="polite" aria-label="Press a button on your controller to bind mute function">
                     <span class="pulse" aria-hidden="true">⏺</span>
-                    <button class="btn btn-round btn-badge-small btn-badge-cancel" onclick={cancelButtonBinding} aria-label="Cancel button binding">✕</button>
                   </div>
                 {:else}
                   <button class="btn btn-round btn-channel btn-bind btn-bind-empty" onclick={() => startButtonBinding(session.session_id, session.display_name, session.process_id, session.process_name)} aria-label="Bind hardware button to mute {session.display_name}" title="Bind Mute Button">
@@ -1761,7 +1760,11 @@
                     onclick={() => removeMapping(session.process_name)}
                     type="button"
                   >
-                    <span class="mapping-icon default" aria-hidden="true">🎮</span>
+                    <span class="mapping-icon default" aria-hidden="true">
+                      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 640 640" width="20" height="20" fill="currentColor">
+                        <path d="M448 128C554 128 640 214 640 320C640 426 554 512 448 512L192 512C86 512 0 426 0 320C0 214 86 128 192 128L448 128zM192 240C178.7 240 168 250.7 168 264L168 296L136 296C122.7 296 112 306.7 112 320C112 333.3 122.7 344 136 344L168 344L168 376C168 389.3 178.7 400 192 400C205.3 400 216 389.3 216 376L216 344L248 344C261.3 344 272 333.3 272 320C272 306.7 261.3 296 248 296L216 296L216 264C216 250.7 205.3 240 192 240zM432 336C414.3 336 400 350.3 400 368C400 385.7 414.3 400 432 400C449.7 400 464 385.7 464 368C464 350.3 449.7 336 432 336zM496 240C478.3 240 464 254.3 464 272C464 289.7 478.3 304 496 304C513.7 304 528 289.7 528 272C528 254.3 513.7 240 496 240z"/>
+                      </svg>
+                    </span>
                     <span class="mapping-icon remove" aria-hidden="true">✕</span>
                   </button>
                   <!-- Axis Inversion Toggle -->
@@ -1780,7 +1783,6 @@
                 {:else if isBindingMode && pendingBinding?.sessionId === session.session_id}
                   <div class="binding-active" role="status" aria-live="polite" aria-label="Move an axis on your controller to bind volume control">
                     <span class="pulse" aria-hidden="true">⏺</span>
-                    <button class="btn btn-round btn-badge-small btn-badge-cancel" onclick={cancelBinding} aria-label="Cancel axis binding">✕</button>
                   </div>
                 {:else}
                   <button class="btn btn-round btn-channel btn-bind btn-bind-empty" onclick={() => startAxisBinding(session.session_id, session.display_name, session.process_id, session.process_name)} aria-label="Bind hardware axis to control volume for {session.display_name}" title="Bind Volume Axis">
@@ -1812,64 +1814,97 @@
 
           <!-- Ghost Column (Add New Binding) - Only in Edit Mode -->
           {#if isEditMode}
-            <div class="channel-strip ghost-column" role="group" aria-label="Add new application binding">
-              <!-- Application Name -->
-              <span class="app-name ghost">
-                {#if availableSessions.length > 0}
-                  <select class="app-dropdown-inline" aria-label="Select application to bind" onchange={(e) => {
-                    const sessionId = (e.target as HTMLSelectElement).value;
-                    if (sessionId) {
-                      const session = audioSessions.find(s => s.session_id === sessionId);
-                      if (session) {
-                        startAxisBinding(session.session_id, session.display_name, session.process_id, session.process_name);
-                      }
-                      (e.target as HTMLSelectElement).value = '';
-                    }
-                  }}>
-                    <option value="">Select App...</option>
-                    {#each availableSessions as session}
-                      <option value={session.session_id}>{formatProcessName(session.process_name)}</option>
-                    {/each}
-                  </select>
-                {:else}
-                  All Bound
-                {/if}
-              </span>
+            {#if isBindingMode && pendingBinding}
+              <!-- Binding in Progress for Pending App -->
+              <div class="channel-strip ghost-column" role="group" aria-label="Binding in progress for {pendingBinding.sessionName}">
+                <!-- Application Name -->
+                <span class="app-name ghost">{formatProcessName(pendingBinding.processName)}</span>
 
-              <!-- Horizontal Volume Bar (Disabled) -->
-              <div class="volume-bar-container">
-                <input
-                  type="range"
-                  class="volume-slider"
-                  min="0"
-                  max="1"
-                  step="0.01"
-                  value={0.5}
-                  style="--volume-percent: 50%"
-                  disabled
-                />
+                <!-- Horizontal Volume Bar (Disabled) -->
+                <div class="volume-bar-container">
+                  <input
+                    type="range"
+                    class="volume-slider"
+                    min="0"
+                    max="1"
+                    step="0.01"
+                    value={0.5}
+                    style="--volume-percent: 50%"
+                    disabled
+                  />
+                </div>
+
+                <!-- Binding Active (Mute) -->
+                <div class="binding-active" role="status" aria-live="polite" aria-label="Press a button on your controller to bind mute function">
+                  <span class="pulse" aria-hidden="true">⏺</span>
+                </div>
+
+                <!-- Binding Active (Axis) -->
+                <div class="binding-active" role="status" aria-live="polite" aria-label="Move an axis on your controller to bind volume control">
+                  <span class="pulse" aria-hidden="true">⏺</span>
+                </div>
               </div>
-
-              <!-- Ghost Mute Button -->
-              <button class="btn btn-round btn-channel btn-bind btn-bind-empty" disabled aria-label="Bind mute button (select an app first)" title="Select an app first">
-                <span class="bind-icon default" aria-hidden="true">
-                  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 640 640" width="20" height="20" fill="currentColor">
-                    <path d="M80 416L128 416L262.1 535.2C268.5 540.9 276.7 544 285.2 544C304.4 544 320 528.4 320 509.2L320 130.8C320 111.6 304.4 96 285.2 96C276.7 96 268.5 99.1 262.1 104.8L128 224L80 224C53.5 224 32 245.5 32 272L32 368C32 394.5 53.5 416 80 416zM399 239C389.6 248.4 389.6 263.6 399 272.9L446 319.9L399 366.9C389.6 376.3 389.6 391.5 399 400.8C408.4 410.1 423.6 410.2 432.9 400.8L479.9 353.8L526.9 400.8C536.3 410.2 551.5 410.2 560.8 400.8C570.1 391.4 570.2 376.2 560.8 366.9L513.8 319.9L560.8 272.9C570.2 263.5 570.2 248.3 560.8 239C551.4 229.7 536.2 229.6 526.9 239L479.9 286L432.9 239C423.5 229.6 408.3 229.6 399 239z"/>
-                  </svg>
+            {:else}
+              <!-- Normal Ghost Column -->
+              <div class="channel-strip ghost-column" role="group" aria-label="Add new application binding">
+                <!-- Application Name -->
+                <span class="app-name ghost">
+                  {#if availableSessions.length > 0}
+                    <select class="app-dropdown-inline" aria-label="Select application to bind" onchange={(e) => {
+                      const sessionId = (e.target as HTMLSelectElement).value;
+                      if (sessionId) {
+                        const session = audioSessions.find(s => s.session_id === sessionId);
+                        if (session) {
+                          startAxisBinding(session.session_id, session.display_name, session.process_id, session.process_name);
+                        }
+                        (e.target as HTMLSelectElement).value = '';
+                      }
+                    }}>
+                      <option value="">Select App...</option>
+                      {#each availableSessions as session}
+                        <option value={session.session_id}>{formatProcessName(session.process_name)}</option>
+                      {/each}
+                    </select>
+                  {:else}
+                    All Bound
+                  {/if}
                 </span>
-                <span class="bind-icon hover" aria-hidden="true">+</span>
-              </button>
 
-              <!-- Ghost Axis Binding Button -->
-              <button class="btn btn-round btn-channel btn-bind btn-bind-empty" disabled aria-label="Bind volume axis (select an app first)" title="Select an app first">
-                <span class="bind-icon default" aria-hidden="true">
-                  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 640 640" width="20" height="20" fill="currentColor">
-                    <path d="M448 128C554 128 640 214 640 320C640 426 554 512 448 512L192 512C86 512 0 426 0 320C0 214 86 128 192 128L448 128zM192 240C178.7 240 168 250.7 168 264L168 296L136 296C122.7 296 112 306.7 112 320C112 333.3 122.7 344 136 344L168 344L168 376C168 389.3 178.7 400 192 400C205.3 400 216 389.3 216 376L216 344L248 344C261.3 344 272 333.3 272 320C272 306.7 261.3 296 248 296L216 296L216 264C216 250.7 205.3 240 192 240zM432 336C414.3 336 400 350.3 400 368C400 385.7 414.3 400 432 400C449.7 400 464 385.7 464 368C464 350.3 449.7 336 432 336zM496 240C478.3 240 464 254.3 464 272C464 289.7 478.3 304 496 304C513.7 304 528 289.7 528 272C528 254.3 513.7 240 496 240z"/>
-                  </svg>
-                </span>
-                <span class="bind-icon hover" aria-hidden="true">+</span>
-              </button>
-            </div>
+                <!-- Horizontal Volume Bar (Disabled) -->
+                <div class="volume-bar-container">
+                  <input
+                    type="range"
+                    class="volume-slider"
+                    min="0"
+                    max="1"
+                    step="0.01"
+                    value={0.5}
+                    style="--volume-percent: 50%"
+                    disabled
+                  />
+                </div>
+
+                <!-- Ghost Mute Button -->
+                <button class="btn btn-round btn-channel btn-bind btn-bind-empty" disabled aria-label="Bind mute button (select an app first)" title="Select an app first">
+                  <span class="bind-icon default" aria-hidden="true">
+                    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 640 640" width="20" height="20" fill="currentColor">
+                      <path d="M80 416L128 416L262.1 535.2C268.5 540.9 276.7 544 285.2 544C304.4 544 320 528.4 320 509.2L320 130.8C320 111.6 304.4 96 285.2 96C276.7 96 268.5 99.1 262.1 104.8L128 224L80 224C53.5 224 32 245.5 32 272L32 368C32 394.5 53.5 416 80 416zM399 239C389.6 248.4 389.6 263.6 399 272.9L446 319.9L399 366.9C389.6 376.3 389.6 391.5 399 400.8C408.4 410.1 423.6 410.2 432.9 400.8L479.9 353.8L526.9 400.8C536.3 410.2 551.5 410.2 560.8 400.8C570.1 391.4 570.2 376.2 560.8 366.9L513.8 319.9L560.8 272.9C570.2 263.5 570.2 248.3 560.8 239C551.4 229.7 536.2 229.6 526.9 239L479.9 286L432.9 239C423.5 229.6 408.3 229.6 399 239z"/>
+                    </svg>
+                  </span>
+                  <span class="bind-icon hover" aria-hidden="true">+</span>
+                </button>
+
+                <!-- Ghost Axis Binding Button -->
+                <button class="btn btn-round btn-channel btn-bind btn-bind-empty" disabled aria-label="Bind volume axis (select an app first)" title="Select an app first">
+                  <span class="bind-icon default" aria-hidden="true">
+                    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 640 640" width="20" height="20" fill="currentColor">
+                      <path d="M448 128C554 128 640 214 640 320C640 426 554 512 448 512L192 512C86 512 0 426 0 320C0 214 86 128 192 128L448 128zM192 240C178.7 240 168 250.7 168 264L168 296L136 296C122.7 296 112 306.7 112 320C112 333.3 122.7 344 136 344L168 344L168 376C168 389.3 178.7 400 192 400C205.3 400 216 389.3 216 376L216 344L248 344C261.3 344 272 333.3 272 320C272 306.7 261.3 296 248 296L216 296L216 264C216 250.7 205.3 240 192 240zM432 336C414.3 336 400 350.3 400 368C400 385.7 414.3 400 432 400C449.7 400 464 385.7 464 368C464 350.3 449.7 336 432 336zM496 240C478.3 240 464 254.3 464 272C464 289.7 478.3 304 496 304C513.7 304 528 289.7 528 272C528 254.3 513.7 240 496 240z"/>
+                    </svg>
+                  </span>
+                  <span class="bind-icon hover" aria-hidden="true">+</span>
+                </button>
+              </div>
+            {/if}
           {/if}
         </div>
       {:else}
@@ -2372,10 +2407,19 @@
     transition: background 0.2s ease, color 0.2s ease, box-shadow 0.2s ease;
   }
 
+  .btn-invert svg {
+    transition: transform 0.3s ease;
+    transform: scaleY(1);
+  }
+
   .btn-invert.active {
     background: var(--text-primary);
     color: var(--bg-primary);
     border-color: var(--text-primary);
+  }
+
+  .btn-invert.active svg {
+    transform: scaleY(-1);
   }
 
   .btn-invert:hover {
@@ -2417,12 +2461,18 @@
   }
 
   .mapping-badge .mapping-icon {
-    display: block;
-    line-height: 1;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    position: absolute;
+    inset: 0;
+    transition: opacity 0.2s ease;
   }
 
   .mapping-badge .mapping-icon.remove {
     display: none;
+    font-size: 1.8rem;
+    font-weight: 300;
   }
 
   .mapping-badge:hover {
