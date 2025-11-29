@@ -91,6 +91,7 @@
   let audioSessions = $state<AudioSession[]>([]);
   let axisMappings = $state<AxisMapping[]>([]);
   let buttonMappings = $state<ButtonMapping[]>([]);
+  let pinnedApps = $state<Set<string>>(new Set());
   let pollingInterval: number | null = null;
   let audioMonitorInterval: number | null = null;
   let isPolling = $state(false);
@@ -305,7 +306,8 @@
   function getBoundSessions(): AudioSession[] {
     const boundProcessNames = new Set([
       ...axisMappings.map(m => m.processName),
-      ...buttonMappings.map(m => m.processName)
+      ...buttonMappings.map(m => m.processName),
+      ...pinnedApps
     ]);
     
     const sessions: AudioSession[] = [];
@@ -319,7 +321,7 @@
       }
     }
     
-    // Add placeholders for inactive bound apps
+    // Add placeholders for inactive bound/pinned apps
     const allMappings = [...axisMappings, ...buttonMappings];
     for (const mapping of allMappings) {
       if (!foundProcessNames.has(mapping.processName)) {
@@ -332,6 +334,27 @@
           is_muted: true
         });
         foundProcessNames.add(mapping.processName);
+      }
+    }
+    
+    // Add placeholders for pinned apps without mappings
+    for (const processName of pinnedApps) {
+      if (!foundProcessNames.has(processName)) {
+        // Try to find session info from audio sessions
+        const activeSession = audioSessions.find(s => s.process_name === processName);
+        if (activeSession) {
+          sessions.push(activeSession);
+        } else {
+          sessions.push({
+            session_id: `placeholder_${processName}`,
+            display_name: processName,
+            process_id: 0,
+            process_name: processName,
+            volume: 0,
+            is_muted: true
+          });
+        }
+        foundProcessNames.add(processName);
       }
     }
     
@@ -405,6 +428,7 @@
     
     loadMappings();
     loadButtonMappings();
+    loadPinnedApps();
     autoInitialise();
 
     // Exit edit mode when window loses focus (minimised or switched away)
@@ -513,6 +537,7 @@
     console.log("[DEBUG] No specific state forced, running normal initialisation");
     loadMappings();
     loadButtonMappings();
+    loadPinnedApps();
     autoInitialise();
   }
 
@@ -1207,6 +1232,10 @@
     const newMapping: AxisMapping = { deviceHandle, deviceName, axisName, sessionId, sessionName, processId, processName, inverted: false };
     axisMappings = [...axisMappings, newMapping];
     
+    // Pin the app so it remains visible even if bindings are removed
+    pinnedApps.add(processName);
+    savePinnedApps();
+    
     console.log(`[ClearComms] ✓ Mapped ${deviceName} ${axisName} → ${sessionName}`);
     saveMappings();
   }
@@ -1237,6 +1266,10 @@
     const newMapping: ButtonMapping = { deviceHandle, deviceName, buttonName, sessionId, sessionName, processId, processName };
     buttonMappings = [...buttonMappings, newMapping];
     
+    // Pin the app so it remains visible even if bindings are removed
+    pinnedApps.add(processName);
+    savePinnedApps();
+    
     console.log(`[ClearComms] ✓ Mapped ${deviceName} ${buttonName} → Mute ${sessionName}`);
     saveButtonMappings();
   }
@@ -1264,6 +1297,10 @@
       console.log(`[ClearComms] Removed button mapping for ${btnMapping.sessionName}`);
     }
     buttonMappings = buttonMappings.filter(m => m.processName !== processName);
+    
+    // Unpin the app so it's removed from the mixer
+    pinnedApps.delete(processName);
+    savePinnedApps();
     
     // Clear any cached pre-mute volumes
     const sessionsToClean = audioSessions.filter(s => s.process_name === processName);
@@ -1514,6 +1551,25 @@
       }
     } catch (error) {
       console.error("Error loading button mappings:", error);
+    }
+  }
+
+  function savePinnedApps() {
+    try {
+      localStorage.setItem('clearcomms_pinned_apps', JSON.stringify([...pinnedApps]));
+    } catch (error) {
+      console.error("Error saving pinned apps:", error);
+    }
+  }
+
+  function loadPinnedApps() {
+    try {
+      const saved = localStorage.getItem('clearcomms_pinned_apps');
+      if (saved) {
+        pinnedApps = new Set(JSON.parse(saved));
+      }
+    } catch (error) {
+      console.error("Error loading pinned apps:", error);
     }
   }
 </script>
