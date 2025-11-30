@@ -1821,6 +1821,7 @@
               <!-- Axis Binding Control (Edit Mode Only) -->
               {#if isEditMode}
                 {#if mapping}
+                  <!-- Bound: Show mapping badge -->
                   <button
                     class="mapping-badge mapping-removable"
                     aria-label="Remove volume axis binding for {session.display_name}: {mapping.axisName}"
@@ -1839,24 +1840,13 @@
                       </svg>
                     </span>
                   </button>
-                  <!-- Axis Inversion Toggle -->
-                  <button 
-                    class="btn btn-round btn-channel btn-invert" 
-                    class:active={mapping.inverted}
-                    onclick={() => toggleAxisInversion(session.process_name)} 
-                    aria-label="{mapping.inverted ? 'Disable' : 'Enable'} axis inversion for {session.display_name}"
-                    aria-pressed={mapping.inverted}
-                    title={mapping.inverted ? 'Axis Inverted' : 'Normal Axis Direction'}
-                  >
-                    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 640 640" width="20" height="20" fill="currentColor" aria-hidden="true">
-                      <path d="M342.6 41.4C330.1 28.9 309.8 28.9 297.3 41.4L201.3 137.4C188.8 149.9 188.8 170.2 201.3 182.7C213.8 195.2 234.1 195.2 246.6 182.7L288 141.3L288 498.7L246.6 457.4C234.1 444.9 213.8 444.9 201.3 457.4C188.8 469.9 188.8 490.2 201.3 502.7L297.3 598.7C303.3 604.7 311.4 608.1 319.9 608.1C328.4 608.1 336.5 604.7 342.5 598.7L438.5 502.7C451 490.2 451 469.9 438.5 457.4C426 444.9 405.7 444.9 393.2 457.4L351.8 498.8L351.8 141.3L393.2 182.7C405.7 195.2 426 195.2 438.5 182.7C451 170.2 451 149.9 438.5 137.4L342.5 41.4z"/>
-                    </svg>
-                  </button>
                 {:else if isBindingMode && pendingBinding?.sessionId === session.session_id}
+                  <!-- Binding in progress: Show pulse indicator -->
                   <div class="binding-active" role="status" aria-live="polite" aria-label="Move an axis on your controller to bind volume control">
                     <span class="pulse" aria-hidden="true">⏺</span>
                   </div>
                 {:else}
+                  <!-- Unbound: Show bind button -->
                   <button class="btn btn-round btn-channel btn-bind btn-bind-empty" onclick={() => startAxisBinding(session.session_id, session.display_name, session.process_id, session.process_name)} aria-label="Bind hardware axis to control volume for {session.display_name}" title="Bind Volume Axis">
                     <span class="bind-icon default" aria-hidden="true">
                       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 640 640" width="20" height="20" fill="currentColor">
@@ -1870,6 +1860,22 @@
                     </span>
                   </button>
                 {/if}
+                
+                <!-- Axis Inversion Toggle (Always visible in edit mode) -->
+                <button 
+                  class="btn btn-round btn-channel btn-invert" 
+                  class:active={mapping?.inverted}
+                  class:btn-invert-disabled={!mapping}
+                  disabled={!mapping}
+                  onclick={() => mapping && toggleAxisInversion(session.process_name)} 
+                  aria-label="{mapping ? (mapping.inverted ? 'Disable' : 'Enable') : 'No axis binding'} axis inversion for {session.display_name}"
+                  aria-pressed={mapping?.inverted ?? false}
+                  title={mapping ? (mapping.inverted ? 'Axis Inverted' : 'Normal Axis Direction') : 'Bind an axis to enable inversion'}
+                >
+                  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 640 640" width="20" height="20" fill="currentColor" aria-hidden="true">
+                    <path d="M342.6 41.4C330.1 28.9 309.8 28.9 297.3 41.4L201.3 137.4C188.8 149.9 188.8 170.2 201.3 182.7C213.8 195.2 234.1 195.2 246.6 182.7L288 141.3L288 498.7L246.6 457.4C234.1 444.9 213.8 444.9 201.3 457.4C188.8 469.9 188.8 490.2 201.3 502.7L297.3 598.7C303.3 604.7 311.4 608.1 319.9 608.1C328.4 608.1 336.5 604.7 342.5 598.7L438.5 502.7C451 490.2 451 469.9 438.5 457.4C426 444.9 405.7 444.9 393.2 457.4L351.8 498.8L351.8 141.3L393.2 182.7C405.7 195.2 426 195.2 438.5 182.7C451 170.2 451 149.9 438.5 137.4L342.5 41.4z"/>
+                  </svg>
+                </button>
 
                 <!-- Remove Application Button -->
                 <button 
@@ -1892,8 +1898,9 @@
 
           <!-- Ghost Column (Add New Binding) - Only in Edit Mode -->
           {#if isEditMode}
-            {#if isBindingMode && pendingBinding}
-              <!-- Binding in Progress for Pending App -->
+            {@const isBindingNewApp = isBindingMode && pendingBinding !== null && !boundSessions.some(s => s.process_name === pendingBinding?.processName)}
+            {#if isBindingNewApp && pendingBinding}
+              <!-- Binding in Progress for NEW App (not already in boundSessions) -->
               <div class="channel-strip ghost-column" role="group" aria-label="Binding in progress for {pendingBinding.sessionName}">
                 <!-- Application Name -->
                 <span class="app-name ghost">{formatProcessName(pendingBinding.processName)}</span>
@@ -2427,11 +2434,17 @@
 
   /* ===== CHANNEL BUTTONS ===== */
   .btn-channel {
+    box-sizing: border-box;
     width: 46px;
     height: 46px;
-    aspect-ratio: 1 / 1;
+    min-width: 46px;
+    min-height: 46px;
+    max-width: 46px;
+    max-height: 46px;
     font-size: 1.3rem;
     transition: all 0.2s ease, box-shadow 0.2s ease;
+    flex-shrink: 0;
+    flex-grow: 0;
   }
 
   .btn-channel:hover:not(:disabled) {
@@ -2490,7 +2503,7 @@
     background: var(--text-primary);
     color: var(--bg-primary);
     border: 2px solid var(--text-primary);
-    transition: background 0.2s ease, color 0.2s ease, box-shadow 0.2s ease;
+    transition: background 0.2s ease, color 0.2s ease, box-shadow 0.2s ease, opacity 0.2s ease;
   }
 
   .btn-invert svg {
@@ -2508,8 +2521,19 @@
     transform: scaleY(-1);
   }
 
-  .btn-invert:hover {
+  .btn-invert:hover:not(:disabled) {
     box-shadow: 0 0 100px rgba(255, 255, 255, 0.75);
+  }
+
+  .btn-invert.btn-invert-disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+    pointer-events: none;
+  }
+
+  .btn-invert.btn-invert-disabled:hover {
+    opacity: 0.5;
+    box-shadow: none;
   }
 
   .btn-remove-app {
@@ -2539,6 +2563,7 @@
     color: var(--bg-primary);
     cursor: pointer;
     transition: background 0.2s ease, color 0.2s ease, border-color 0.2s ease, box-shadow 0.2s ease;
+    flex-shrink: 0;
   }
 
   .mapping-badge.button {
@@ -2591,9 +2616,13 @@
   }
 
   .binding-active {
+    box-sizing: border-box;
     width: 46px;
     height: 46px;
-    aspect-ratio: 1 / 1;
+    min-width: 46px;
+    min-height: 46px;
+    max-width: 46px;
+    max-height: 46px;
     position: relative;
     background: var(--bg-card);
     border: 2px solid var(--text-primary);
@@ -2604,6 +2633,10 @@
     justify-content: center;
     animation: pulse-border 1.5s ease-in-out infinite;
     color: var(--text-primary);
+    flex-shrink: 0;
+    flex-grow: 0;
+    margin: 0;
+    padding: 0;
   }
 
   .binding-active .pulse {
