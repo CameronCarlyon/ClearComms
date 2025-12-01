@@ -2526,6 +2526,9 @@
   }
 
   .btn-invert.btn-invert-disabled {
+    background: transparent;
+    color: var(--text-primary);
+    border-color: var(--text-primary);
     opacity: 0.5;
     cursor: not-allowed;
     pointer-events: none;
