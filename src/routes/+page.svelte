@@ -114,6 +114,10 @@
   let dragAnimationFrames = $state<Map<string, number>>(new Map());
   let manuallyControlledSessions = $state<Set<string>>(new Set());
   let showCloseConfirmation = $state(false);
+  
+  // Ghost column state for "Add Application" dropdown
+  let ghostColumnOpen = $state(false);
+  let ghostColumnSelectedSession = $state<AudioSession | null>(null);
 
   const POLL_LOG_INTERVAL = 200;
   const BUTTON_CACHE_LOG_INTERVAL = 200;
@@ -292,7 +296,7 @@
     
     let displayCount = boundProcessNames.size;
     
-    if (isEditMode && displayCount >= 2) {
+    if (isEditMode && displayCount >= 1) {
       displayCount += 1;
     }
     
@@ -398,6 +402,11 @@
 
   function toggleEditMode() {
     isEditMode = !isEditMode;
+    // Reset ghost column state when exiting edit mode
+    if (!isEditMode) {
+      ghostColumnOpen = false;
+      ghostColumnSelectedSession = null;
+    }
   }
 
   function showCloseDialog() {
@@ -439,6 +448,8 @@
         isButtonBindingMode = false;
         pendingBinding = null;
         pendingButtonBinding = null;
+        ghostColumnOpen = false;
+        ghostColumnSelectedSession = null;
       }
     };
 
@@ -1756,7 +1767,7 @@
                   <button
                     class="mapping-badge button mapping-removable"
                     aria-label="Remove mute button binding for {session.display_name}: {buttonMapping.buttonName}"
-                    title="Mute: {buttonMapping.buttonName}"
+                    title="Mute Button: {buttonMapping.buttonName}"
                     onclick={() => removeButtonMapping(session.process_name)}
                     type="button"
                   >
@@ -1825,7 +1836,7 @@
                   <button
                     class="mapping-badge mapping-removable"
                     aria-label="Remove volume axis binding for {session.display_name}: {mapping.axisName}"
-                    title="Volume: {mapping.axisName}"
+                    title="Volume Axis: {mapping.axisName}"
                     onclick={() => removeMapping(session.process_name)}
                     type="button"
                   >
@@ -1841,10 +1852,18 @@
                     </span>
                   </button>
                 {:else if isBindingMode && pendingBinding?.sessionId === session.session_id}
-                  <!-- Binding in progress: Show pulse indicator -->
-                  <div class="binding-active" role="status" aria-live="polite" aria-label="Move an axis on your controller to bind volume control">
-                    <span class="pulse" aria-hidden="true">⏺</span>
-                  </div>
+                  <!-- Binding in progress: Cancel binding -->
+                  <button
+                    class="btn btn-round btn-channel btn-binding-cancel"
+                    aria-label="Cancel axis binding for {session.display_name}"
+                    title="Cancel Axis Binding"
+                    onclick={cancelBinding}
+                    type="button"
+                  >
+                    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 640 640" width="20" height="20" fill="currentColor" aria-hidden="true">
+                      <path d="M183.1 137.4C170.6 124.9 150.3 124.9 137.8 137.4C125.3 149.9 125.3 170.2 137.8 182.7L275.2 320L137.9 457.4C125.4 469.9 125.4 490.2 137.9 502.7C150.4 515.2 170.7 515.2 183.2 502.7L320.5 365.3L457.9 502.6C470.4 515.1 490.7 515.1 503.2 502.6C515.7 490.1 515.7 469.8 503.2 457.3L365.8 320L503.1 182.6C515.6 170.1 515.6 149.8 503.1 137.3C490.6 124.8 470.3 124.8 457.8 137.3L320.5 274.7L183.1 137.4z" />
+                    </svg>
+                  </button>
                 {:else}
                   <!-- Unbound: Show bind button -->
                   <button class="btn btn-round btn-channel btn-bind btn-bind-empty" onclick={() => startAxisBinding(session.session_id, session.display_name, session.process_id, session.process_name)} aria-label="Bind hardware axis to control volume for {session.display_name}" title="Bind Volume Axis">
@@ -1870,7 +1889,7 @@
                   onclick={() => mapping && toggleAxisInversion(session.process_name)} 
                   aria-label="{mapping ? (mapping.inverted ? 'Disable' : 'Enable') : 'No axis binding'} axis inversion for {session.display_name}"
                   aria-pressed={mapping?.inverted ?? false}
-                  title={mapping ? (mapping.inverted ? 'Axis Inverted' : 'Normal Axis Direction') : 'Bind an axis to enable inversion'}
+                  title={mapping ? 'Reverse Axis Direction' : 'Bind an axis to enable inversion'}
                 >
                   <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 640 640" width="20" height="20" fill="currentColor" aria-hidden="true">
                     <path d="M342.6 41.4C330.1 28.9 309.8 28.9 297.3 41.4L201.3 137.4C188.8 149.9 188.8 170.2 201.3 182.7C213.8 195.2 234.1 195.2 246.6 182.7L288 141.3L288 498.7L246.6 457.4C234.1 444.9 213.8 444.9 201.3 457.4C188.8 469.9 188.8 490.2 201.3 502.7L297.3 598.7C303.3 604.7 311.4 608.1 319.9 608.1C328.4 608.1 336.5 604.7 342.5 598.7L438.5 502.7C451 490.2 451 469.9 438.5 457.4C426 444.9 405.7 444.9 393.2 457.4L351.8 498.8L351.8 141.3L393.2 182.7C405.7 195.2 426 195.2 438.5 182.7C451 170.2 451 149.9 438.5 137.4L342.5 41.4z"/>
@@ -1920,82 +1939,171 @@
                 </div>
 
                 <!-- Binding Active (Mute) -->
-                <div class="binding-active" role="status" aria-live="polite" aria-label="Press a button on your controller to bind mute function">
-                  <span class="pulse" aria-hidden="true">⏺</span>
-                </div>
+                <button
+                  class="btn btn-round btn-channel btn-binding-cancel"
+                  aria-label="Cancel mute binding"
+                  title="Cancel Mute Binding"
+                  onclick={cancelButtonBinding}
+                  type="button"
+                >
+                  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 640 640" width="20" height="20" fill="currentColor" aria-hidden="true">
+                    <path d="M183.1 137.4C170.6 124.9 150.3 124.9 137.8 137.4C125.3 149.9 125.3 170.2 137.8 182.7L275.2 320L137.9 457.4C125.4 469.9 125.4 490.2 137.9 502.7C150.4 515.2 170.7 515.2 183.2 502.7L320.5 365.3L457.9 502.6C470.4 515.1 490.7 515.1 503.2 502.6C515.7 490.1 515.7 469.8 503.2 457.3L365.8 320L503.1 182.6C515.6 170.1 515.6 149.8 503.1 137.3C490.6 124.8 470.3 124.8 457.8 137.3L320.5 274.7L183.1 137.4z" />
+                  </svg>
+                </button>
 
                 <!-- Binding Active (Axis) -->
-                <div class="binding-active" role="status" aria-live="polite" aria-label="Move an axis on your controller to bind volume control">
-                  <span class="pulse" aria-hidden="true">⏺</span>
-                </div>
+                <button
+                  class="btn btn-round btn-channel btn-binding-cancel"
+                  aria-label="Cancel axis binding"
+                  title="Cancel Axis Binding"
+                  onclick={cancelBinding}
+                  type="button"
+                >
+                  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 640 640" width="20" height="20" fill="currentColor" aria-hidden="true">
+                    <path d="M183.1 137.4C170.6 124.9 150.3 124.9 137.8 137.4C125.3 149.9 125.3 170.2 137.8 182.7L275.2 320L137.9 457.4C125.4 469.9 125.4 490.2 137.9 502.7C150.4 515.2 170.7 515.2 183.2 502.7L320.5 365.3L457.9 502.6C470.4 515.1 490.7 515.1 503.2 502.6C515.7 490.1 515.7 469.8 503.2 457.3L365.8 320L503.1 182.6C515.6 170.1 515.6 149.8 503.1 137.3C490.6 124.8 470.3 124.8 457.8 137.3L320.5 274.7L183.1 137.4z" />
+                  </svg>
+                </button>
               </div>
             {:else}
-              <!-- Normal Ghost Column -->
-              <div class="channel-strip ghost-column" role="group" aria-label="Add new application binding">
-                <!-- Application Name -->
-                <span class="app-name ghost">
-                  {#if availableSessions.length > 0}
-                    <select class="app-dropdown-inline" aria-label="Select application to bind" onchange={(e) => {
-                      const sessionId = (e.target as HTMLSelectElement).value;
-                      if (sessionId) {
-                        const session = audioSessions.find(s => s.session_id === sessionId);
-                        if (session) {
-                          startAxisBinding(session.session_id, session.display_name, session.process_id, session.process_name);
-                        }
-                        (e.target as HTMLSelectElement).value = '';
-                      }
-                    }}>
-                      <option value="">Select App...</option>
+              <!-- Ghost Column (Add New Application) -->
+              <div 
+                class="channel-strip ghost-column" 
+                class:ghost-column-expanded={ghostColumnOpen || ghostColumnSelectedSession}
+                role="group" 
+                aria-label="Add new application binding"
+              >
+                {#if !ghostColumnOpen && !ghostColumnSelectedSession}
+                  <!-- Initial State: Just the + Button -->
+                  <button 
+                    class="btn btn-add-app"
+                    onclick={() => { ghostColumnOpen = true; }}
+                    disabled={availableSessions.length === 0}
+                    aria-label={availableSessions.length > 0 ? "Add application" : "No applications available"}
+                    title={availableSessions.length > 0 ? "Add Application" : "No applications available"}
+                  >
+                    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 640 640" width="24" height="24" fill="currentColor" aria-hidden="true">
+                      <path d="M352 128C352 110.3 337.7 96 320 96C302.3 96 288 110.3 288 128L288 288L128 288C110.3 288 96 302.3 96 320C96 337.7 110.3 352 128 352L288 352L288 512C288 529.7 302.3 544 320 544C337.7 544 352 529.7 352 512L352 352L512 352C529.7 352 544 337.7 544 320C544 302.3 529.7 288 512 288L352 288L352 128z"/>
+                    </svg>
+                  </button>
+                {:else if ghostColumnOpen && !ghostColumnSelectedSession}
+                  <!-- Dropdown Open State: Show Application Selector -->
+                  <div class="add-app-dropdown">
+                    <div class="add-app-dropdown-header">
+                      <span class="add-app-dropdown-title">Select App</span>
+                      <button 
+                        class="btn btn-dropdown-close"
+                        onclick={() => { ghostColumnOpen = false; }}
+                        aria-label="Close application selector"
+                      >
+                        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 640 640" width="14" height="14" fill="currentColor" aria-hidden="true">
+                          <path d="M183.1 137.4C170.6 124.9 150.3 124.9 137.8 137.4C125.3 149.9 125.3 170.2 137.8 182.7L275.2 320L137.9 457.4C125.4 469.9 125.4 490.2 137.9 502.7C150.4 515.2 170.7 515.2 183.2 502.7L320.5 365.3L457.9 502.6C470.4 515.1 490.7 515.1 503.2 502.6C515.7 490.1 515.7 469.8 503.2 457.3L365.8 320L503.1 182.6C515.6 170.1 515.6 149.8 503.1 137.3C490.6 124.8 470.3 124.8 457.8 137.3L320.5 274.7L183.1 137.4z" />
+                        </svg>
+                      </button>
+                    </div>
+                    <div class="add-app-dropdown-list">
                       {#each availableSessions as session}
-                        <option value={session.session_id}>{formatProcessName(session.process_name)}</option>
+                        <button 
+                          class="add-app-dropdown-item"
+                          onclick={() => {
+                            ghostColumnSelectedSession = session;
+                            ghostColumnOpen = false;
+                          }}
+                          aria-label="Select {formatProcessName(session.process_name)}"
+                        >
+                          {formatProcessName(session.process_name)}
+                        </button>
                       {/each}
-                    </select>
-                  {:else}
-                    All Bound
-                  {/if}
-                </span>
+                    </div>
+                  </div>
+                {:else if ghostColumnSelectedSession}
+                  <!-- Application Selected: Show Full Column UI -->
+                  <!-- Application Name -->
+                  <span class="app-name ghost">{formatProcessName(ghostColumnSelectedSession.process_name)}</span>
 
-                <!-- Horizontal Volume Bar (Disabled) -->
-                <div class="volume-bar-container">
-                  <input
-                    type="range"
-                    class="volume-slider"
-                    min="0"
-                    max="1"
-                    step="0.01"
-                    value={0.5}
-                    style="--volume-percent: 50%"
-                    disabled
-                  />
-                </div>
+                  <!-- Horizontal Volume Bar (Disabled) -->
+                  <div class="volume-bar-container">
+                    <input
+                      type="range"
+                      class="volume-slider"
+                      min="0"
+                      max="1"
+                      step="0.01"
+                      value={ghostColumnSelectedSession.volume}
+                      style="--volume-percent: {ghostColumnSelectedSession.volume * 100}%"
+                      disabled
+                    />
+                  </div>
 
-                <!-- Ghost Mute Button -->
-                <button class="btn btn-round btn-channel btn-bind btn-bind-empty" disabled aria-label="Bind mute button (select an app first)" title="Select an app first">
-                  <span class="bind-icon default" aria-hidden="true">
-                    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 640 640" width="20" height="20" fill="currentColor">
-                      <path d="M80 416L128 416L262.1 535.2C268.5 540.9 276.7 544 285.2 544C304.4 544 320 528.4 320 509.2L320 130.8C320 111.6 304.4 96 285.2 96C276.7 96 268.5 99.1 262.1 104.8L128 224L80 224C53.5 224 32 245.5 32 272L32 368C32 394.5 53.5 416 80 416zM399 239C389.6 248.4 389.6 263.6 399 272.9L446 319.9L399 366.9C389.6 376.3 389.6 391.5 399 400.8C408.4 410.1 423.6 410.2 432.9 400.8L479.9 353.8L526.9 400.8C536.3 410.2 551.5 410.2 560.8 400.8C570.1 391.4 570.2 376.2 560.8 366.9L513.8 319.9L560.8 272.9C570.2 263.5 570.2 248.3 560.8 239C551.4 229.7 536.2 229.6 526.9 239L479.9 286L432.9 239C423.5 229.6 408.3 229.6 399 239z"/>
-                    </svg>
-                  </span>
-                  <span class="bind-icon hover" aria-hidden="true">
-                    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 640 640" width="20" height="20" fill="currentColor">
-                      <path d="M352 128C352 110.3 337.7 96 320 96C302.3 96 288 110.3 288 128L288 288L128 288C110.3 288 96 302.3 96 320C96 337.7 110.3 352 128 352L288 352L288 512C288 529.7 302.3 544 320 544C337.7 544 352 529.7 352 512L352 352L512 352C529.7 352 544 337.7 544 320C544 302.3 529.7 288 512 288L352 288L352 128z"/>
-                    </svg>
-                  </span>
-                </button>
+                  <!-- Mute Button Binding -->
+                  <button 
+                    class="btn btn-round btn-channel btn-bind btn-bind-empty" 
+                    onclick={() => {
+                      if (ghostColumnSelectedSession) {
+                        startButtonBinding(
+                          ghostColumnSelectedSession.session_id, 
+                          ghostColumnSelectedSession.display_name, 
+                          ghostColumnSelectedSession.process_id, 
+                          ghostColumnSelectedSession.process_name
+                        );
+                        ghostColumnSelectedSession = null;
+                      }
+                    }} 
+                    aria-label="Bind mute button for {ghostColumnSelectedSession.display_name}" 
+                    title="Bind Mute Button"
+                  >
+                    <span class="bind-icon default" aria-hidden="true">
+                      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 640 640" width="20" height="20" fill="currentColor">
+                        <path d="M80 416L128 416L262.1 535.2C268.5 540.9 276.7 544 285.2 544C304.4 544 320 528.4 320 509.2L320 130.8C320 111.6 304.4 96 285.2 96C276.7 96 268.5 99.1 262.1 104.8L128 224L80 224C53.5 224 32 245.5 32 272L32 368C32 394.5 53.5 416 80 416zM399 239C389.6 248.4 389.6 263.6 399 272.9L446 319.9L399 366.9C389.6 376.3 389.6 391.5 399 400.8C408.4 410.1 423.6 410.2 432.9 400.8L479.9 353.8L526.9 400.8C536.3 410.2 551.5 410.2 560.8 400.8C570.1 391.4 570.2 376.2 560.8 366.9L513.8 319.9L560.8 272.9C570.2 263.5 570.2 248.3 560.8 239C551.4 229.7 536.2 229.6 526.9 239L479.9 286L432.9 239C423.5 229.6 408.3 229.6 399 239z"/>
+                      </svg>
+                    </span>
+                    <span class="bind-icon hover" aria-hidden="true">
+                      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 640 640" width="20" height="20" fill="currentColor">
+                        <path d="M352 128C352 110.3 337.7 96 320 96C302.3 96 288 110.3 288 128L288 288L128 288C110.3 288 96 302.3 96 320C96 337.7 110.3 352 128 352L288 352L288 512C288 529.7 302.3 544 320 544C337.7 544 352 529.7 352 512L352 352L512 352C529.7 352 544 337.7 544 320C544 302.3 529.7 288 512 288L352 288L352 128z"/>
+                      </svg>
+                    </span>
+                  </button>
 
-                <!-- Ghost Axis Binding Button -->
-                <button class="btn btn-round btn-channel btn-bind btn-bind-empty" disabled aria-label="Bind volume axis (select an app first)" title="Select an app first">
-                  <span class="bind-icon default" aria-hidden="true">
-                    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 640 640" width="20" height="20" fill="currentColor">
-                      <path d="M448 128C554 128 640 214 640 320C640 426 554 512 448 512L192 512C86 512 0 426 0 320C0 214 86 128 192 128L448 128zM192 240C178.7 240 168 250.7 168 264L168 296L136 296C122.7 296 112 306.7 112 320C112 333.3 122.7 344 136 344L168 344L168 376C168 389.3 178.7 400 192 400C205.3 400 216 389.3 216 376L216 344L248 344C261.3 344 272 333.3 272 320C272 306.7 261.3 296 248 296L216 296L216 264C216 250.7 205.3 240 192 240zM432 336C414.3 336 400 350.3 400 368C400 385.7 414.3 400 432 400C449.7 400 464 385.7 464 368C464 350.3 449.7 336 432 336zM496 240C478.3 240 464 254.3 464 272C464 289.7 478.3 304 496 304C513.7 304 528 289.7 528 272C528 254.3 513.7 240 496 240z"/>
+                  <!-- Axis Binding Button -->
+                  <button 
+                    class="btn btn-round btn-channel btn-bind btn-bind-empty" 
+                    onclick={() => {
+                      if (ghostColumnSelectedSession) {
+                        startAxisBinding(
+                          ghostColumnSelectedSession.session_id, 
+                          ghostColumnSelectedSession.display_name, 
+                          ghostColumnSelectedSession.process_id, 
+                          ghostColumnSelectedSession.process_name
+                        );
+                        ghostColumnSelectedSession = null;
+                      }
+                    }} 
+                    aria-label="Bind volume axis for {ghostColumnSelectedSession.display_name}" 
+                    title="Bind Volume Axis"
+                  >
+                    <span class="bind-icon default" aria-hidden="true">
+                      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 640 640" width="20" height="20" fill="currentColor">
+                        <path d="M448 128C554 128 640 214 640 320C640 426 554 512 448 512L192 512C86 512 0 426 0 320C0 214 86 128 192 128L448 128zM192 240C178.7 240 168 250.7 168 264L168 296L136 296C122.7 296 112 306.7 112 320C112 333.3 122.7 344 136 344L168 344L168 376C168 389.3 178.7 400 192 400C205.3 400 216 389.3 216 376L216 344L248 344C261.3 344 272 333.3 272 320C272 306.7 261.3 296 248 296L216 296L216 264C216 250.7 205.3 240 192 240zM432 336C414.3 336 400 350.3 400 368C400 385.7 414.3 400 432 400C449.7 400 464 385.7 464 368C464 350.3 449.7 336 432 336zM496 240C478.3 240 464 254.3 464 272C464 289.7 478.3 304 496 304C513.7 304 528 289.7 528 272C528 254.3 513.7 240 496 240z"/>
+                      </svg>
+                    </span>
+                    <span class="bind-icon hover" aria-hidden="true">
+                      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 640 640" width="20" height="20" fill="currentColor">
+                        <path d="M352 128C352 110.3 337.7 96 320 96C302.3 96 288 110.3 288 128L288 288L128 288C110.3 288 96 302.3 96 320C96 337.7 110.3 352 128 352L288 352L288 512C288 529.7 302.3 544 320 544C337.7 544 352 529.7 352 512L352 352L512 352C529.7 352 544 337.7 544 320C544 302.3 529.7 288 512 288L352 288L352 128z"/>
+                      </svg>
+                    </span>
+                  </button>
+
+                  <!-- Cancel Button -->
+                  <button 
+                    class="btn btn-round btn-channel btn-binding-cancel"
+                    onclick={() => { ghostColumnSelectedSession = null; }}
+                    aria-label="Cancel and go back"
+                    title="Cancel"
+                  >
+                    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 640 640" width="20" height="20" fill="currentColor" aria-hidden="true">
+                      <path d="M183.1 137.4C170.6 124.9 150.3 124.9 137.8 137.4C125.3 149.9 125.3 170.2 137.8 182.7L275.2 320L137.9 457.4C125.4 469.9 125.4 490.2 137.9 502.7C150.4 515.2 170.7 515.2 183.2 502.7L320.5 365.3L457.9 502.6C470.4 515.1 490.7 515.1 503.2 502.6C515.7 490.1 515.7 469.8 503.2 457.3L365.8 320L503.1 182.6C515.6 170.1 515.6 149.8 503.1 137.3C490.6 124.8 470.3 124.8 457.8 137.3L320.5 274.7L183.1 137.4z" />
                     </svg>
-                  </span>
-                  <span class="bind-icon hover" aria-hidden="true">
-                    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 640 640" width="20" height="20" fill="currentColor">
-                      <path d="M352 128C352 110.3 337.7 96 320 96C302.3 96 288 110.3 288 128L288 288L128 288C110.3 288 96 302.3 96 320C96 337.7 110.3 352 128 352L288 352L288 512C288 529.7 302.3 544 320 544C337.7 544 352 529.7 352 512L352 352L512 352C529.7 352 544 337.7 544 320C544 302.3 529.7 288 512 288L352 288L352 128z"/>
-                    </svg>
-                  </span>
-                </button>
+                  </button>
+                {/if}
               </div>
             {/if}
           {/if}
@@ -2076,7 +2184,7 @@
     max-height: 100vh;
     width: 100vw;
     justify-content: space-between;
-    overflow: visible;
+    overflow: hidden;
     box-sizing: border-box;
     padding: 1rem;
     position: relative;
@@ -2234,9 +2342,6 @@
     flex-direction: column;
     align-items: center;
     gap: 1rem;
-    padding: 0rem 1rem;
-    min-width: 85px;
-    max-width: 95px;
     transition: all 0.2s ease;
   }
 
@@ -2259,12 +2364,20 @@
 
   /* ===== GHOST COLUMN ===== */
   .channel-strip.ghost-column {
-    opacity: 0.5;
+    opacity: 0.6;
+    justify-content: center;
   }
 
   .channel-strip.ghost-column:hover {
-    opacity: 0.7;
-    border-color: var(--text-secondary);
+    opacity: 0.8;
+  }
+
+  /* Expanded ghost column (dropdown open or app selected) */
+  .channel-strip.ghost-column-expanded {
+    flex: 1;
+    max-width: none;
+    opacity: 1;
+    justify-content: flex-start;
   }
 
   .channel-strip.ghost-column .volume-slider {
@@ -2276,34 +2389,114 @@
     opacity: 0.6;
   }
 
-  .app-dropdown-inline {
+  /* ===== ADD APP BUTTON ===== */
+  .btn-add-app {
+    width: 46px;
+    height: 46px;
+    border-radius: 50%;
+    background: transparent;
+    border: 2px dashed var(--text-muted);
+    color: var(--text-muted);
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition: all 0.2s ease;
+  }
+
+  .btn-add-app:hover:not(:disabled) {
+    border-color: var(--text-primary);
+    color: var(--text-primary);
+    background: var(--bg-card);
+    transform: scale(1.05);
+  }
+
+  .btn-add-app:disabled {
+    opacity: 0.3;
+    cursor: not-allowed;
+  }
+
+  /* ===== ADD APP DROPDOWN ===== */
+  .add-app-dropdown {
+    display: flex;
+    flex-direction: column;
+    width: 100%;
+    height: 100%;
+    background: var(--bg-card);
+    border-radius: 12px;
+    overflow: hidden;
+    border: 1px solid var(--text-muted);
+  }
+
+  .add-app-dropdown-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 10px 12px;
+    border-bottom: 1px solid var(--text-muted);
+    background: var(--bg-secondary);
+  }
+
+  .add-app-dropdown-title {
+    font-size: 0.75rem;
+    font-weight: 600;
+    color: var(--text-secondary);
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+  }
+
+  .btn-dropdown-close {
+    width: 22px;
+    height: 22px;
+    border-radius: 50%;
     background: transparent;
     border: none;
+    color: var(--text-muted);
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition: all 0.15s ease;
+    padding: 0;
+  }
+
+  .btn-dropdown-close:hover {
+    background: var(--bg-card-hover);
+    color: var(--text-primary);
+  }
+
+  .add-app-dropdown-list {
+    display: flex;
+    flex-direction: column;
+    overflow-y: auto;
+    flex: 1;
+    padding: 6px;
+    gap: 2px;
+  }
+
+  .add-app-dropdown-item {
+    padding: 10px 12px;
+    background: transparent;
+    border: none;
+    border-radius: 8px;
     color: var(--text-primary);
     font-size: 0.8rem;
-    font-weight: 700;
+    font-weight: 500;
+    text-align: left;
     cursor: pointer;
-    outline: none;
-    text-align: center;
-    width: 100%;
-    padding: 0;
-    letter-spacing: -0.2px;
-    appearance: none;
-    -webkit-appearance: none;
+    transition: all 0.15s ease;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
   }
 
-  .app-dropdown-inline:hover {
-    color: var(--text-secondary);
+  .add-app-dropdown-item:hover {
+    background: var(--bg-card-hover);
   }
 
-  .app-dropdown-inline:focus-visible {
-    outline: 2px solid var(--text-primary);
-    outline-offset: 2px;
-  }
-
-  .app-dropdown-inline option {
-    background: var(--bg-primary);
-    color: var(--text-primary);
+  .add-app-dropdown-item:active {
+    background: var(--text-primary);
+    color: var(--bg-primary);
   }
 
   /* ===== APP NAME ===== */
@@ -2539,6 +2732,16 @@
     box-shadow: none;
   }
 
+  .btn-binding-cancel {
+    background: transparent;
+    color: var(--text-primary);
+    border: 2px solid var(--text-primary);
+  }
+
+  .btn-binding-cancel:hover:not(:disabled) {
+    box-shadow: 0 0 80px rgba(255, 255, 255, 0.45);
+  }
+
   .btn-remove-app {
     font-size: 1.2rem;
     background: #ff4444;
@@ -2606,18 +2809,6 @@
     opacity: 1;
   }
 
-  /* Small badge buttons */
-  .btn-badge-small {
-    position: absolute;
-    top: -6px;
-    right: -6px;
-    width: 20px;
-    height: 20px;
-    aspect-ratio: 1 / 1;
-    font-size: 0.75rem;
-    font-weight: bold;
-  }
-
   .binding-active {
     box-sizing: border-box;
     width: 46px;
@@ -2645,17 +2836,6 @@
   .binding-active .pulse {
     color: var(--text-primary);
     animation: pulse-icon 1s ease-in-out infinite;
-  }
-
-  .btn-badge-cancel {
-    background: var(--bg-card);
-    border: 1px solid var(--text-secondary);
-    color: var(--text-primary);
-    transition: all 0.2s ease, box-shadow 0.2s ease;
-  }
-
-  .btn-badge-cancel:hover {
-    box-shadow: 0 0 80px rgba(255, 255, 255, 0.75);
   }
 
   @keyframes pulse-border {
