@@ -23,6 +23,7 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 use std::sync::{Arc, Mutex};
+use std::time::{Duration, Instant};
 
 use tauri::Manager;
 use tauri::tray::{TrayIconBuilder, MouseButton, MouseButtonState};
@@ -48,6 +49,12 @@ const CHANNEL_WIDTH: u32 = 109;
 /// Fixed window height in pixels
 const WINDOW_HEIGHT: u32 = 1000;
 
+/// Duration of window resize animation in milliseconds
+const RESIZE_ANIMATION_DURATION_MS: u64 = 200;
+
+/// Frame interval for resize animation (~60fps)
+const RESIZE_ANIMATION_FRAME_MS: u64 = 16;
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Tauri Commands - Window Management
 // ─────────────────────────────────────────────────────────────────────────────
@@ -65,24 +72,77 @@ const WINDOW_HEIGHT: u32 = 1000;
 /// Success message with new dimensions or error if window not found
 #[tauri::command]
 fn resize_window_to_content(app: tauri::AppHandle, session_count: usize) -> Result<String, String> {
-    let new_width = if session_count <= 1 {
+    let target_width = if session_count <= 1 {
         BASE_WINDOW_WIDTH
     } else {
         BASE_WINDOW_WIDTH + (CHANNEL_WIDTH * (session_count - 1) as u32)
     };
     
     if let Some(window) = app.get_webview_window("main") {
-        let _ = window.set_size(tauri::Size::Physical(tauri::PhysicalSize {
-            width: new_width,
-            height: WINDOW_HEIGHT,
-        }));
+        // Get current window size
+        let current_size = window.outer_size().map_err(|e| e.to_string())?;
+        let current_width = current_size.width;
         
-        position_window_bottom_right(&window);
+        // Skip animation if already at target size
+        if current_width == target_width {
+            return Ok(format!("Already at {}x{}", target_width, WINDOW_HEIGHT));
+        }
         
-        return Ok(format!("Resized to {}x{} for {} session(s)", new_width, WINDOW_HEIGHT, session_count));
+        // Spawn animation thread to avoid blocking
+        let window_clone = window.clone();
+        std::thread::spawn(move || {
+            animate_window_resize(window_clone, current_width, target_width);
+        });
+        
+        return Ok(format!("Animating to {}x{} for {} session(s)", target_width, WINDOW_HEIGHT, session_count));
     }
     
     Err("Main window not found".to_string())
+}
+
+/// Animate window width change with easing
+fn animate_window_resize(window: tauri::WebviewWindow, start_width: u32, target_width: u32) {
+    let start_time = Instant::now();
+    let duration = Duration::from_millis(RESIZE_ANIMATION_DURATION_MS);
+    let frame_duration = Duration::from_millis(RESIZE_ANIMATION_FRAME_MS);
+    
+    loop {
+        let elapsed = start_time.elapsed();
+        
+        // Calculate progress (0.0 to 1.0)
+        let progress = if elapsed >= duration {
+            1.0
+        } else {
+            elapsed.as_secs_f64() / duration.as_secs_f64()
+        };
+        
+        // Apply ease-out cubic easing: 1 - (1 - t)^3
+        let eased_progress = 1.0 - (1.0 - progress).powi(3);
+        
+        // Interpolate width
+        let current_width = if start_width < target_width {
+            start_width + ((target_width - start_width) as f64 * eased_progress) as u32
+        } else {
+            start_width - ((start_width - target_width) as f64 * eased_progress) as u32
+        };
+        
+        // Set window size
+        let _ = window.set_size(tauri::Size::Physical(tauri::PhysicalSize {
+            width: current_width,
+            height: WINDOW_HEIGHT,
+        }));
+        
+        // Reposition window to stay anchored to bottom-right
+        position_window_bottom_right(&window);
+        
+        // Check if animation is complete
+        if progress >= 1.0 {
+            break;
+        }
+        
+        // Wait for next frame
+        std::thread::sleep(frame_duration);
+    }
 }
 
 /// Show the main application window
