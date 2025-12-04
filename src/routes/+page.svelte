@@ -117,7 +117,6 @@
   
   // Ghost column state for "Add Application" dropdown
   let ghostColumnOpen = $state(false);
-  let ghostColumnSelectedSession = $state<AudioSession | null>(null);
 
   const POLL_LOG_INTERVAL = 200;
   const BUTTON_CACHE_LOG_INTERVAL = 200;
@@ -291,7 +290,8 @@
   $effect(() => {
     const boundProcessNames = new Set([
       ...axisMappings.map(m => m.processName),
-      ...buttonMappings.map(m => m.processName)
+      ...buttonMappings.map(m => m.processName),
+      ...pinnedApps
     ]);
     
     let displayCount = boundProcessNames.size;
@@ -405,7 +405,6 @@
     // Reset ghost column state when exiting edit mode
     if (!isEditMode) {
       ghostColumnOpen = false;
-      ghostColumnSelectedSession = null;
     }
   }
 
@@ -449,7 +448,6 @@
         pendingBinding = null;
         pendingButtonBinding = null;
         ghostColumnOpen = false;
-        ghostColumnSelectedSession = null;
       }
     };
 
@@ -1968,11 +1966,11 @@
               <!-- Ghost Column (Add New Application) -->
               <div 
                 class="channel-strip ghost-column" 
-                class:ghost-column-expanded={ghostColumnOpen || ghostColumnSelectedSession}
+                class:ghost-column-expanded={ghostColumnOpen}
                 role="group" 
                 aria-label="Add new application binding"
               >
-                {#if !ghostColumnOpen && !ghostColumnSelectedSession}
+                {#if !ghostColumnOpen}
                   <!-- Initial State: Just the + Button -->
                   <button 
                     class="btn btn-add-app"
@@ -1985,7 +1983,7 @@
                       <path d="M352 128C352 110.3 337.7 96 320 96C302.3 96 288 110.3 288 128L288 288L128 288C110.3 288 96 302.3 96 320C96 337.7 110.3 352 128 352L288 352L288 512C288 529.7 302.3 544 320 544C337.7 544 352 529.7 352 512L352 352L512 352C529.7 352 544 337.7 544 320C544 302.3 529.7 288 512 288L352 288L352 128z"/>
                     </svg>
                   </button>
-                {:else if ghostColumnOpen && !ghostColumnSelectedSession}
+                {:else}
                   <!-- Dropdown Open State: Show Application Selector -->
                   <div class="add-app-dropdown">
                     <div class="add-app-dropdown-header">
@@ -2005,7 +2003,10 @@
                         <button 
                           class="add-app-dropdown-item"
                           onclick={() => {
-                            ghostColumnSelectedSession = session;
+                            // Add to pinned apps so it persists even without bindings
+                            pinnedApps.add(session.process_name);
+                            savePinnedApps();
+                            // Close dropdown - the app will now appear as a regular channel strip
                             ghostColumnOpen = false;
                           }}
                           aria-label="Select {formatProcessName(session.process_name)}"
@@ -2015,94 +2016,6 @@
                       {/each}
                     </div>
                   </div>
-                {:else if ghostColumnSelectedSession}
-                  <!-- Application Selected: Show Full Column UI -->
-                  <!-- Application Name -->
-                  <span class="app-name ghost">{formatProcessName(ghostColumnSelectedSession.process_name)}</span>
-
-                  <!-- Horizontal Volume Bar (Disabled) -->
-                  <div class="volume-bar-container">
-                    <input
-                      type="range"
-                      class="volume-slider"
-                      min="0"
-                      max="1"
-                      step="0.01"
-                      value={ghostColumnSelectedSession.volume}
-                      style="--volume-percent: {ghostColumnSelectedSession.volume * 100}%"
-                      disabled
-                    />
-                  </div>
-
-                  <!-- Mute Button Binding -->
-                  <button 
-                    class="btn btn-round btn-channel btn-bind btn-bind-empty" 
-                    onclick={() => {
-                      if (ghostColumnSelectedSession) {
-                        startButtonBinding(
-                          ghostColumnSelectedSession.session_id, 
-                          ghostColumnSelectedSession.display_name, 
-                          ghostColumnSelectedSession.process_id, 
-                          ghostColumnSelectedSession.process_name
-                        );
-                        ghostColumnSelectedSession = null;
-                      }
-                    }} 
-                    aria-label="Bind mute button for {ghostColumnSelectedSession.display_name}" 
-                    title="Bind Mute Button"
-                  >
-                    <span class="bind-icon default" aria-hidden="true">
-                      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 640 640" width="20" height="20" fill="currentColor">
-                        <path d="M80 416L128 416L262.1 535.2C268.5 540.9 276.7 544 285.2 544C304.4 544 320 528.4 320 509.2L320 130.8C320 111.6 304.4 96 285.2 96C276.7 96 268.5 99.1 262.1 104.8L128 224L80 224C53.5 224 32 245.5 32 272L32 368C32 394.5 53.5 416 80 416zM399 239C389.6 248.4 389.6 263.6 399 272.9L446 319.9L399 366.9C389.6 376.3 389.6 391.5 399 400.8C408.4 410.1 423.6 410.2 432.9 400.8L479.9 353.8L526.9 400.8C536.3 410.2 551.5 410.2 560.8 400.8C570.1 391.4 570.2 376.2 560.8 366.9L513.8 319.9L560.8 272.9C570.2 263.5 570.2 248.3 560.8 239C551.4 229.7 536.2 229.6 526.9 239L479.9 286L432.9 239C423.5 229.6 408.3 229.6 399 239z"/>
-                      </svg>
-                    </span>
-                    <span class="bind-icon hover" aria-hidden="true">
-                      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 640 640" width="20" height="20" fill="currentColor">
-                        <path d="M352 128C352 110.3 337.7 96 320 96C302.3 96 288 110.3 288 128L288 288L128 288C110.3 288 96 302.3 96 320C96 337.7 110.3 352 128 352L288 352L288 512C288 529.7 302.3 544 320 544C337.7 544 352 529.7 352 512L352 352L512 352C529.7 352 544 337.7 544 320C544 302.3 529.7 288 512 288L352 288L352 128z"/>
-                      </svg>
-                    </span>
-                  </button>
-
-                  <!-- Axis Binding Button -->
-                  <button 
-                    class="btn btn-round btn-channel btn-bind btn-bind-empty" 
-                    onclick={() => {
-                      if (ghostColumnSelectedSession) {
-                        startAxisBinding(
-                          ghostColumnSelectedSession.session_id, 
-                          ghostColumnSelectedSession.display_name, 
-                          ghostColumnSelectedSession.process_id, 
-                          ghostColumnSelectedSession.process_name
-                        );
-                        ghostColumnSelectedSession = null;
-                      }
-                    }} 
-                    aria-label="Bind volume axis for {ghostColumnSelectedSession.display_name}" 
-                    title="Bind Volume Axis"
-                  >
-                    <span class="bind-icon default" aria-hidden="true">
-                      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 640 640" width="20" height="20" fill="currentColor">
-                        <path d="M448 128C554 128 640 214 640 320C640 426 554 512 448 512L192 512C86 512 0 426 0 320C0 214 86 128 192 128L448 128zM192 240C178.7 240 168 250.7 168 264L168 296L136 296C122.7 296 112 306.7 112 320C112 333.3 122.7 344 136 344L168 344L168 376C168 389.3 178.7 400 192 400C205.3 400 216 389.3 216 376L216 344L248 344C261.3 344 272 333.3 272 320C272 306.7 261.3 296 248 296L216 296L216 264C216 250.7 205.3 240 192 240zM432 336C414.3 336 400 350.3 400 368C400 385.7 414.3 400 432 400C449.7 400 464 385.7 464 368C464 350.3 449.7 336 432 336zM496 240C478.3 240 464 254.3 464 272C464 289.7 478.3 304 496 304C513.7 304 528 289.7 528 272C528 254.3 513.7 240 496 240z"/>
-                      </svg>
-                    </span>
-                    <span class="bind-icon hover" aria-hidden="true">
-                      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 640 640" width="20" height="20" fill="currentColor">
-                        <path d="M352 128C352 110.3 337.7 96 320 96C302.3 96 288 110.3 288 128L288 288L128 288C110.3 288 96 302.3 96 320C96 337.7 110.3 352 128 352L288 352L288 512C288 529.7 302.3 544 320 544C337.7 544 352 529.7 352 512L352 352L512 352C529.7 352 544 337.7 544 320C544 302.3 529.7 288 512 288L352 288L352 128z"/>
-                      </svg>
-                    </span>
-                  </button>
-
-                  <!-- Cancel Button -->
-                  <button 
-                    class="btn btn-round btn-channel btn-binding-cancel"
-                    onclick={() => { ghostColumnSelectedSession = null; }}
-                    aria-label="Cancel and go back"
-                    title="Cancel"
-                  >
-                    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 640 640" width="20" height="20" fill="currentColor" aria-hidden="true">
-                      <path d="M183.1 137.4C170.6 124.9 150.3 124.9 137.8 137.4C125.3 149.9 125.3 170.2 137.8 182.7L275.2 320L137.9 457.4C125.4 469.9 125.4 490.2 137.9 502.7C150.4 515.2 170.7 515.2 183.2 502.7L320.5 365.3L457.9 502.6C470.4 515.1 490.7 515.1 503.2 502.6C515.7 490.1 515.7 469.8 503.2 457.3L365.8 320L503.1 182.6C515.6 170.1 515.6 149.8 503.1 137.3C490.6 124.8 470.3 124.8 457.8 137.3L320.5 274.7L183.1 137.4z" />
-                    </svg>
-                  </button>
                 {/if}
               </div>
             {/if}
@@ -2328,7 +2241,7 @@
     display: flex;
     flex-direction: row;
     justify-content: center;
-    gap: 14px;
+    gap: 3rem;
     overflow: visible;
     flex: 1;
     min-height: 0;
