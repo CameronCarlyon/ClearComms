@@ -115,8 +115,8 @@
   let manuallyControlledSessions = $state<Set<string>>(new Set());
   let showCloseConfirmation = $state(false);
   
-  // Ghost column state for "Add Application" dropdown
-  let ghostColumnOpen = $state(false);
+  // "Add Application" dropdown state in edit mode
+  let addAppDropdownOpen = $state(false);
 
   const POLL_LOG_INTERVAL = 200;
   const BUTTON_CACHE_LOG_INTERVAL = 200;
@@ -306,7 +306,7 @@
     }
   });
 
-  // Get bound sessions with placeholders for inactive apps
+  // Get bound sessions with inactive session entries for apps not currently running
   function getBoundSessions(): AudioSession[] {
     const boundProcessNames = new Set([
       ...axisMappings.map(m => m.processName),
@@ -325,12 +325,12 @@
       }
     }
     
-    // Add placeholders for inactive bound/pinned apps
+    // Add inactive session entries for bound/pinned apps that aren't running
     const allMappings = [...axisMappings, ...buttonMappings];
     for (const mapping of allMappings) {
       if (!foundProcessNames.has(mapping.processName)) {
         sessions.push({
-          session_id: `placeholder_${mapping.processName}`,
+          session_id: `inactive_${mapping.processName}`,
           display_name: mapping.sessionName,
           process_id: 0,
           process_name: mapping.processName,
@@ -341,7 +341,7 @@
       }
     }
     
-    // Add placeholders for pinned apps without mappings
+    // Add inactive session entries for pinned apps without mappings
     for (const processName of pinnedApps) {
       if (!foundProcessNames.has(processName)) {
         // Try to find session info from audio sessions
@@ -350,7 +350,7 @@
           sessions.push(activeSession);
         } else {
           sessions.push({
-            session_id: `placeholder_${processName}`,
+            session_id: `inactive_${processName}`,
             display_name: processName,
             process_id: 0,
             process_name: processName,
@@ -402,9 +402,9 @@
 
   function toggleEditMode() {
     isEditMode = !isEditMode;
-    // Reset ghost column state when exiting edit mode
+    // Close add-app dropdown when exiting edit mode
     if (!isEditMode) {
-      ghostColumnOpen = false;
+      addAppDropdownOpen = false;
     }
   }
 
@@ -447,7 +447,7 @@
         isButtonBindingMode = false;
         pendingBinding = null;
         pendingButtonBinding = null;
-        ghostColumnOpen = false;
+        addAppDropdownOpen = false;
       }
     };
 
@@ -727,7 +727,7 @@
   // Clean up mappings for sessions that are no longer active
   function cleanupStaleMappings() {
     // Note: We intentionally keep mappings for inactive applications
-    // so they appear as "ghost columns" and automatically reconnect
+    // so they appear as inactive sessions and automatically reconnect
     // when the applications start again. This preserves user bindings.
     
     // Only perform minimal cleanup if needed (e.g., remove duplicate mappings)
@@ -745,7 +745,7 @@
 
   // Update volume immediately in UI (no backend call)
   function setSessionVolumeImmediate(sessionId: string, volume: number) {
-    if (sessionId.startsWith('placeholder_')) return;
+    if (sessionId.startsWith('inactive_')) return;
     
     const sessionIndex = audioSessions.findIndex(s => s.session_id === sessionId);
     if (sessionIndex !== -1) {
@@ -755,7 +755,7 @@
   }
 
   function scheduleLiveVolumeUpdate(sessionId: string, volume: number) {
-    if (sessionId.startsWith('placeholder_')) return;
+    if (sessionId.startsWith('inactive_')) return;
 
     let state = liveVolumeState.get(sessionId);
     if (!state) {
@@ -864,7 +864,7 @@
 
   // Animate volume change in UI, then apply to backend
   async function animateVolumeTo(sessionId: string, targetVolume: number, durationMs: number = 200): Promise<boolean> {
-    if (sessionId.startsWith('placeholder_')) return false;
+    if (sessionId.startsWith('inactive_')) return false;
     
     const session = audioSessions.find(s => s.session_id === sessionId);
     if (!session) return false;
@@ -908,7 +908,7 @@
   
   // Smooth drag following - continuously animate toward target
   function startDragAnimation(sessionId: string, targetVolume: number) {
-    if (sessionId.startsWith('placeholder_')) return;
+    if (sessionId.startsWith('inactive_')) return;
     
     dragTargets.set(sessionId, targetVolume);
     
@@ -967,7 +967,7 @@
 
   // Smooth hardware volume interpolation (front-end only)
   function startHardwareVolumeInterpolation(sessionId: string, targetVolume: number) {
-    if (sessionId.startsWith('placeholder_')) return;
+    if (sessionId.startsWith('inactive_')) return;
     
     hardwareVolumeTargets.set(sessionId, targetVolume);
     
@@ -1117,7 +1117,7 @@
   
   // Apply volume to backend after animation completes
   async function setSessionVolumeFinal(sessionId: string, volume: number) {
-    if (sessionId.startsWith('placeholder_')) return;
+    if (sessionId.startsWith('inactive_')) return;
     
     try {
       await invoke("set_session_volume", { sessionId, volume });
@@ -1130,7 +1130,7 @@
   }
 
   async function setSessionMute(sessionId: string, muted: boolean) {
-    if (sessionId.startsWith('placeholder_')) return;
+    if (sessionId.startsWith('inactive_')) return;
     
     try {
       const session = audioSessions.find(s => s.session_id === sessionId);
@@ -1644,9 +1644,9 @@
           {#each boundSessions as session (session.session_id)}
             {@const mapping = axisMappings.find(m => m.processName === session.process_name)}
             {@const buttonMapping = buttonMappings.find(m => m.processName === session.process_name)}
-            {@const isPlaceholder = session.session_id.startsWith('placeholder_')}
+            {@const isInactiveSession = session.session_id.startsWith('inactive_')}
             
-            <div class="channel-strip" class:has-mapping={!!mapping || !!buttonMapping} class:inactive={isPlaceholder} class:inactive-edit-mode={isPlaceholder && isEditMode} role="group" aria-label="Audio controls for {session.display_name}">
+            <div class="channel-strip" class:has-mapping={!!mapping || !!buttonMapping} class:inactive={isInactiveSession} class:inactive-edit-mode={isInactiveSession && isEditMode} role="group" aria-label="Audio controls for {session.display_name}">
 
               <!-- Horizontal Volume Bar -->
               <div class="volume-bar-container">
@@ -1785,7 +1785,7 @@
                     <span class="pulse" aria-hidden="true">⏺</span>
                   </div>
                 {:else}
-                  <button class="btn btn-round btn-channel btn-bind btn-bind-empty" onclick={() => startButtonBinding(session.session_id, session.display_name, session.process_id, session.process_name)} aria-label="Bind hardware button to mute {session.display_name}" title="Bind Mute Button">
+                  <button class="btn btn-round btn-channel btn-bind btn-bind-empty" class:inactive={isInactiveSession} onclick={() => startButtonBinding(session.session_id, session.display_name, session.process_id, session.process_name)} aria-label="Bind hardware button to mute {session.display_name}" title="Bind Mute Button">
                     <span class="bind-icon default" aria-hidden="true">
                       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 640 640" width="20" height="20" fill="currentColor">
                         <path d="M80 416L128 416L262.1 535.2C268.5 540.9 276.7 544 285.2 544C304.4 544 320 528.4 320 509.2L320 130.8C320 111.6 304.4 96 285.2 96C276.7 96 268.5 99.1 262.1 104.8L128 224L80 224C53.5 224 32 245.5 32 272L32 368C32 394.5 53.5 416 80 416zM399 239C389.6 248.4 389.6 263.6 399 272.9L446 319.9L399 366.9C389.6 376.3 389.6 391.5 399 400.8C408.4 410.1 423.6 410.2 432.9 400.8L479.9 353.8L526.9 400.8C536.3 410.2 551.5 410.2 560.8 400.8C570.1 391.4 570.2 376.2 560.8 366.9L513.8 319.9L560.8 272.9C570.2 263.5 570.2 248.3 560.8 239C551.4 229.7 536.2 229.6 526.9 239L479.9 286L432.9 239C423.5 229.6 408.3 229.6 399 239z"/>
@@ -1803,6 +1803,7 @@
                 <button
                   class="btn btn-round btn-channel btn-mute"
                   class:muted={session.is_muted}
+                  class:inactive={isInactiveSession}
                   onclick={() => setSessionMute(session.session_id, !session.is_muted)}
                   aria-label="{session.is_muted ? 'Unmute' : 'Mute'} {session.display_name}"
                   aria-pressed={session.is_muted}
@@ -1853,6 +1854,7 @@
                   <!-- Binding in progress: Cancel binding -->
                   <button
                     class="btn btn-round btn-channel btn-binding-cancel"
+                    class:inactive={isInactiveSession}
                     aria-label="Cancel axis binding for {session.display_name}"
                     title="Cancel Axis Binding"
                     onclick={cancelBinding}
@@ -1864,7 +1866,7 @@
                   </button>
                 {:else}
                   <!-- Unbound: Show bind button -->
-                  <button class="btn btn-round btn-channel btn-bind btn-bind-empty" onclick={() => startAxisBinding(session.session_id, session.display_name, session.process_id, session.process_name)} aria-label="Bind hardware axis to control volume for {session.display_name}" title="Bind Volume Axis">
+                  <button class="btn btn-round btn-channel btn-bind btn-bind-empty" class:inactive={isInactiveSession} onclick={() => startAxisBinding(session.session_id, session.display_name, session.process_id, session.process_name)} aria-label="Bind hardware axis to control volume for {session.display_name}" title="Bind Volume Axis">
                     <span class="bind-icon default" aria-hidden="true">
                       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 640 640" width="20" height="20" fill="currentColor">
                         <path d="M448 128C554 128 640 214 640 320C640 426 554 512 448 512L192 512C86 512 0 426 0 320C0 214 86 128 192 128L448 128zM192 240C178.7 240 168 250.7 168 264L168 296L136 296C122.7 296 112 306.7 112 320C112 333.3 122.7 344 136 344L168 344L168 376C168 389.3 178.7 400 192 400C205.3 400 216 389.3 216 376L216 344L248 344C261.3 344 272 333.3 272 320C272 306.7 261.3 296 248 296L216 296L216 264C216 250.7 205.3 240 192 240zM432 336C414.3 336 400 350.3 400 368C400 385.7 414.3 400 432 400C449.7 400 464 385.7 464 368C464 350.3 449.7 336 432 336zM496 240C478.3 240 464 254.3 464 272C464 289.7 478.3 304 496 304C513.7 304 528 289.7 528 272C528 254.3 513.7 240 496 240z"/>
@@ -1883,6 +1885,7 @@
                   class="btn btn-round btn-channel btn-invert" 
                   class:active={mapping?.inverted}
                   class:btn-invert-disabled={!mapping}
+                  class:inactive={isInactiveSession}
                   disabled={!mapping}
                   onclick={() => mapping && toggleAxisInversion(session.process_name)} 
                   aria-label="{mapping ? (mapping.inverted ? 'Disable' : 'Enable') : 'No axis binding'} axis inversion for {session.display_name}"
@@ -1897,6 +1900,7 @@
                 <!-- Remove Application Button -->
                 <button 
                   class="btn btn-round btn-channel btn-remove-app" 
+                  class:inactive={isInactiveSession}
                   onclick={() => removeApplication(session.process_name)} 
                   aria-label="Remove {session.display_name} from mixer"
                   title="Remove Application"
@@ -1913,14 +1917,14 @@
             </div>
           {/each}
 
-          <!-- Ghost Column (Add New Binding) - Only in Edit Mode -->
+          <!-- Add Application Column - Only in Edit Mode -->
           {#if isEditMode}
             {@const isBindingNewApp = isBindingMode && pendingBinding !== null && !boundSessions.some(s => s.process_name === pendingBinding?.processName)}
             {#if isBindingNewApp && pendingBinding}
               <!-- Binding in Progress for NEW App (not already in boundSessions) -->
-              <div class="channel-strip ghost-column" role="group" aria-label="Binding in progress for {pendingBinding.sessionName}">
+              <div class="channel-strip add-app-column" role="group" aria-label="Binding in progress for {pendingBinding.sessionName}">
                 <!-- Application Name -->
-                <span class="app-name ghost">{formatProcessName(pendingBinding.processName)}</span>
+                <span class="app-name inactive">{formatProcessName(pendingBinding.processName)}</span>
 
                 <!-- Horizontal Volume Bar (Disabled) -->
                 <div class="volume-bar-container">
@@ -1938,7 +1942,7 @@
 
                 <!-- Binding Active (Mute) -->
                 <button
-                  class="btn btn-round btn-channel btn-binding-cancel"
+                  class="btn btn-round btn-channel btn-binding-cancel inactive"
                   aria-label="Cancel mute binding"
                   title="Cancel Mute Binding"
                   onclick={cancelButtonBinding}
@@ -1951,7 +1955,7 @@
 
                 <!-- Binding Active (Axis) -->
                 <button
-                  class="btn btn-round btn-channel btn-binding-cancel"
+                  class="btn btn-round btn-channel btn-binding-cancel inactive"
                   aria-label="Cancel axis binding"
                   title="Cancel Axis Binding"
                   onclick={cancelBinding}
@@ -1963,18 +1967,18 @@
                 </button>
               </div>
             {:else}
-              <!-- Ghost Column (Add New Application) -->
+              <!-- Add Application Column -->
               <div 
-                class="channel-strip ghost-column" 
-                class:ghost-column-expanded={ghostColumnOpen}
+                class="channel-strip add-app-column" 
+                class:add-app-column-expanded={addAppDropdownOpen}
                 role="group" 
                 aria-label="Add new application binding"
               >
-                {#if !ghostColumnOpen}
+                {#if !addAppDropdownOpen}
                   <!-- Initial State: Just the + Button -->
                   <button 
                     class="btn btn-add-app"
-                    onclick={() => { ghostColumnOpen = true; }}
+                    onclick={() => { addAppDropdownOpen = true; }}
                     disabled={availableSessions.length === 0}
                     aria-label={availableSessions.length > 0 ? "Add application" : "No applications available"}
                     title={availableSessions.length > 0 ? "Add Application" : "No applications available"}
@@ -1990,7 +1994,7 @@
                       <span class="add-app-dropdown-title">Select App</span>
                       <button 
                         class="btn btn-dropdown-close"
-                        onclick={() => { ghostColumnOpen = false; }}
+                        onclick={() => { addAppDropdownOpen = false; }}
                         aria-label="Close application selector"
                       >
                         <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 640 640" width="14" height="14" fill="currentColor" aria-hidden="true">
@@ -2007,7 +2011,7 @@
                             pinnedApps.add(session.process_name);
                             savePinnedApps();
                             // Close dropdown - the app will now appear as a regular channel strip
-                            ghostColumnOpen = false;
+                            addAppDropdownOpen = false;
                           }}
                           aria-label="Select {formatProcessName(session.process_name)}"
                         >
@@ -2258,7 +2262,7 @@
     transition: all 0.2s ease;
   }
 
-  /* Inactive (placeholder) channel styling */
+  /* Inactive session channel styling */
   .channel-strip.inactive {
     opacity: 0.5;
   }
@@ -2275,29 +2279,25 @@
     color: var(--text-muted);
   }
 
-  /* ===== GHOST COLUMN ===== */
-  .channel-strip.ghost-column {
+  /* ===== ADD APPLICATION COLUMN ===== */
+  .channel-strip.add-app-column {
     opacity: 0.6;
     justify-content: center;
   }
 
-  .channel-strip.ghost-column:hover {
-    opacity: 0.8;
-  }
-
-  /* Expanded ghost column (dropdown open or app selected) */
-  .channel-strip.ghost-column-expanded {
+  /* Expanded add-app column (dropdown open) */
+  .channel-strip.add-app-column-expanded {
     flex: 1;
     max-width: none;
     opacity: 1;
     justify-content: flex-start;
   }
 
-  .channel-strip.ghost-column .volume-slider {
+  .channel-strip.add-app-column .volume-slider {
     pointer-events: none;
   }
 
-  .channel-strip.ghost-column .btn:disabled {
+  .channel-strip.add-app-column .btn:disabled {
     cursor: not-allowed;
     opacity: 0.6;
   }
@@ -2425,7 +2425,7 @@
     letter-spacing: -0.2px;
   }
 
-  .app-name.ghost {
+  .app-name.inactive {
     color: var(--text-muted);
     font-weight: 500;
   }
@@ -2555,6 +2555,11 @@
 
   .btn-channel:hover:not(:disabled) {
     box-shadow: 0 0 100px rgba(255, 255, 255, 0.75);
+  }
+
+  /* Disable hover effects on inactive sessions */
+  .btn-channel.inactive:hover:not(:disabled) {
+    box-shadow: none;
   }
 
   /* Bind button - empty state (outline only) */
