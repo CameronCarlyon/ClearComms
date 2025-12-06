@@ -1663,6 +1663,7 @@
                   aria-valuenow={Math.round(session.volume * 100)}
                   aria-valuetext="{Math.round(session.volume * 100)} percent"
                   style="--volume-percent: {session.volume * 100}%"
+                  disabled={isInactiveSession}
                   onpointerdown={(e) => {
                     animatingSliders.delete(session.session_id);
                     manuallyControlledSessions.add(session.session_id);
