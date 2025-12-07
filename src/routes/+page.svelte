@@ -2346,9 +2346,8 @@
     display: flex;
     justify-content: space-between;
     align-items: center;
-    padding: 10px 12px;
-    border-bottom: 1px solid var(--text-muted);
-    background: var(--bg-secondary);
+    padding: 1rem;
+    background: white;
   }
 
   .add-app-dropdown-title {
@@ -2558,9 +2557,13 @@
     box-shadow: 0 0 100px rgba(255, 255, 255, 0.75);
   }
 
-  /* Disable hover effects on inactive sessions */
-  .btn-channel.inactive:hover:not(:disabled) {
+  /* Disable hover effects on inactive mute button */
+  .btn-mute.inactive:hover:not(:disabled) {
     box-shadow: none;
+  }
+
+  .btn-mute.inactive {
+    cursor: default;
   }
 
   /* Bind button - empty state (outline only) */
