@@ -1985,18 +1985,6 @@
                 {:else}
                   <!-- Dropdown Open State: Show Application Selector -->
                   <div class="add-app-dropdown">
-                    <div class="add-app-dropdown-header">
-                      <span class="add-app-dropdown-title">Select App</span>
-                      <button 
-                        class="btn btn-dropdown-close"
-                        onclick={() => { addAppDropdownOpen = false; }}
-                        aria-label="Close application selector"
-                      >
-                        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 640 640" width="14" height="14" fill="currentColor" aria-hidden="true">
-                          <path d="M183.1 137.4C170.6 124.9 150.3 124.9 137.8 137.4C125.3 149.9 125.3 170.2 137.8 182.7L275.2 320L137.9 457.4C125.4 469.9 125.4 490.2 137.9 502.7C150.4 515.2 170.7 515.2 183.2 502.7L320.5 365.3L457.9 502.6C470.4 515.1 490.7 515.1 503.2 502.6C515.7 490.1 515.7 469.8 503.2 457.3L365.8 320L503.1 182.6C515.6 170.1 515.6 149.8 503.1 137.3C490.6 124.8 470.3 124.8 457.8 137.3L320.5 274.7L183.1 137.4z" />
-                        </svg>
-                      </button>
-                    </div>
                     <div class="add-app-dropdown-list">
                       {#each availableSessions as session}
                         <button 
@@ -2300,11 +2288,11 @@
   /* ===== ADD APP BUTTON ===== */
   .btn-add-app {
     width: 46px;
-    height: 46px;
-    border-radius: 50%;
+    height: 100%;
+    border-radius: 2rem;
     background: var(--bg-card);
-    border: 2px dashed var(--text-muted);
-    color: var(--text-muted);
+    border: 1px solid var(--text-muted);
+    color: white;
     cursor: pointer;
     display: flex;
     align-items: center;
@@ -2316,7 +2304,8 @@
     border-color: var(--text-primary);
     color: var(--text-primary);
     background: var(--bg-card);
-    transform: scale(1.05);
+    box-shadow: 0 0 100px rgba(255, 255, 255, 0.25);
+    z-index: -1;
   }
 
   .btn-add-app:disabled {
@@ -2383,7 +2372,7 @@
 
   .add-app-dropdown-item {
     padding: 10px 12px;
-    background: var(--bg-card);
+    background: transparent;
     border: none;
     border-radius: 8px;
     color: var(--text-primary);
@@ -2442,7 +2431,7 @@
     flex: 1;
     min-height: 0;
     background: var(--bg-card);
-    outline: none;
+    border: 0.5px solid var(--text-muted);
     cursor: pointer;
     position: relative;
     writing-mode: vertical-lr;
@@ -2471,6 +2460,7 @@
     background: var(--bg-card);
     border-radius: 23px;
     cursor: pointer;
+    box-shadow: 0 2px 10px rgba(0, 0, 0, 0.2);
   }
 
   /* Progress fill for Firefox */
@@ -2545,6 +2535,7 @@
     transition: all 0.2s ease, box-shadow 0.2s ease;
     flex-shrink: 0;
     flex-grow: 0;
+    box-shadow: 0 2px 10px rgba(0, 0, 0, 0.2);
   }
 
   /* === Consolidated Button States === */
@@ -2568,7 +2559,7 @@
   }
 
   .btn-channel.btn-disabled:hover:not(:disabled) {
-    border: 2px solid var(--text-primary);
+    border: 1.5px solid var(--text-primary);
     box-shadow: 0 0 80px rgba(255, 255, 255, 0.45);
   }
 
@@ -2594,6 +2585,7 @@
 
   .btn-channel.btn-close:hover:not(:disabled) {
     box-shadow: 0 0 100px rgba(255, 68, 68, 0.35);
+    z-index: 0;
   }
 
   /* === Bind Button Icon Animation === */
