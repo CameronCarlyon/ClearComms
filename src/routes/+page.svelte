@@ -369,7 +369,8 @@
   function getAvailableSessions(): AudioSession[] {
     const boundProcessNames = new Set([
       ...axisMappings.map(m => m.processName),
-      ...buttonMappings.map(m => m.processName)
+      ...buttonMappings.map(m => m.processName),
+      ...pinnedApps
     ]);
     
     return audioSessions.filter(s => !boundProcessNames.has(s.process_name));
@@ -2460,7 +2461,7 @@
     background: var(--bg-card);
     border-radius: 23px;
     cursor: pointer;
-    box-shadow: 0 2px 10px rgba(0, 0, 0, 0.2);
+    /* box-shadow: 0 2px 10px rgba(0, 0, 0, 0.2); */
   }
 
   /* Progress fill for Firefox */
@@ -2535,7 +2536,7 @@
     transition: all 0.2s ease, box-shadow 0.2s ease;
     flex-shrink: 0;
     flex-grow: 0;
-    box-shadow: 0 2px 10px rgba(0, 0, 0, 0.2);
+    /* box-shadow: 0 2px 10px rgba(0, 0, 0, 0.2); */
   }
 
   /* === Consolidated Button States === */
