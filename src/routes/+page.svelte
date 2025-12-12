@@ -1606,24 +1606,17 @@
     <a href="#main-content" class="skip-link">Skip to main content</a>
     <header class="app-header" id="app-header">
         <button 
-          class="btn btn-round btn-icon" 
-          class:active={isEditMode}
+          class="btn btn-channel {isEditMode ? 'btn-enabled' : 'btn-disabled'}" 
           onclick={toggleEditMode} 
           disabled={!audioInitialised}
           aria-label={isEditMode ? 'Exit edit mode' : 'Enter edit mode to configure bindings'}
           title={isEditMode ? 'Exit Edit Mode' : 'Edit Bindings'}
         >
-          {#if isEditMode}
-            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 640 640" width="24" height="24" fill="currentColor">
-                <path d="M416.9 85.2L372 130.1L509.9 268L554.8 223.1C568.4 209.6 576 191.2 576 172C576 152.8 568.4 134.4 554.8 120.9L519.1 85.2C505.6 71.6 487.2 64 468 64C448.8 64 430.4 71.6 416.9 85.2zM338.1 164L122.9 379.1C112.2 389.8 104.4 403.2 100.3 417.8L64.9 545.6C62.6 553.9 64.9 562.9 71.1 569C77.3 575.1 86.2 577.5 94.5 575.2L222.3 539.7C236.9 535.6 250.2 527.9 261 517.1L476 301.9L338.1 164z" fill="none" stroke="currentColor" stroke-width="40" stroke-linejoin="round" stroke-linecap="round"/>
-            </svg>
-          {:else}
             <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 640 640" width="24" height="24" fill="currentColor">
               <path d="M416.9 85.2L372 130.1L509.9 268L554.8 223.1C568.4 209.6 576 191.2 576 172C576 152.8 568.4 134.4 554.8 120.9L519.1 85.2C505.6 71.6 487.2 64 468 64C448.8 64 430.4 71.6 416.9 85.2zM338.1 164L122.9 379.1C112.2 389.8 104.4 403.2 100.3 417.8L64.9 545.6C62.6 553.9 64.9 562.9 71.1 569C77.3 575.1 86.2 577.5 94.5 575.2L222.3 539.7C236.9 535.6 250.2 527.9 261 517.1L476 301.9L338.1 164z"/>
             </svg>
-          {/if}
         </button>
-        <button class="btn btn-round btn-close" onclick={showCloseDialog} aria-label="Quit application" title="Quit">
+        <button class="btn btn-close" onclick={showCloseDialog} aria-label="Quit application" title="Quit">
           <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 640 640" width="24" height="24" fill="currentColor">
             <path d="M183.1 137.4C170.6 124.9 150.3 124.9 137.8 137.4C125.3 149.9 125.3 170.2 137.8 182.7L275.2 320L137.9 457.4C125.4 469.9 125.4 490.2 137.9 502.7C150.4 515.2 170.7 515.2 183.2 502.7L320.5 365.3L457.9 502.6C470.4 515.1 490.7 515.1 503.2 502.6C515.7 490.1 515.7 469.8 503.2 457.3L365.8 320L503.1 182.6C515.6 170.1 515.6 149.8 503.1 137.3C490.6 124.8 470.3 124.8 457.8 137.3L320.5 274.7L183.1 137.4z"/>
           </svg>
@@ -1649,7 +1642,7 @@
             
             <div class="channel-strip" class:has-mapping={!!mapping || !!buttonMapping} class:inactive={isInactiveSession} class:inactive-edit-mode={isInactiveSession && isEditMode} role="group" aria-label="Audio controls for {session.display_name}">
 
-              <!-- Horizontal Volume Bar -->
+              <!-- Vertical Volume Bar -->
               <div class="volume-bar-container">
                 <input
                   type="range"
@@ -1785,7 +1778,7 @@
                 {:else if isButtonBindingMode && pendingButtonBinding?.sessionId === session.session_id}
                   <!-- Binding in progress: Cancel binding -->
                   <button
-                    class="btn btn-round btn-channel btn-disabled"
+                    class="btn btn-channel btn-disabled"
                     aria-label="Cancel mute button binding for {session.display_name}"
                     title="Cancel Mute Binding"
                     onclick={cancelButtonBinding}
@@ -1796,7 +1789,7 @@
                     </svg>
                   </button>
                 {:else}
-                  <button class="btn btn-round btn-channel btn-bind btn-disabled" onclick={() => startButtonBinding(session.session_id, session.display_name, session.process_id, session.process_name)} aria-label="Bind hardware button to mute {session.display_name}" title="Bind Mute Button">
+                  <button class="btn btn-channel btn-bind btn-disabled" onclick={() => startButtonBinding(session.session_id, session.display_name, session.process_id, session.process_name)} aria-label="Bind hardware button to mute {session.display_name}" title="Bind Mute Button">
                     <span class="bind-icon default" aria-hidden="true">
                       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 640 640" width="20" height="20" fill="currentColor">
                         <path d="M80 416L128 416L262.1 535.2C268.5 540.9 276.7 544 285.2 544C304.4 544 320 528.4 320 509.2L320 130.8C320 111.6 304.4 96 285.2 96C276.7 96 268.5 99.1 262.1 104.8L128 224L80 224C53.5 224 32 245.5 32 272L32 368C32 394.5 53.5 416 80 416zM399 239C389.6 248.4 389.6 263.6 399 272.9L446 319.9L399 366.9C389.6 376.3 389.6 391.5 399 400.8C408.4 410.1 423.6 410.2 432.9 400.8L479.9 353.8L526.9 400.8C536.3 410.2 551.5 410.2 560.8 400.8C570.1 391.4 570.2 376.2 560.8 366.9L513.8 319.9L560.8 272.9C570.2 263.5 570.2 248.3 560.8 239C551.4 229.7 536.2 229.6 526.9 239L479.9 286L432.9 239C423.5 229.6 408.3 229.6 399 239z"/>
@@ -1812,7 +1805,7 @@
               {:else}
                 <!-- Mute Button (Normal Mode) -->
                 <button
-                  class="btn btn-round btn-channel {isInactiveSession ? 'btn-unavail' : (session.is_muted ? 'btn-disabled' : 'btn-enabled')}"
+                  class="btn btn-channel {isInactiveSession ? 'btn-unavail' : (session.is_muted ? 'btn-disabled' : 'btn-enabled')}"
                   onclick={() => setSessionMute(session.session_id, !session.is_muted)}
                   aria-label="{session.is_muted ? 'Unmute' : 'Mute'} {session.display_name}"
                   aria-pressed={session.is_muted}
@@ -1862,7 +1855,7 @@
                 {:else if isBindingMode && pendingBinding?.sessionId === session.session_id}
                   <!-- Binding in progress: Cancel binding -->
                   <button
-                    class="btn btn-round btn-channel btn-disabled"
+                    class="btn btn-channel btn-disabled"
                     aria-label="Cancel axis binding for {session.display_name}"
                     title="Cancel Axis Binding"
                     onclick={cancelBinding}
@@ -1874,7 +1867,7 @@
                   </button>
                 {:else}
                   <!-- Unbound: Show bind button -->
-                  <button class="btn btn-round btn-channel btn-bind btn-disabled" onclick={() => startAxisBinding(session.session_id, session.display_name, session.process_id, session.process_name)} aria-label="Bind hardware axis to control volume for {session.display_name}" title="Bind Volume Axis">
+                  <button class="btn btn-channel btn-bind btn-disabled" onclick={() => startAxisBinding(session.session_id, session.display_name, session.process_id, session.process_name)} aria-label="Bind hardware axis to control volume for {session.display_name}" title="Bind Volume Axis">
                     <span class="bind-icon default" aria-hidden="true">
                       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 640 640" width="20" height="20" fill="currentColor">
                         <path d="M448 128C554 128 640 214 640 320C640 426 554 512 448 512L192 512C86 512 0 426 0 320C0 214 86 128 192 128L448 128zM192 240C178.7 240 168 250.7 168 264L168 296L136 296C122.7 296 112 306.7 112 320C112 333.3 122.7 344 136 344L168 344L168 376C168 389.3 178.7 400 192 400C205.3 400 216 389.3 216 376L216 344L248 344C261.3 344 272 333.3 272 320C272 306.7 261.3 296 248 296L216 296L216 264C216 250.7 205.3 240 192 240zM432 336C414.3 336 400 350.3 400 368C400 385.7 414.3 400 432 400C449.7 400 464 385.7 464 368C464 350.3 449.7 336 432 336zM496 240C478.3 240 464 254.3 464 272C464 289.7 478.3 304 496 304C513.7 304 528 289.7 528 272C528 254.3 513.7 240 496 240z"/>
@@ -1890,7 +1883,7 @@
                 
                 <!-- Axis Inversion Toggle (Always visible in edit mode) -->
                 <button 
-                  class="btn btn-round btn-channel {mapping ? 'btn-enabled' : 'btn-unavail'}" 
+                  class="btn btn-channel {mapping ? 'btn-enabled' : 'btn-unavail'}" 
                   class:active={mapping?.inverted}
                   disabled={!mapping}
                   onclick={() => mapping && toggleAxisInversion(session.process_name)} 
@@ -1905,7 +1898,7 @@
 
                 <!-- Remove Application Button -->
                 <button 
-                  class="btn btn-round btn-channel btn-close" 
+                  class="btn btn-channel btn-close" 
                   onclick={() => removeApplication(session.process_name)} 
                   aria-label="Remove {session.display_name} from mixer"
                   title="Remove Application"
@@ -1947,7 +1940,7 @@
 
                 <!-- Binding Active (Mute) -->
                 <button
-                  class="btn btn-round btn-channel btn-disabled"
+                  class="btn btn-channel btn-disabled"
                   aria-label="Cancel mute binding"
                   title="Cancel Mute Binding"
                   onclick={cancelButtonBinding}
@@ -1960,7 +1953,7 @@
 
                 <!-- Binding Active (Axis) -->
                 <button
-                  class="btn btn-round btn-channel btn-disabled"
+                  class="btn btn-channel btn-disabled"
                   aria-label="Cancel axis binding"
                   title="Cancel Axis Binding"
                   onclick={cancelBinding}
@@ -2047,7 +2040,7 @@
       {initStatus === 'Failed' ? errorMsg : initStatus}
     </p>
     {#if initStatus === 'Failed'}
-      <button class="btn btn-round btn-restart" onclick={() => window.location.reload()} aria-label="Restart application">
+      <button class="btn btn-restart" onclick={() => window.location.reload()} aria-label="Restart application">
         Restart Application
       </button>
     {/if}
@@ -2150,13 +2143,10 @@
     transform: scale(0.95);
   }
 
-  .btn-round {
-    border-radius: 50%;
-  }
-
   .btn-close {
     width: 46px;
     height: 46px;
+    border-radius: 50%;
     font-size: 1.3rem;
     font-weight: 600;
     background: #ff4444;
@@ -2165,7 +2155,7 @@
     transition: background 0.2s ease, color 0.2s ease, box-shadow 0.2s ease;
   }
 
-  .btn-close:hover {
+  .btn-close:hover:not(:disabled) {
     box-shadow: 0 0 100px rgba(255, 68, 68, 0.35);
   }
 
@@ -2178,28 +2168,6 @@
     color: var(--text-primary);
     font-size: 0.85rem;
     font-weight: 500;
-  }
-
-  .btn-icon {
-    width: 46px;
-    height: 46px;
-    font-size: 1.3rem;
-    border: 2px solid var(--text-primary);
-    transition: all 0.2s ease, box-shadow 0.2s ease;
-  }
-
-  .btn-icon:hover:not(:disabled) {
-    box-shadow: 0 0 100px rgba(255, 255, 255, 0.75);
-  }
-
-  .btn-icon.active {
-    background: var(--text-primary);
-    color: var(--bg-primary);
-    border-color: var(--text-primary);
-  }
-
-  .btn-icon.active:hover {
-    box-shadow: 0 0 100px rgba(255, 255, 255, 0.75);
   }
 
   .status-text {
@@ -2541,6 +2509,7 @@
     min-height: 46px;
     max-width: 46px;
     max-height: 46px;
+    border-radius: 50%;
     font-size: 1.3rem;
     transition: all 0.2s ease, box-shadow 0.2s ease;
     flex-shrink: 0;
@@ -2550,31 +2519,37 @@
 
   /* === Consolidated Button States === */
   
-  /* btn-enabled: Solid white button with white box-shadow on hover */
-  .btn-channel.btn-enabled {
+  /* btn-enabled: Solid white button with dark icon (appears as cutout) */
+  .btn-enabled {
+    border-radius: 50%;
     background: var(--text-primary);
     color: var(--bg-primary);
     border: 2px solid var(--text-primary);
   }
 
-  .btn-channel.btn-enabled:hover:not(:disabled) {
+  .btn-enabled svg {
+    fill: #181818;
+  }
+
+  .btn-enabled:hover:not(:disabled) {
     box-shadow: 0 0 100px rgba(255, 255, 255, 0.75);
   }
 
   /* btn-disabled: Outline button (empty state) with white box-shadow and border on hover */
-  .btn-channel.btn-disabled {
+  .btn-disabled {
+    border-radius: 50%;
     background: var(--bg-card);
     color: var(--text-primary);
     border: 0.5px solid var(--text-muted);
   }
 
-  .btn-channel.btn-disabled:hover:not(:disabled) {
+  .btn-disabled:hover:not(:disabled) {
     border: 1.5px solid var(--text-primary);
     box-shadow: 0 0 80px rgba(255, 255, 255, 0.45);
   }
 
   /* btn-unavail: Unavailable/disabled appearance - no hover effects, no pointer */
-  .btn-channel.btn-unavail {
+  .btn-unavail {
     background: var(--bg-card);
     color: var(--text-primary);
     border: 0.5px solid var(--text-muted);
@@ -2582,20 +2557,8 @@
     pointer-events: none;
   }
 
-  .btn-channel.btn-unavail:hover {
+  .btn-unavail:hover {
     box-shadow: none;
-  }
-
-  /* btn-close: Red destructive button with red box-shadow on hover */
-  .btn-channel.btn-close {
-    background: #ff4444;
-    color: white;
-    border: 2px solid #ff4444;
-  }
-
-  .btn-channel.btn-close:hover:not(:disabled) {
-    box-shadow: 0 0 100px rgba(255, 68, 68, 0.35);
-    z-index: 0;
   }
 
   /* === Bind Button Icon Animation === */
