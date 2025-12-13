@@ -2303,42 +2303,6 @@
     border: 1px solid var(--text-muted);
   }
 
-  .add-app-dropdown-header {
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-    padding: 1rem;
-    background: white;
-  }
-
-  .add-app-dropdown-title {
-    font-size: 0.75rem;
-    font-weight: 600;
-    color: var(--text-secondary);
-    text-transform: uppercase;
-    letter-spacing: 0.5px;
-  }
-
-  .btn-dropdown-close {
-    width: 22px;
-    height: 22px;
-    border-radius: 50%;
-    background: var(--bg-card);
-    border: none;
-    color: var(--text-muted);
-    cursor: pointer;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    transition: all 0.15s ease;
-    padding: 0;
-  }
-
-  .btn-dropdown-close:hover {
-    background: var(--bg-card-hover);
-    color: var(--text-primary);
-  }
-
   .add-app-dropdown-list {
     display: flex;
     flex-direction: column;
@@ -2681,25 +2645,6 @@
     flex-grow: 0;
     margin: 0;
     padding: 0;
-  }
-
-  .binding-active .pulse {
-    color: var(--text-primary);
-    animation: pulse-icon 1s ease-in-out infinite;
-  }
-
-  @keyframes pulse-border {
-    0%, 100% { 
-      border-color: var(--text-secondary);
-    }
-    50% { 
-      border-color: var(--text-primary);
-    }
-  }
-
-  @keyframes pulse-icon {
-    0%, 100% { opacity: 1; transform: scale(1); }
-    50% { opacity: 0.7; transform: scale(1.15); }
   }
 
   /* ===== BOOT SCREEN ===== */
