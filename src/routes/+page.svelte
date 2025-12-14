@@ -115,8 +115,8 @@
   let manuallyControlledSessions = $state<Set<string>>(new Set());
   let showCloseConfirmation = $state(false);
   
-  // "Add Application" dropdown state in edit mode
-  let addAppDropdownOpen = $state(false);
+  // "Add Application" list expansion state in edit mode
+  let addAppListExpanded = $state(false);
 
   const POLL_LOG_INTERVAL = 200;
   const BUTTON_CACHE_LOG_INTERVAL = 200;
@@ -403,9 +403,9 @@
 
   function toggleEditMode() {
     isEditMode = !isEditMode;
-    // Close add-app dropdown when exiting edit mode
+    // Collapse add-app list when exiting edit mode
     if (!isEditMode) {
-      addAppDropdownOpen = false;
+      addAppListExpanded = false;
     }
   }
 
@@ -440,17 +440,7 @@
     loadPinnedApps();
     autoInitialise();
 
-    // Exit edit mode when window loses focus (minimised or switched away)
-    const handleBlur = () => {
-      if (isEditMode) {
-        isEditMode = false;
-        isBindingMode = false;
-        isButtonBindingMode = false;
-        pendingBinding = null;
-        pendingButtonBinding = null;
-        addAppDropdownOpen = false;
-      }
-    };
+    // Exit edit mode when window loses focus (minimised or switched away)\n    const handleBlur = () => {\n      if (isEditMode) {\n        isEditMode = false;\n        isBindingMode = false;\n        isButtonBindingMode = false;\n        pendingBinding = null;\n        pendingButtonBinding = null;\n        addAppListExpanded = false;\n      }\n    };", "oldString": "    // Exit edit mode when window loses focus (minimised or switched away)\n    const handleBlur = () => {\n      if (isEditMode) {\n        isEditMode = false;\n        isBindingMode = false;\n        isButtonBindingMode = false;\n        pendingBinding = null;\n        pendingButtonBinding = null;\n        addAppDropdownOpen = false;\n      }\n    };
 
     window.addEventListener('blur', handleBlur);
 
@@ -1965,49 +1955,41 @@
                 </button>
               </div>
             {:else}
-              <!-- Add Application Column -->
-              <div 
-                class="channel-strip add-app-column" 
-                class:add-app-column-expanded={addAppDropdownOpen}
-                role="group" 
-                aria-label="Add new application binding"
+              <!-- Add Application Button (Expandable) -->
+              <button 
+                class="btn btn-add-app"
+                class:expanded={addAppListExpanded}
+                onclick={() => { addAppListExpanded = !addAppListExpanded; }}
+                disabled={availableSessions.length === 0}
+                aria-label={availableSessions.length > 0 ? (addAppListExpanded ? "Close application list" : "Add application") : "No applications available"}
+                title={availableSessions.length > 0 ? (addAppListExpanded ? "Close" : "Add Application") : "No applications available"}
+                aria-expanded={addAppListExpanded}
               >
-                {#if !addAppDropdownOpen}
-                  <!-- Initial State: Just the + Button -->
-                  <button 
-                    class="btn btn-add-app"
-                    onclick={() => { addAppDropdownOpen = true; }}
-                    disabled={availableSessions.length === 0}
-                    aria-label={availableSessions.length > 0 ? "Add application" : "No applications available"}
-                    title={availableSessions.length > 0 ? "Add Application" : "No applications available"}
-                  >
-                    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 640 640" width="24" height="24" fill="currentColor" aria-hidden="true">
-                      <path d="M352 128C352 110.3 337.7 96 320 96C302.3 96 288 110.3 288 128L288 288L128 288C110.3 288 96 302.3 96 320C96 337.7 110.3 352 128 352L288 352L288 512C288 529.7 302.3 544 320 544C337.7 544 352 529.7 352 512L352 352L512 352C529.7 352 544 337.7 544 320C544 302.3 529.7 288 512 288L352 288L352 128z"/>
-                    </svg>
-                  </button>
-                {:else}
-                  <!-- Dropdown Open State: Show Application Selector -->
-                  <div class="add-app-dropdown">
-                    <div class="add-app-dropdown-list">
-                      {#each availableSessions as session}
-                        <button 
-                          class="add-app-dropdown-item"
-                          onclick={() => {
-                            // Add to pinned apps so it persists even without bindings
-                            pinnedApps.add(session.process_name);
-                            savePinnedApps();
-                            // Close dropdown - the app will now appear as a regular channel strip
-                            addAppDropdownOpen = false;
-                          }}
-                          aria-label="Select {formatProcessName(session.process_name)}"
-                        >
-                          {formatProcessName(session.process_name)}
-                        </button>
-                      {/each}
-                    </div>
-                  </div>
-                {/if}
-              </div>
+                <!-- Plus Icon (visible when collapsed) -->
+                <svg class="add-app-icon" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 640 640" width="24" height="24" fill="currentColor" aria-hidden="true">
+                  <path d="M352 128C352 110.3 337.7 96 320 96C302.3 96 288 110.3 288 128L288 288L128 288C110.3 288 96 302.3 96 320C96 337.7 110.3 352 128 352L288 352L288 512C288 529.7 302.3 544 320 544C337.7 544 352 529.7 352 512L352 352L512 352C529.7 352 544 337.7 544 320C544 302.3 529.7 288 512 288L352 288L352 128z"/>
+                </svg>
+                
+                <!-- Application List (visible when expanded) -->
+                <div class="add-app-list">
+                  {#each availableSessions as session}
+                    <button 
+                      class="add-app-list-item"
+                      onclick={(e) => {
+                        e.stopPropagation();
+                        // Add to pinned apps so it persists even without bindings
+                        pinnedApps.add(session.process_name);
+                        savePinnedApps();
+                        // Collapse list - the app will now appear as a regular channel strip
+                        addAppListExpanded = false;
+                      }}
+                      aria-label="Select {formatProcessName(session.process_name)}"
+                    >
+                      {formatProcessName(session.process_name)}
+                    </button>
+                  {/each}
+                </div>
+              </button>
             {/if}
           {/if}
         </div>
@@ -2246,14 +2228,6 @@
     justify-content: center;
   }
 
-  /* Expanded add-app column (dropdown open) */
-  .channel-strip.add-app-column-expanded {
-    flex: 1;
-    max-width: none;
-    opacity: 1;
-    justify-content: flex-start;
-  }
-
   .channel-strip.add-app-column .volume-slider {
     pointer-events: none;
   }
@@ -2263,8 +2237,9 @@
     opacity: 0.6;
   }
 
-  /* ===== ADD APP BUTTON ===== */
+  /* ===== ADD APP BUTTON (Expandable) ===== */
   .btn-add-app {
+    position: relative;
     width: 46px;
     height: 100%;
     border-radius: 2rem;
@@ -2274,16 +2249,15 @@
     cursor: pointer;
     display: flex;
     align-items: center;
-    justify-content: center;
-    transition: all 0.2s ease;
+    justify-content: flex-start;
+    overflow: hidden;
+    transition: width 0.3s ease, border-color 0.2s ease, box-shadow 0.2s ease;
   }
 
-  .btn-add-app:hover:not(:disabled) {
+  .btn-add-app:hover:not(:disabled):not(.expanded) {
     border-color: var(--text-primary);
     color: var(--text-primary);
-    background: var(--bg-card);
     box-shadow: 0 0 100px rgba(255, 255, 255, 0.25);
-    z-index: -1;
   }
 
   .btn-add-app:disabled {
@@ -2291,48 +2265,70 @@
     cursor: not-allowed;
   }
 
-  /* ===== ADD APP DROPDOWN ===== */
-  .add-app-dropdown {
+  /* Expanded state */
+  .btn-add-app.expanded {
+    width: 180px;
+    border-color: var(--text-muted);
+    cursor: default;
+  }
+
+  /* Plus icon */
+  .btn-add-app .add-app-icon {
+    position: absolute;
+    left: 50%;
+    top: 50%;
+    transform: translate(-50%, -50%);
+    opacity: 1;
+    transition: opacity 0.2s ease, transform 0.3s ease;
+    flex-shrink: 0;
+  }
+
+  .btn-add-app.expanded .add-app-icon {
+    opacity: 0;
+    transform: translate(-50%, -50%) rotate(45deg);
+    pointer-events: none;
+  }
+
+  /* Application list container */
+  .btn-add-app .add-app-list {
     display: flex;
     flex-direction: column;
     width: 100%;
     height: 100%;
-    background: var(--bg-card);
-    border-radius: 12px;
-    overflow: hidden;
-    border: 1px solid var(--text-muted);
-  }
-
-  .add-app-dropdown-list {
-    display: flex;
-    flex-direction: column;
-    overflow-y: auto;
-    flex: 1;
     padding: 6px;
     gap: 2px;
+    overflow-y: auto;
+    opacity: 0;
+    transition: opacity 0.2s ease 0.1s;
   }
 
-  .add-app-dropdown-item {
-    padding: 10px 12px;
+  .btn-add-app.expanded .add-app-list {
+    opacity: 1;
+  }
+
+  /* List items */
+  .add-app-list-item {
+    padding: 1rem;
     background: transparent;
     border: none;
-    border-radius: 8px;
+    border-radius: 2rem;
     color: var(--text-primary);
     font-size: 0.8rem;
     font-weight: 500;
     text-align: left;
     cursor: pointer;
-    transition: all 0.15s ease;
+    transition: background 0.15s ease;
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
+    flex-shrink: 0;
   }
 
-  .add-app-dropdown-item:hover {
+  .add-app-list-item:hover {
     background: var(--bg-card-hover);
   }
 
-  .add-app-dropdown-item:active {
+  .add-app-list-item:active {
     background: var(--text-primary);
     color: var(--bg-primary);
   }
@@ -2347,7 +2343,6 @@
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
-    letter-spacing: -0.2px;
   }
 
   .app-name.inactive {
@@ -2623,30 +2618,6 @@
     opacity: 1;
   }
 
-  .binding-active {
-    box-sizing: border-box;
-    width: 46px;
-    height: 46px;
-    min-width: 46px;
-    min-height: 46px;
-    max-width: 46px;
-    max-height: 46px;
-    position: relative;
-    background: var(--bg-card);
-    border: 2px solid var(--text-primary);
-    border-radius: 50%;
-    font-size: 1.3rem;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    animation: pulse-border 1.5s ease-in-out infinite;
-    color: var(--text-primary);
-    flex-shrink: 0;
-    flex-grow: 0;
-    margin: 0;
-    padding: 0;
-  }
-
   /* ===== BOOT SCREEN ===== */
   .boot-screen {
     display: flex;
@@ -2773,4 +2744,3 @@
     transform: scale(0.98);
   }
 </style>
-
