@@ -440,7 +440,17 @@
     loadPinnedApps();
     autoInitialise();
 
-    // Exit edit mode when window loses focus (minimised or switched away)\n    const handleBlur = () => {\n      if (isEditMode) {\n        isEditMode = false;\n        isBindingMode = false;\n        isButtonBindingMode = false;\n        pendingBinding = null;\n        pendingButtonBinding = null;\n        addAppListExpanded = false;\n      }\n    };", "oldString": "    // Exit edit mode when window loses focus (minimised or switched away)\n    const handleBlur = () => {\n      if (isEditMode) {\n        isEditMode = false;\n        isBindingMode = false;\n        isButtonBindingMode = false;\n        pendingBinding = null;\n        pendingButtonBinding = null;\n        addAppDropdownOpen = false;\n      }\n    };
+    // Exit edit mode when window loses focus (minimised or switched away)
+    const handleBlur = () => {
+      if (isEditMode) {
+        isEditMode = false;
+        isBindingMode = false;
+        isButtonBindingMode = false;
+        pendingBinding = null;
+        pendingButtonBinding = null;
+        addAppListExpanded = false;
+      }
+    };
 
     window.addEventListener('blur', handleBlur);
 
@@ -1956,40 +1966,48 @@
               </div>
             {:else}
               <!-- Add Application Button (Expandable) -->
-              <button 
-                class="btn btn-add-app"
+              <div 
+                class="btn-add-app-container"
                 class:expanded={addAppListExpanded}
-                onclick={() => { addAppListExpanded = !addAppListExpanded; }}
-                disabled={availableSessions.length === 0}
-                aria-label={availableSessions.length > 0 ? (addAppListExpanded ? "Close application list" : "Add application") : "No applications available"}
-                title={availableSessions.length > 0 ? (addAppListExpanded ? "Close" : "Add Application") : "No applications available"}
-                aria-expanded={addAppListExpanded}
               >
-                <!-- Plus Icon (visible when collapsed) -->
-                <svg class="add-app-icon" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 640 640" width="24" height="24" fill="currentColor" aria-hidden="true">
-                  <path d="M352 128C352 110.3 337.7 96 320 96C302.3 96 288 110.3 288 128L288 288L128 288C110.3 288 96 302.3 96 320C96 337.7 110.3 352 128 352L288 352L288 512C288 529.7 302.3 544 320 544C337.7 544 352 529.7 352 512L352 352L512 352C529.7 352 544 337.7 544 320C544 302.3 529.7 288 512 288L352 288L352 128z"/>
-                </svg>
+                <button 
+                  class="btn btn-add-app"
+                  onclick={() => { addAppListExpanded = !addAppListExpanded; }}
+                  disabled={availableSessions.length === 0}
+                  aria-label={availableSessions.length > 0 ? (addAppListExpanded ? "Close application list" : "Add application") : "No applications available"}
+                  title={availableSessions.length > 0 ? (addAppListExpanded ? "Close" : "Add Application") : "No applications available"}
+                  aria-expanded={addAppListExpanded}
+                >
+                  <!-- Plus Icon (visible when collapsed) -->
+                  <svg class="add-app-icon" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 640 640" width="24" height="24" fill="currentColor" aria-hidden="true">
+                    <path d="M352 128C352 110.3 337.7 96 320 96C302.3 96 288 110.3 288 128L288 288L128 288C110.3 288 96 302.3 96 320C96 337.7 110.3 352 128 352L288 352L288 512C288 529.7 302.3 544 320 544C337.7 544 352 529.7 352 512L352 352L512 352C529.7 352 544 337.7 544 320C544 302.3 529.7 288 512 288L352 288L352 128z"/>
+                  </svg>
+                </button>
                 
                 <!-- Application List (visible when expanded) -->
-                <div class="add-app-list">
-                  {#each availableSessions as session}
-                    <button 
-                      class="add-app-list-item"
-                      onclick={(e) => {
-                        e.stopPropagation();
-                        // Add to pinned apps so it persists even without bindings
-                        pinnedApps.add(session.process_name);
-                        savePinnedApps();
-                        // Collapse list - the app will now appear as a regular channel strip
-                        addAppListExpanded = false;
-                      }}
-                      aria-label="Select {formatProcessName(session.process_name)}"
-                    >
-                      {formatProcessName(session.process_name)}
-                    </button>
-                  {/each}
-                </div>
-              </button>
+                {#if addAppListExpanded}
+                  <div class="add-app-list" role="listbox">
+                    {#each availableSessions as session}
+                      <button 
+                        class="add-app-list-item"
+                        role="option"
+                        aria-selected="false"
+                        onclick={(e) => {
+                          e.stopPropagation();
+                          // Add to pinned apps so it persists even without bindings
+                          pinnedApps.add(session.process_name);
+                          savePinnedApps();
+                          // Collapse list - the app will now appear as a regular channel strip
+                          addAppListExpanded = false;
+                        }}
+                        aria-label="Select {formatProcessName(session.process_name)}"
+                      >
+                        {formatProcessName(session.process_name)}
+                      </button>
+                    {/each}
+                  </div>
+                {/if}
+              </div>
             {/if}
           {/if}
         </div>
@@ -2122,7 +2140,7 @@
   }
 
   .btn:active:not(:disabled) {
-    transform: scale(0.95);
+    transform: scale(0.98);
   }
 
   .btn-close {
@@ -2237,11 +2255,31 @@
     opacity: 0.6;
   }
 
-  /* ===== ADD APP BUTTON (Expandable) ===== */
-  .btn-add-app {
+  /* ===== ADD APP BUTTON CONTAINER ===== */
+  .btn-add-app-container {
     position: relative;
     width: 46px;
     height: 100%;
+    border-radius: 2rem;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    transition: width 0.3s ease, background 0.3s ease, border-color 0.3s ease;
+    background: transparent;
+    border: 1px solid transparent;
+  }
+
+  .btn-add-app-container.expanded {
+    width: 180px;
+    background: var(--bg-card);
+    border-color: var(--text-muted);
+  }
+
+  /* ===== ADD APP BUTTON (Expandable) ===== */
+  .btn-add-app {
+    width: 46px;
+    height: 100%;
+    min-width: 46px;
     border-radius: 2rem;
     background: var(--bg-card);
     border: 1px solid var(--text-muted);
@@ -2249,15 +2287,28 @@
     cursor: pointer;
     display: flex;
     align-items: center;
-    justify-content: flex-start;
-    overflow: hidden;
-    transition: width 0.3s ease, border-color 0.2s ease, box-shadow 0.2s ease;
+    justify-content: center;
+    transition: border-color 0.2s ease, box-shadow 0.2s ease, height 0.3s ease, background 0.3s ease;
+    flex-shrink: 0;
   }
 
-  .btn-add-app:hover:not(:disabled):not(.expanded) {
-    border-color: var(--text-primary);
+  .btn-add-app-container.expanded .btn-add-app {
+    height: 46px;
+    min-height: 46px;
+    background: transparent;
+    border-color: transparent;
+  }
+
+  .btn-add-app:hover:not(:disabled) {
+    border: 1.5px solid var(--text-primary);
     color: var(--text-primary);
-    box-shadow: 0 0 100px rgba(255, 255, 255, 0.25);
+    box-shadow: 0 0 80px rgba(255, 255, 255, 0.1);
+  }
+
+  .btn-add-app-container.expanded .btn-add-app:hover:not(:disabled) {
+    border-color: transparent;
+    box-shadow: none;
+    background: var(--bg-card-hover);
   }
 
   .btn-add-app:disabled {
@@ -2265,45 +2316,33 @@
     cursor: not-allowed;
   }
 
-  /* Expanded state */
-  .btn-add-app.expanded {
-    width: 180px;
-    border-color: var(--text-muted);
-    cursor: default;
-  }
-
   /* Plus icon */
   .btn-add-app .add-app-icon {
-    position: absolute;
-    left: 50%;
-    top: 50%;
-    transform: translate(-50%, -50%);
+    width: 24px;
+    height: 24px;
     opacity: 1;
     transition: opacity 0.2s ease, transform 0.3s ease;
-    flex-shrink: 0;
   }
 
-  .btn-add-app.expanded .add-app-icon {
-    opacity: 0;
-    transform: translate(-50%, -50%) rotate(45deg);
-    pointer-events: none;
+  .btn-add-app-container.expanded .add-app-icon {
+    opacity: 1;
+    transform: rotate(45deg);
   }
 
   /* Application list container */
-  .btn-add-app .add-app-list {
+  .add-app-list {
     display: flex;
     flex-direction: column;
     width: 100%;
-    height: 100%;
     padding: 6px;
     gap: 2px;
     overflow-y: auto;
-    opacity: 0;
-    transition: opacity 0.2s ease 0.1s;
+    flex: 1;
+    min-height: 0;
   }
 
-  .btn-add-app.expanded .add-app-list {
-    opacity: 1;
+  .add-app-list::-webkit-scrollbar {
+    display: none;
   }
 
   /* List items */
@@ -2470,7 +2509,7 @@
     max-height: 46px;
     border-radius: 50%;
     font-size: 1.3rem;
-    transition: all 0.2s ease, box-shadow 0.2s ease;
+    transition: background 0.2s ease, color 0.2s ease, border 0.2s ease, box-shadow 0.2s ease;
     flex-shrink: 0;
     flex-grow: 0;
     /* box-shadow: 0 2px 10px rgba(0, 0, 0, 0.2); */
@@ -2500,6 +2539,7 @@
     background: var(--bg-card);
     color: var(--text-primary);
     border: 0.5px solid var(--text-muted);
+    transition: border 0.2s ease, box-shadow 0.2s ease;
   }
 
   .btn-disabled:hover:not(:disabled) {
@@ -2710,6 +2750,7 @@
     background: #ff4444;
     border: 2px solid #ff4444;
     color: white;
+    transition: background 0.2s ease, color 0.2s ease, border 0.2s ease, box-shadow 0.2s ease;
   }
 
   .btn-confirm-close:hover {
@@ -2720,6 +2761,7 @@
     background: var(--text-primary);
     color: var(--bg-primary);
     border: 2px solid white;
+    transition: background 0.2s ease, color 0.2s ease, border 0.2s ease, box-shadow 0.2s ease;
   }
 
   .btn-white:hover {
@@ -2734,6 +2776,7 @@
     background: var(--bg-card);
     color: white;
     border: 2px solid white;
+    transition: background 0.2s ease, color 0.2s ease, border 0.2s ease, box-shadow 0.2s ease;
   }
 
   .btn-cancel:hover {
