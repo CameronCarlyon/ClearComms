@@ -1243,7 +1243,7 @@
     axisMappings = [...axisMappings, newMapping];
     
     // Pin the app so it remains visible even if bindings are removed
-    pinnedApps.add(processName);
+    pinnedApps = new Set([...pinnedApps, processName]);
     savePinnedApps();
     
     console.log(`[ClearComms] ✓ Mapped ${deviceName} ${axisName} → ${sessionName}`);
@@ -1277,7 +1277,7 @@
     buttonMappings = [...buttonMappings, newMapping];
     
     // Pin the app so it remains visible even if bindings are removed
-    pinnedApps.add(processName);
+    pinnedApps = new Set([...pinnedApps, processName]);
     savePinnedApps();
     
     console.log(`[ClearComms] ✓ Mapped ${deviceName} ${buttonName} → Mute ${sessionName}`);
@@ -1309,8 +1309,15 @@
     buttonMappings = buttonMappings.filter(m => m.processName !== processName);
     
     // Unpin the app so it's removed from the mixer
-    pinnedApps.delete(processName);
+    const newPinnedApps = new Set(pinnedApps);
+    newPinnedApps.delete(processName);
+    pinnedApps = newPinnedApps;
     savePinnedApps();
+    
+    // Exit edit mode if no pinned apps remain
+    if (pinnedApps.size === 0) {
+      isEditMode = false;
+    }
     
     // Clear any cached pre-mute volumes
     const sessionsToClean = audioSessions.filter(s => s.process_name === processName);
@@ -1605,6 +1612,7 @@
   <main role="application" aria-label="ClearComms Audio Mixer">
     <a href="#main-content" class="skip-link">Skip to main content</a>
     <header class="app-header" id="app-header">
+        {#if pinnedApps.size > 0}
         <button 
           class="btn btn-channel {isEditMode ? 'btn-enabled' : 'btn-disabled'}" 
           onclick={toggleEditMode} 
@@ -1616,7 +1624,8 @@
               <path d="M416.9 85.2L372 130.1L509.9 268L554.8 223.1C568.4 209.6 576 191.2 576 172C576 152.8 568.4 134.4 554.8 120.9L519.1 85.2C505.6 71.6 487.2 64 468 64C448.8 64 430.4 71.6 416.9 85.2zM338.1 164L122.9 379.1C112.2 389.8 104.4 403.2 100.3 417.8L64.9 545.6C62.6 553.9 64.9 562.9 71.1 569C77.3 575.1 86.2 577.5 94.5 575.2L222.3 539.7C236.9 535.6 250.2 527.9 261 517.1L476 301.9L338.1 164z"/>
             </svg>
         </button>
-        <button class="btn btn-close" onclick={showCloseDialog} aria-label="Quit application" title="Quit">
+        {/if}
+        <button class="btn btn-close" style="margin-left: auto;" onclick={showCloseDialog} aria-label="Quit application" title="Quit">
           <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 640 640" width="24" height="24" fill="currentColor">
             <path d="M183.1 137.4C170.6 124.9 150.3 124.9 137.8 137.4C125.3 149.9 125.3 170.2 137.8 182.7L275.2 320L137.9 457.4C125.4 469.9 125.4 490.2 137.9 502.7C150.4 515.2 170.7 515.2 183.2 502.7L320.5 365.3L457.9 502.6C470.4 515.1 490.7 515.1 503.2 502.6C515.7 490.1 515.7 469.8 503.2 457.3L365.8 320L503.1 182.6C515.6 170.1 515.6 149.8 503.1 137.3C490.6 124.8 470.3 124.8 457.8 137.3L320.5 274.7L183.1 137.4z"/>
           </svg>
@@ -1981,7 +1990,7 @@
                         onclick={(e) => {
                           e.stopPropagation();
                           // Add to pinned apps so it persists even without bindings
-                          pinnedApps.add(session.process_name);
+                          pinnedApps = new Set([...pinnedApps, session.process_name]);
                           savePinnedApps();
                           // Collapse list - the app will now appear as a regular channel strip
                           addAppListExpanded = false;
@@ -2012,15 +2021,56 @@
           {/if}
         </div>
       {:else}
-        <p class="status-text">
-          {#if isEditMode && availableSessions.length > 0}
-            Click "Add Binding" to bind your first application
-          {:else if isEditMode}
-            No active audio sessions available
-          {:else}
-            <button class="btn btn-pill btn-white">Add Binding</button>
-          {/if}
-        </p>
+        <!-- Onboarding View -->
+        <div class="onboarding-container" id="main-content">
+          <div>
+            <p class="onboarding-message">Welcome to ClearComms!</p>
+            <p style="font-size: 1rem; color: var(--text-muted); text-align: center;">Let's add an application to get started.</p>
+          </div>
+
+          
+          <!-- Add Application Button (Circular when collapsed) -->
+          <div 
+            class="btn-add-app-container onboarding"
+            class:expanded={addAppListExpanded}
+          >
+            <!-- Application List (visible when expanded) -->
+            {#if addAppListExpanded}
+              <div class="add-app-list" role="listbox">
+                {#each availableSessions as session}
+                  <button 
+                    class="add-app-list-item"
+                    role="option"
+                    aria-selected="false"
+                    onclick={(e) => {
+                      e.stopPropagation();
+                      pinnedApps = new Set([...pinnedApps, session.process_name]);
+                      savePinnedApps();
+                      addAppListExpanded = false;
+                      isEditMode = true;
+                    }}
+                    aria-label="Select {formatProcessName(session.process_name)}"
+                  >
+                    {formatProcessName(session.process_name)}
+                  </button>
+                {/each}
+              </div>
+            {/if}
+            
+            <button 
+              class="btn btn-add-app"
+              onclick={() => { addAppListExpanded = !addAppListExpanded; }}
+              disabled={availableSessions.length === 0}
+              aria-label={availableSessions.length > 0 ? (addAppListExpanded ? "Close application list" : "Add application") : "No applications available"}
+              title={availableSessions.length > 0 ? (addAppListExpanded ? "Close" : "Add Application") : "No applications available"}
+              aria-expanded={addAppListExpanded}
+            >
+              <svg class="add-app-icon" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 640 640" width="24" height="24" fill="currentColor" aria-hidden="true">
+                <path d="M352 128C352 110.3 337.7 96 320 96C302.3 96 288 110.3 288 128L288 288L128 288C110.3 288 96 302.3 96 320C96 337.7 110.3 352 128 352L288 352L288 512C288 529.7 302.3 544 320 544C337.7 544 352 529.7 352 512L352 352L512 352C529.7 352 544 337.7 544 320C544 302.3 529.7 288 512 288L352 288L352 128z"/>
+              </svg>
+            </button>
+          </div>
+        </div>
       {/if}
     {:else}
       <p class="status-text">Initialising...</p>
@@ -2253,6 +2303,41 @@
   .channel-strip.add-app-column .btn:disabled {
     cursor: not-allowed;
     opacity: 0.6;
+  }
+
+  /* ===== ONBOARDING VIEW ===== */
+  .onboarding-container {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    flex: 1;
+    gap: 1.5rem;
+  }
+
+  .onboarding-message {
+    text-align: center;
+    color: var(--text-primary);
+    font-size: 1rem;
+    font-weight: 500;
+    line-height: 1.6;
+    margin: 0;
+  }
+
+  /* Onboarding variant: circular when collapsed, expands upward */
+  .btn-add-app-container.onboarding {
+    height: 46px;
+    justify-content: flex-end;
+    transition: width 0.3s ease, height 0.3s ease, background 0.3s ease, border-color 0.3s ease;
+  }
+
+  .btn-add-app-container.onboarding .btn-add-app {
+    height: 46px;
+  }
+
+  .btn-add-app-container.onboarding.expanded {
+    height: 300px;
+    max-height: 50vh;
   }
 
   /* ===== ADD APP BUTTON CONTAINER ===== */
