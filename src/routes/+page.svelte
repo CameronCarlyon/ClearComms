@@ -117,6 +117,9 @@
   
   // "Add Application" list expansion state in edit mode
   let addAppListExpanded = $state(false);
+  
+  // "Getting Started" expansion state in onboarding mode
+  let gettingStartedExpanded = $state(false);
 
   const POLL_LOG_INTERVAL = 200;
   const BUTTON_CACHE_LOG_INTERVAL = 200;
@@ -1596,13 +1599,13 @@
   <div class="close-screen">
     <h1 class="close-title">Close ClearComms?</h1>    
     <div class="close-buttons">
-      <button class="btn btn-pill btn-confirm-close" onclick={confirmClose} aria-label="Close application">
+      <button class="btn btn-pill btn-close" onclick={confirmClose} aria-label="Close application">
         Close
       </button>
-      <button class="btn btn-pill btn-white" onclick={minimiseToTray} aria-label="Minimise to system tray">
+      <button class="btn btn-pill btn-enabled" onclick={minimiseToTray} aria-label="Minimise to system tray">
         Minimise
       </button>
-      <button class="btn btn-pill btn-cancel" onclick={cancelClose} aria-label="Cancel and return to application">
+      <button class="btn btn-pill btn-disabled" onclick={cancelClose} aria-label="Cancel and return to application">
         Return
       </button>
     </div>
@@ -1611,26 +1614,13 @@
   <!-- Main Application -->
   <main role="application" aria-label="ClearComms Audio Mixer">
     <a href="#main-content" class="skip-link">Skip to main content</a>
-    <header class="app-header" id="app-header">
-        {#if pinnedApps.size > 0}
-        <button 
-          class="btn btn-channel {isEditMode ? 'btn-enabled' : 'btn-disabled'}" 
-          onclick={toggleEditMode} 
-          disabled={!audioInitialised}
-          aria-label={isEditMode ? 'Exit edit mode' : 'Enter edit mode to configure bindings'}
-          title={isEditMode ? 'Exit Edit Mode' : 'Edit Bindings'}
-        >
-            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 640 640" width="24" height="24" fill="currentColor">
-              <path d="M416.9 85.2L372 130.1L509.9 268L554.8 223.1C568.4 209.6 576 191.2 576 172C576 152.8 568.4 134.4 554.8 120.9L519.1 85.2C505.6 71.6 487.2 64 468 64C448.8 64 430.4 71.6 416.9 85.2zM338.1 164L122.9 379.1C112.2 389.8 104.4 403.2 100.3 417.8L64.9 545.6C62.6 553.9 64.9 562.9 71.1 569C77.3 575.1 86.2 577.5 94.5 575.2L222.3 539.7C236.9 535.6 250.2 527.9 261 517.1L476 301.9L338.1 164z"/>
-            </svg>
-        </button>
-        {/if}
+    <!-- <header class="app-header" id="app-header">
         <button class="btn btn-close" style="margin-left: auto;" onclick={showCloseDialog} aria-label="Quit application" title="Quit">
           <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 640 640" width="24" height="24" fill="currentColor">
             <path d="M183.1 137.4C170.6 124.9 150.3 124.9 137.8 137.4C125.3 149.9 125.3 170.2 137.8 182.7L275.2 320L137.9 457.4C125.4 469.9 125.4 490.2 137.9 502.7C150.4 515.2 170.7 515.2 183.2 502.7L320.5 365.3L457.9 502.6C470.4 515.1 490.7 515.1 503.2 502.6C515.7 490.1 515.7 469.8 503.2 457.3L365.8 320L503.1 182.6C515.6 170.1 515.6 149.8 503.1 137.3C490.6 124.8 470.3 124.8 457.8 137.3L320.5 274.7L183.1 137.4z"/>
           </svg>
         </button>
-    </header>
+    </header> -->
 
     {#if errorMsg}
       <div class="error-banner" role="alert" aria-live="assertive">{errorMsg}</div>
@@ -1923,116 +1913,128 @@
 
             </div>
           {/each}
-
-          <!-- Add Application Column - Only in Edit Mode -->
-          {#if isEditMode}
-            {@const isBindingNewApp = isBindingMode && pendingBinding !== null && !boundSessions.some(s => s.process_name === pendingBinding?.processName)}
-            {#if isBindingNewApp && pendingBinding}
-              <!-- Binding in Progress for NEW App (not already in boundSessions) -->
-              <div class="channel-strip add-app-column" role="group" aria-label="Binding in progress for {pendingBinding.sessionName}">
-                <!-- Application Name -->
-                <span class="app-name inactive">{formatProcessName(pendingBinding.processName)}</span>
-
-                <!-- Horizontal Volume Bar (Disabled) -->
-                <div class="volume-bar-container">
-                  <input
-                    type="range"
-                    class="volume-slider"
-                    min="0"
-                    max="1"
-                    step="0.01"
-                    value={0.5}
-                    style="--volume-percent: 50%"
-                    disabled
-                  />
-                </div>
-
-                <!-- Binding Active (Mute) -->
-                <button
-                  class="btn btn-channel btn-disabled"
-                  aria-label="Cancel mute binding"
-                  title="Cancel Mute Binding"
-                  onclick={cancelButtonBinding}
-                  type="button"
-                >
-                  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 640 640" width="20" height="20" fill="currentColor" aria-hidden="true">
-                    <path d="M183.1 137.4C170.6 124.9 150.3 124.9 137.8 137.4C125.3 149.9 125.3 170.2 137.8 182.7L275.2 320L137.9 457.4C125.4 469.9 125.4 490.2 137.9 502.7C150.4 515.2 170.7 515.2 183.2 502.7L320.5 365.3L457.9 502.6C470.4 515.1 490.7 515.1 503.2 502.6C515.7 490.1 515.7 469.8 503.2 457.3L365.8 320L503.1 182.6C515.6 170.1 515.6 149.8 503.1 137.3C490.6 124.8 470.3 124.8 457.8 137.3L320.5 274.7L183.1 137.4z" />
-                  </svg>
-                </button>
-
-                <!-- Binding Active (Axis) -->
-                <button
-                  class="btn btn-channel btn-disabled"
-                  aria-label="Cancel axis binding"
-                  title="Cancel Axis Binding"
-                  onclick={cancelBinding}
-                  type="button"
-                >
-                  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 640 640" width="20" height="20" fill="currentColor" aria-hidden="true">
-                    <path d="M183.1 137.4C170.6 124.9 150.3 124.9 137.8 137.4C125.3 149.9 125.3 170.2 137.8 182.7L275.2 320L137.9 457.4C125.4 469.9 125.4 490.2 137.9 502.7C150.4 515.2 170.7 515.2 183.2 502.7L320.5 365.3L457.9 502.6C470.4 515.1 490.7 515.1 503.2 502.6C515.7 490.1 515.7 469.8 503.2 457.3L365.8 320L503.1 182.6C515.6 170.1 515.6 149.8 503.1 137.3C490.6 124.8 470.3 124.8 457.8 137.3L320.5 274.7L183.1 137.4z" />
-                  </svg>
-                </button>
-              </div>
-            {:else}
-              <!-- Add Application Button (Expandable) -->
-              <div 
-                class="btn-add-app-container"
-                class:expanded={addAppListExpanded}
-              >
-                <!-- Application List (visible when expanded) -->
-                {#if addAppListExpanded}
-                  <div class="add-app-list" role="listbox">
-                    {#each availableSessions as session}
-                      <button 
-                        class="add-app-list-item"
-                        role="option"
-                        aria-selected="false"
-                        onclick={(e) => {
-                          e.stopPropagation();
-                          // Add to pinned apps so it persists even without bindings
-                          pinnedApps = new Set([...pinnedApps, session.process_name]);
-                          savePinnedApps();
-                          // Collapse list - the app will now appear as a regular channel strip
-                          addAppListExpanded = false;
-                        }}
-                        aria-label="Select {formatProcessName(session.process_name)}"
-                      >
-                        {formatProcessName(session.process_name)}
-                      </button>
-                    {/each}
+    
+              <!-- Add Application Column - Only in Edit Mode -->
+              {#if isEditMode}
+                {@const isBindingNewApp = isBindingMode && pendingBinding !== null && !boundSessions.some(s => s.process_name === pendingBinding?.processName)}
+                {#if isBindingNewApp && pendingBinding}
+                  <!-- Binding in Progress for NEW App (not already in boundSessions) -->
+                  <div class="channel-strip add-app-column" role="group" aria-label="Binding in progress for {pendingBinding.sessionName}">
+                    <!-- Application Name -->
+                    <span class="app-name inactive">{formatProcessName(pendingBinding.processName)}</span>
+    
+                    <!-- Horizontal Volume Bar (Disabled) -->
+                    <div class="volume-bar-container">
+                      <input
+                        type="range"
+                        class="volume-slider"
+                        min="0"
+                        max="1"
+                        step="0.01"
+                        value={0.5}
+                        style="--volume-percent: 50%"
+                        disabled
+                      />
+                    </div>
+    
+                    <!-- Binding Active (Mute) -->
+                    <button
+                      class="btn btn-channel btn-disabled"
+                      aria-label="Cancel mute binding"
+                      title="Cancel Mute Binding"
+                      onclick={cancelButtonBinding}
+                      type="button"
+                    >
+                      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 640 640" width="20" height="20" fill="currentColor" aria-hidden="true">
+                        <path d="M183.1 137.4C170.6 124.9 150.3 124.9 137.8 137.4C125.3 149.9 125.3 170.2 137.8 182.7L275.2 320L137.9 457.4C125.4 469.9 125.4 490.2 137.9 502.7C150.4 515.2 170.7 515.2 183.2 502.7L320.5 365.3L457.9 502.6C470.4 515.1 490.7 515.1 503.2 502.6C515.7 490.1 515.7 469.8 503.2 457.3L365.8 320L503.1 182.6C515.6 170.1 515.6 149.8 503.1 137.3C490.6 124.8 470.3 124.8 457.8 137.3L320.5 274.7L183.1 137.4z" />
+                      </svg>
+                    </button>
+    
+                    <!-- Binding Active (Axis) -->
+                    <button
+                      class="btn btn-channel btn-disabled"
+                      aria-label="Cancel axis binding"
+                      title="Cancel Axis Binding"
+                      onclick={cancelBinding}
+                      type="button"
+                    >
+                      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 640 640" width="20" height="20" fill="currentColor" aria-hidden="true">
+                        <path d="M183.1 137.4C170.6 124.9 150.3 124.9 137.8 137.4C125.3 149.9 125.3 170.2 137.8 182.7L275.2 320L137.9 457.4C125.4 469.9 125.4 490.2 137.9 502.7C150.4 515.2 170.7 515.2 183.2 502.7L320.5 365.3L457.9 502.6C470.4 515.1 490.7 515.1 503.2 502.6C515.7 490.1 515.7 469.8 503.2 457.3L365.8 320L503.1 182.6C515.6 170.1 515.6 149.8 503.1 137.3C490.6 124.8 470.3 124.8 457.8 137.3L320.5 274.7L183.1 137.4z" />
+                      </svg>
+                    </button>
+                  </div>
+                {:else}
+                  <!-- Add Application Button (Expandable) -->
+                  <div 
+                    class="btn-add-app-container"
+                    class:expanded={addAppListExpanded}
+                  >
+                    <!-- Application List (visible when expanded) -->
+                    {#if addAppListExpanded}
+                      <div class="add-app-list" role="listbox">
+                        {#each availableSessions as session}
+                          <button 
+                            class="add-app-list-item"
+                            role="option"
+                            aria-selected="false"
+                            onclick={(e) => {
+                              e.stopPropagation();
+                              // Add to pinned apps so it persists even without bindings
+                              pinnedApps = new Set([...pinnedApps, session.process_name]);
+                              savePinnedApps();
+                              // Collapse list - the app will now appear as a regular channel strip
+                              addAppListExpanded = false;
+                            }}
+                            aria-label="Select {formatProcessName(session.process_name)}"
+                          >
+                            {formatProcessName(session.process_name)}
+                          </button>
+                        {/each}
+                      </div>
+                    {/if}
+                    
+                    <button 
+                      class="btn btn-add-app"
+                      onclick={() => { addAppListExpanded = !addAppListExpanded; }}
+                      disabled={availableSessions.length === 0}
+                      aria-label={availableSessions.length > 0 ? (addAppListExpanded ? "Close application list" : "Add application") : "No applications available"}
+                      title={availableSessions.length > 0 ? (addAppListExpanded ? "Close" : "Add Application") : "No applications available"}
+                      aria-expanded={addAppListExpanded}
+                    >
+                      <!-- Plus Icon (rotates to X when expanded) -->
+                      <svg class="add-app-icon" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 640 640" width="24" height="24" fill="currentColor" aria-hidden="true">
+                        <path d="M352 128C352 110.3 337.7 96 320 96C302.3 96 288 110.3 288 128L288 288L128 288C110.3 288 96 302.3 96 320C96 337.7 110.3 352 128 352L288 352L288 512C288 529.7 302.3 544 320 544C337.7 544 352 529.7 352 512L352 352L512 352C529.7 352 544 337.7 544 320C544 302.3 529.7 288 512 288L352 288L352 128z"/>
+                      </svg>
+                    </button>
                   </div>
                 {/if}
-                
-                <button 
-                  class="btn btn-add-app"
-                  onclick={() => { addAppListExpanded = !addAppListExpanded; }}
-                  disabled={availableSessions.length === 0}
-                  aria-label={availableSessions.length > 0 ? (addAppListExpanded ? "Close application list" : "Add application") : "No applications available"}
-                  title={availableSessions.length > 0 ? (addAppListExpanded ? "Close" : "Add Application") : "No applications available"}
-                  aria-expanded={addAppListExpanded}
-                >
-                  <!-- Plus Icon (rotates to X when expanded) -->
-                  <svg class="add-app-icon" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 640 640" width="24" height="24" fill="currentColor" aria-hidden="true">
-                    <path d="M352 128C352 110.3 337.7 96 320 96C302.3 96 288 110.3 288 128L288 288L128 288C110.3 288 96 302.3 96 320C96 337.7 110.3 352 128 352L288 352L288 512C288 529.7 302.3 544 320 544C337.7 544 352 529.7 352 512L352 352L512 352C529.7 352 544 337.7 544 320C544 302.3 529.7 288 512 288L352 288L352 128z"/>
-                  </svg>
-                </button>
-              </div>
-            {/if}
-          {/if}
+              {/if}
+            </div>
+    
+            {#if pinnedApps.size > 0}
+        <div class="controls-bar">
+          <button 
+            class="btn btn-channel {isEditMode ? 'btn-enabled' : 'btn-disabled'}" 
+            onclick={toggleEditMode} 
+            disabled={!audioInitialised}
+            aria-label={isEditMode ? 'Exit edit mode' : 'Enter edit mode to configure bindings'}
+            title={isEditMode ? 'Exit Edit Mode' : 'Edit Bindings'}
+          >
+              <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 640 640" width="24" height="24" fill="currentColor">
+                <path d="M416.9 85.2L372 130.1L509.9 268L554.8 223.1C568.4 209.6 576 191.2 576 172C576 152.8 568.4 134.4 554.8 120.9L519.1 85.2C505.6 71.6 487.2 64 468 64C448.8 64 430.4 71.6 416.9 85.2zM338.1 164L122.9 379.1C112.2 389.8 104.4 403.2 100.3 417.8L64.9 545.6C62.6 553.9 64.9 562.9 71.1 569C77.3 575.1 86.2 577.5 94.5 575.2L222.3 539.7C236.9 535.6 250.2 527.9 261 517.1L476 301.9L338.1 164z"/>
+              </svg>
+          </button>
         </div>
+      {/if}
       {:else}
         <!-- Onboarding View -->
         <div class="onboarding-container" id="main-content">
-          <div>
-            <p class="onboarding-message">Welcome to ClearComms!</p>
-            <p style="font-size: 1rem; color: var(--text-muted); text-align: center;">Let's add an application to get started.</p>
-          </div>
-
           
-          <!-- Add Application Button (Circular when collapsed) -->
+          <!-- Add Application Button (Circular when collapsed, centered) -->
           <div 
             class="btn-add-app-container onboarding"
             class:expanded={addAppListExpanded}
+            class:hidden={gettingStartedExpanded}
           >
             <!-- Application List (visible when expanded) -->
             {#if addAppListExpanded}
@@ -2059,7 +2061,10 @@
             
             <button 
               class="btn btn-add-app"
-              onclick={() => { addAppListExpanded = !addAppListExpanded; }}
+              onclick={() => { 
+                addAppListExpanded = !addAppListExpanded;
+                if (addAppListExpanded) gettingStartedExpanded = false;
+              }}
               disabled={availableSessions.length === 0}
               aria-label={availableSessions.length > 0 ? (addAppListExpanded ? "Close application list" : "Add application") : "No applications available"}
               title={availableSessions.length > 0 ? (addAppListExpanded ? "Close" : "Add Application") : "No applications available"}
@@ -2075,6 +2080,36 @@
     {:else}
       <p class="status-text">Initialising...</p>
     {/if}
+
+  <!-- Getting Started Button at Bottom (only in onboarding) -->
+  {#if !isEditMode && pinnedApps.size === 0}
+    <!-- <div class="onboarding-bottom-controls">
+      <div 
+        class="btn-getting-started-container"
+        class:expanded={gettingStartedExpanded}
+      >
+        {#if gettingStartedExpanded}
+          <div class="getting-started-content">
+            <p><strong>1.</strong> Click the + button to add an audio application</p>
+            <p><strong>2.</strong> Move a hardware axis to bind volume control</p>
+            <p><strong>3.</strong> Press a hardware button to bind mute toggle</p>
+          </div>
+        {/if}
+
+        <button 
+          class="btn btn-getting-started"
+          onclick={() => { 
+            gettingStartedExpanded = !gettingStartedExpanded;
+            if (gettingStartedExpanded) addAppListExpanded = false;
+          }}
+          aria-expanded={gettingStartedExpanded}
+          aria-label={gettingStartedExpanded ? "Close getting started guide" : "Open getting started guide"}
+        >
+          <span class="getting-started-text">Getting Started</span>
+        </button>
+      </div>
+    </div> -->
+  {/if}
 
   <footer>
     <p style="font-size: 0.8rem; color: var(--text-muted); text-align: center; margin: 0;">
@@ -2305,6 +2340,14 @@
     opacity: 0.6;
   }
 
+  .controls-bar {
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    width: 100%;
+    gap: 1rem;
+  }
+
   /* ===== ONBOARDING VIEW ===== */
   .onboarding-container {
     display: flex;
@@ -2315,20 +2358,24 @@
     gap: 1.5rem;
   }
 
-  .onboarding-message {
-    text-align: center;
-    color: var(--text-primary);
-    font-size: 1rem;
-    font-weight: 500;
-    line-height: 1.6;
-    margin: 0;
+  .onboarding-bottom-controls {
+    display: flex;
+    justify-content: center;
+    align-items: flex-start;
+    width: 100%;
   }
 
   /* Onboarding variant: circular when collapsed, expands upward */
   .btn-add-app-container.onboarding {
     height: 46px;
     justify-content: flex-end;
-    transition: width 0.3s ease, height 0.3s ease, background 0.3s ease, border-color 0.3s ease;
+    transition: width 0.3s ease, height 0.3s ease, background 0.3s ease, border-color 0.3s ease, transform 0.3s ease, opacity 0.3s ease;
+  }
+
+  .btn-add-app-container.onboarding.hidden {
+    transform: scale(0);
+    opacity: 0;
+    pointer-events: none;
   }
 
   .btn-add-app-container.onboarding .btn-add-app {
@@ -2336,8 +2383,7 @@
   }
 
   .btn-add-app-container.onboarding.expanded {
-    height: 300px;
-    max-height: 50vh;
+    height: 100%;
   }
 
   /* ===== ADD APP BUTTON CONTAINER ===== */
@@ -2827,54 +2873,144 @@
   }
 
   .btn-pill {
-    padding: 16px 32px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 0;
     font-size: 1rem;
     font-weight: 500;
     width: 100%;
-    align-items: center;
-    border-radius: 3rem;
+    max-width: 180px;
+    height: 46px;
+    border-radius: 29px;
     cursor: pointer;
-    transition: all 0.15s ease;
+    transition: background 0.2s ease, color 0.2s ease, border 0.2s ease, box-shadow 0.2s ease;
   }
 
-  .btn-confirm-close {
+  .btn-pill.btn-close {
     background: #ff4444;
     border: 2px solid #ff4444;
     color: white;
-    transition: background 0.2s ease, color 0.2s ease, border 0.2s ease, box-shadow 0.2s ease;
   }
 
-  .btn-confirm-close:hover {
+  .btn-pill.btn-close:hover:not(:disabled) {
     box-shadow: 0 0 100px rgba(255, 68, 68, 0.35);
   }
 
-  .btn-white {
+  .btn-pill.btn-enabled {
     background: var(--text-primary);
     color: var(--bg-primary);
-    border: 2px solid white;
-    transition: background 0.2s ease, color 0.2s ease, border 0.2s ease, box-shadow 0.2s ease;
+    border: 2px solid var(--text-primary);
   }
 
-  .btn-white:hover {
+  .btn-pill.btn-enabled:hover:not(:disabled) {
     box-shadow: 0 0 100px rgba(255, 255, 255, 0.75);
   }
 
-  .btn-white:active {
-    transform: scale(0.98);
-  }
-
-  .btn-cancel {
+  .btn-pill.btn-disabled {
     background: var(--bg-card);
-    color: white;
-    border: 2px solid white;
-    transition: background 0.2s ease, color 0.2s ease, border 0.2s ease, box-shadow 0.2s ease;
+    color: var(--text-primary);
+    border: 0.5px solid var(--text-muted);
   }
 
-  .btn-cancel:hover {
-    box-shadow: 0 0 100px rgba(255, 255, 255, 0.75);
+  .btn-pill.btn-disabled:hover:not(:disabled) {
+    border: 1.5px solid var(--text-primary);
+    box-shadow: 0 0 80px rgba(255, 255, 255, 0.45);
   }
 
-  .btn-cancel:active {
-    transform: scale(0.98);
+  /* ===== GETTING STARTED BUTTON ===== */
+  .btn-getting-started-container {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: flex-end;
+    width: 180px;
+    height: 46px;
+    border-radius: 29px;
+    background: transparent;
+    border: 1px solid transparent;
+    transition: width 0.3s ease, height 0.3s ease, background 0.3s ease, border-color 0.3s ease, transform 0.3s ease, opacity 0.3s ease;
+  }
+
+  .btn-getting-started-container.expanded {
+    height: 100%;
+    background: var(--bg-card);
+    border-color: var(--text-muted);
+    justify-content: flex-start;
+  }
+
+  .btn-getting-started-container.hidden {
+    transform: scale(0);
+    opacity: 0;
+    pointer-events: none;
+  }
+
+  .btn-getting-started {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+    width: 180px;
+    height: 46px;
+    padding: 0;
+    font-size: 1rem;
+    font-weight: 500;
+    border-radius: 29px;
+    background: var(--bg-card);
+    border: 0.5px solid var(--text-muted);
+    color: var(--text-primary);
+    cursor: pointer;
+    flex-shrink: 0;
+    transition: border 0.2s ease, box-shadow 0.2s ease, background 0.2s ease;
+  }
+
+  .btn-getting-started:hover:not(:disabled) {
+    border: 1.5px solid var(--text-primary);
+    box-shadow: 0 0 80px rgba(255, 255, 255, 0.45);
+  }
+
+  .btn-getting-started-container.expanded .btn-getting-started {
+    width: calc(100% - 12px);
+    height: 46px;
+    margin: 6px;
+    background: transparent;
+    border-color: transparent;
+  }
+
+  .btn-getting-started-container.expanded .btn-getting-started:hover:not(:disabled) {
+    background: var(--bg-card-hover);
+    border-color: transparent;
+    box-shadow: none;
+  }
+
+  .getting-started-content {
+    padding: 16px 20px;
+    text-align: left;
+    width: 100%;
+    flex: 1;
+    min-height: 0;
+    overflow-y: auto;
+  }
+
+  .getting-started-content p {
+    margin: 0 0 12px 0;
+    font-size: 0.85rem;
+    color: var(--text-muted);
+    line-height: 1.4;
+  }
+
+  .getting-started-content p:last-child {
+    margin-bottom: 0;
+  }
+
+  .getting-started-content strong {
+    color: var(--text-primary);
+  }
+
+  /* Keep the Getting Started label on a single line */
+  .getting-started-text {
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
   }
 </style>
