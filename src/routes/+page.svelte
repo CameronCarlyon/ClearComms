@@ -2174,7 +2174,8 @@
     justify-content: space-between;
     overflow: hidden;
     box-sizing: border-box;
-    padding: 1rem;
+    padding: 2.5rem;
+    padding-bottom: 1rem;
     position: relative;
   }
 
@@ -2355,6 +2356,7 @@
     align-items: center;
     justify-content: center;
     flex: 1;
+    min-height: 0;
     gap: 1.5rem;
   }
 
@@ -2368,6 +2370,7 @@
   /* Onboarding variant: circular when collapsed, expands upward */
   .btn-add-app-container.onboarding {
     height: 46px;
+    width: 46px;
     justify-content: flex-end;
     transition: width 0.3s ease, height 0.3s ease, background 0.3s ease, border-color 0.3s ease, transform 0.3s ease, opacity 0.3s ease;
   }
@@ -2384,6 +2387,7 @@
 
   .btn-add-app-container.onboarding.expanded {
     height: 100%;
+    width: 180px;
   }
 
   /* ===== ADD APP BUTTON CONTAINER ===== */
