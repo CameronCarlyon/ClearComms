@@ -1614,13 +1614,6 @@
   <!-- Main Application -->
   <main role="application" aria-label="ClearComms Audio Mixer">
     <a href="#main-content" class="skip-link">Skip to main content</a>
-    <!-- <header class="app-header" id="app-header">
-        <button class="btn btn-close" style="margin-left: auto;" onclick={showCloseDialog} aria-label="Quit application" title="Quit">
-          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 640 640" width="24" height="24" fill="currentColor">
-            <path d="M183.1 137.4C170.6 124.9 150.3 124.9 137.8 137.4C125.3 149.9 125.3 170.2 137.8 182.7L275.2 320L137.9 457.4C125.4 469.9 125.4 490.2 137.9 502.7C150.4 515.2 170.7 515.2 183.2 502.7L320.5 365.3L457.9 502.6C470.4 515.1 490.7 515.1 503.2 502.6C515.7 490.1 515.7 469.8 503.2 457.3L365.8 320L503.1 182.6C515.6 170.1 515.6 149.8 503.1 137.3C490.6 124.8 470.3 124.8 457.8 137.3L320.5 274.7L183.1 137.4z"/>
-          </svg>
-        </button>
-    </header> -->
 
     {#if errorMsg}
       <div class="error-banner" role="alert" aria-live="assertive">{errorMsg}</div>
@@ -2012,18 +2005,37 @@
             </div>
     
             {#if pinnedApps.size > 0}
-        <div class="controls-bar">
-          <button 
-            class="btn btn-channel {isEditMode ? 'btn-enabled' : 'btn-disabled'}" 
-            onclick={toggleEditMode} 
-            disabled={!audioInitialised}
-            aria-label={isEditMode ? 'Exit edit mode' : 'Enter edit mode to configure bindings'}
-            title={isEditMode ? 'Exit Edit Mode' : 'Edit Bindings'}
-          >
+        <!-- Bottom hover zone for controls -->
+        <div class="controls-hover-zone">
+          <div class="controls-bar">
+            <button 
+              class="btn btn-channel {isEditMode ? 'btn-enabled' : 'btn-disabled'}" 
+              onclick={toggleEditMode} 
+              disabled={!audioInitialised}
+              aria-label={isEditMode ? 'Exit edit mode' : 'Enter edit mode to configure bindings'}
+              title={isEditMode ? 'Exit Edit Mode' : 'Edit Bindings'}
+            >
+                <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 640 640" width="24" height="24" fill="currentColor">
+                  <path d="M224 224C224 171 267 128 320 128C373 128 416 171 416 224C416 266.7 388.1 302.9 349.5 315.4C321.1 324.6 288 350.7 288 392L288 416C288 433.7 302.3 448 320 448C337.7 448 352 433.7 352 416L352 392C352 390.3 352.6 387.9 355.5 384.7C358.5 381.4 363.4 378.2 369.2 376.3C433.5 355.6 480 295.3 480 224C480 135.6 408.4 64 320 64C231.6 64 160 135.6 160 224C160 241.7 174.3 256 192 256C209.7 256 224 241.7 224 224zM320 576C342.1 576 360 558.1 360 536C360 513.9 342.1 496 320 496C297.9 496 280 513.9 280 536C280 558.1 297.9 576 320 576z"/>
+                </svg>
+            </button>
+            <button 
+              class="btn btn-channel {isEditMode ? 'btn-enabled' : 'btn-disabled'}" 
+              onclick={toggleEditMode} 
+              disabled={!audioInitialised}
+              aria-label={isEditMode ? 'Exit edit mode' : 'Enter edit mode to configure bindings'}
+              title={isEditMode ? 'Exit Edit Mode' : 'Edit Bindings'}
+            >
+                <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 640 640" width="24" height="24" fill="currentColor">
+                  <path d="M416.9 85.2L372 130.1L509.9 268L554.8 223.1C568.4 209.6 576 191.2 576 172C576 152.8 568.4 134.4 554.8 120.9L519.1 85.2C505.6 71.6 487.2 64 468 64C448.8 64 430.4 71.6 416.9 85.2zM338.1 164L122.9 379.1C112.2 389.8 104.4 403.2 100.3 417.8L64.9 545.6C62.6 553.9 64.9 562.9 71.1 569C77.3 575.1 86.2 577.5 94.5 575.2L222.3 539.7C236.9 535.6 250.2 527.9 261 517.1L476 301.9L338.1 164z"/>
+                </svg>
+            </button>
+            <button class="btn btn-close" onclick={showCloseDialog} aria-label="Quit application" title="Quit">
               <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 640 640" width="24" height="24" fill="currentColor">
-                <path d="M416.9 85.2L372 130.1L509.9 268L554.8 223.1C568.4 209.6 576 191.2 576 172C576 152.8 568.4 134.4 554.8 120.9L519.1 85.2C505.6 71.6 487.2 64 468 64C448.8 64 430.4 71.6 416.9 85.2zM338.1 164L122.9 379.1C112.2 389.8 104.4 403.2 100.3 417.8L64.9 545.6C62.6 553.9 64.9 562.9 71.1 569C77.3 575.1 86.2 577.5 94.5 575.2L222.3 539.7C236.9 535.6 250.2 527.9 261 517.1L476 301.9L338.1 164z"/>
+                <path d="M183.1 137.4C170.6 124.9 150.3 124.9 137.8 137.4C125.3 149.9 125.3 170.2 137.8 182.7L275.2 320L137.9 457.4C125.4 469.9 125.4 490.2 137.9 502.7C150.4 515.2 170.7 515.2 183.2 502.7L320.5 365.3L457.9 502.6C470.4 515.1 490.7 515.1 503.2 502.6C515.7 490.1 515.7 469.8 503.2 457.3L365.8 320L503.1 182.6C515.6 170.1 515.6 149.8 503.1 137.3C490.6 124.8 470.3 124.8 457.8 137.3L320.5 274.7L183.1 137.4z"/>
               </svg>
-          </button>
+            </button>
+          </div>
         </div>
       {/if}
       {:else}
@@ -2347,6 +2359,42 @@
     align-items: center;
     width: 100%;
     gap: 1rem;
+    max-height: 0;
+    overflow: visible;
+    opacity: 0;
+    transition: max-height 0.3s ease, opacity 0.3s ease, padding 0.3s ease;
+  }
+
+  .controls-hover-zone {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: flex-end;
+    width: 100%;
+    flex-shrink: 0;
+    min-height: 12px;
+    cursor: pointer;
+  }
+
+  .controls-hover-zone::before {
+    content: '';
+    width: 40px;
+    height: 4px;
+    border-radius: 2px;
+    background: var(--text-muted);
+    opacity: 0.3;
+    transition: opacity 0.3s ease;
+    margin: 4px 0;
+  }
+
+  .controls-hover-zone:hover::before {
+    opacity: 0.6;
+  }
+
+  .controls-hover-zone:hover .controls-bar {
+    max-height: 60px;
+    opacity: 1;
+    padding: 0.5rem 0;
   }
 
   /* ===== ONBOARDING VIEW ===== */
