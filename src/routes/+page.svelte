@@ -2361,8 +2361,12 @@
     gap: 1rem;
     max-height: 0;
     overflow: visible;
-    opacity: 0;
-    transition: max-height 0.3s ease, opacity 0.3s ease, padding 0.3s ease;
+    transition: max-height 0.3s ease, padding 0.3s ease;
+  }
+
+  .controls-bar > .btn {
+    transform: scale(0) !important;
+    transition: transform 0.3s ease;
   }
 
   .controls-hover-zone {
@@ -2393,8 +2397,11 @@
 
   .controls-hover-zone:hover .controls-bar {
     max-height: 60px;
-    opacity: 1;
     padding: 0.5rem 0;
+  }
+
+  .controls-hover-zone:hover .controls-bar > .btn {
+    transform: scale(1) !important;
   }
 
   /* ===== ONBOARDING VIEW ===== */
