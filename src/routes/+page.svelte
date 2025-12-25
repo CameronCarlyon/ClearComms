@@ -120,6 +120,25 @@
   
   // "Getting Started" expansion state in onboarding mode
   let gettingStartedExpanded = $state(false);
+  
+  // "Help" expansion state in main app
+  let helpExpanded = $state(false);
+  
+  // "Close" expansion state for quit confirmation
+  let closeExpanded = $state(false);
+
+  // Hover/open state for controls bar
+  let controlsOpen = $state(false);
+
+  const handleControlsEnter = () => {
+    controlsOpen = true;
+  };
+
+  const handleControlsLeave = () => {
+    if (!helpExpanded && !closeExpanded) {
+      controlsOpen = false;
+    }
+  };
 
   const POLL_LOG_INTERVAL = 200;
   const BUTTON_CACHE_LOG_INTERVAL = 200;
@@ -2005,38 +2024,107 @@
             </div>
     
             {#if pinnedApps.size > 0}
-        <!-- Bottom hover zone for controls -->
-        <div class="controls-hover-zone">
-          <div class="controls-bar">
-            <button 
-              class="btn btn-channel {isEditMode ? 'btn-enabled' : 'btn-disabled'}" 
-              onclick={toggleEditMode} 
-              disabled={!audioInitialised}
-              aria-label={isEditMode ? 'Exit edit mode' : 'Enter edit mode to configure bindings'}
-              title={isEditMode ? 'Exit Edit Mode' : 'Edit Bindings'}
+          <!-- Bottom hover zone for controls -->
+          <div 
+            class="controls-hover-zone" 
+            class:expanded={helpExpanded || closeExpanded}
+            onmouseenter={handleControlsEnter}
+            onmouseleave={handleControlsLeave}
+            role="region"
+            aria-label="Application controls"
+          >
+            <div 
+              class="controls-bar" 
+              class:open={controlsOpen}
+              class:expanded={helpExpanded || closeExpanded}
             >
-                <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 640 640" width="24" height="24" fill="currentColor">
-                  <path d="M224 224C224 171 267 128 320 128C373 128 416 171 416 224C416 266.7 388.1 302.9 349.5 315.4C321.1 324.6 288 350.7 288 392L288 416C288 433.7 302.3 448 320 448C337.7 448 352 433.7 352 416L352 392C352 390.3 352.6 387.9 355.5 384.7C358.5 381.4 363.4 378.2 369.2 376.3C433.5 355.6 480 295.3 480 224C480 135.6 408.4 64 320 64C231.6 64 160 135.6 160 224C160 241.7 174.3 256 192 256C209.7 256 224 241.7 224 224zM320 576C342.1 576 360 558.1 360 536C360 513.9 342.1 496 320 496C297.9 496 280 513.9 280 536C280 558.1 297.9 576 320 576z"/>
-                </svg>
-            </button>
-            <button 
-              class="btn btn-channel {isEditMode ? 'btn-enabled' : 'btn-disabled'}" 
-              onclick={toggleEditMode} 
-              disabled={!audioInitialised}
-              aria-label={isEditMode ? 'Exit edit mode' : 'Enter edit mode to configure bindings'}
-              title={isEditMode ? 'Exit Edit Mode' : 'Edit Bindings'}
-            >
-                <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 640 640" width="24" height="24" fill="currentColor">
-                  <path d="M416.9 85.2L372 130.1L509.9 268L554.8 223.1C568.4 209.6 576 191.2 576 172C576 152.8 568.4 134.4 554.8 120.9L519.1 85.2C505.6 71.6 487.2 64 468 64C448.8 64 430.4 71.6 416.9 85.2zM338.1 164L122.9 379.1C112.2 389.8 104.4 403.2 100.3 417.8L64.9 545.6C62.6 553.9 64.9 562.9 71.1 569C77.3 575.1 86.2 577.5 94.5 575.2L222.3 539.7C236.9 535.6 250.2 527.9 261 517.1L476 301.9L338.1 164z"/>
-                </svg>
-            </button>
-            <button class="btn btn-close" onclick={showCloseDialog} aria-label="Quit application" title="Quit">
-              <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 640 640" width="24" height="24" fill="currentColor">
-                <path d="M183.1 137.4C170.6 124.9 150.3 124.9 137.8 137.4C125.3 149.9 125.3 170.2 137.8 182.7L275.2 320L137.9 457.4C125.4 469.9 125.4 490.2 137.9 502.7C150.4 515.2 170.7 515.2 183.2 502.7L320.5 365.3L457.9 502.6C470.4 515.1 490.7 515.1 503.2 502.6C515.7 490.1 515.7 469.8 503.2 457.3L365.8 320L503.1 182.6C515.6 170.1 515.6 149.8 503.1 137.3C490.6 124.8 470.3 124.8 457.8 137.3L320.5 274.7L183.1 137.4z"/>
-              </svg>
-            </button>
+              <!-- Help Button Container (same pattern as btn-add-app-container) -->
+              <div 
+                class="btn-add-app-container controls"
+                class:expanded={helpExpanded}
+                class:hidden={closeExpanded}
+              >
+                {#if helpExpanded}
+                  <div class="add-app-list">
+                    <p class="help-text"><strong>1.</strong> Click the + button to add an audio application</p>
+                    <p class="help-text"><strong>2.</strong> Move a hardware axis to bind volume control</p>
+                    <p class="help-text"><strong>3.</strong> Press a hardware button to bind mute toggle</p>
+                  </div>
+                {/if}
+                <button 
+                  class="btn btn-add-app"
+                  onclick={() => {
+                    helpExpanded = !helpExpanded;
+                    if (helpExpanded) closeExpanded = false;
+                  }}
+                  aria-label={helpExpanded ? "Close help" : "Open help"}
+                  title={helpExpanded ? "Close" : "Help"}
+                  aria-expanded={helpExpanded}
+                >
+                  <svg class="add-app-icon" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 640 640" width="24" height="24" fill="currentColor">
+                    {#if helpExpanded}
+                      <path d="M183.1 137.4C170.6 124.9 150.3 124.9 137.8 137.4C125.3 149.9 125.3 170.2 137.8 182.7L275.2 320L137.9 457.4C125.4 469.9 125.4 490.2 137.9 502.7C150.4 515.2 170.7 515.2 183.2 502.7L320.5 365.3L457.9 502.6C470.4 515.1 490.7 515.1 503.2 502.6C515.7 490.1 515.7 469.8 503.2 457.3L365.8 320L503.1 182.6C515.6 170.1 515.6 149.8 503.1 137.3C490.6 124.8 470.3 124.8 457.8 137.3L320.5 274.7L183.1 137.4z"/>
+                    {:else}
+                      <path d="M224 224C224 171 267 128 320 128C373 128 416 171 416 224C416 266.7 388.1 302.9 349.5 315.4C321.1 324.6 288 350.7 288 392L288 416C288 433.7 302.3 448 320 448C337.7 448 352 433.7 352 416L352 392C352 390.3 352.6 387.9 355.5 384.7C358.5 381.4 363.4 378.2 369.2 376.3C433.5 355.6 480 295.3 480 224C480 135.6 408.4 64 320 64C231.6 64 160 135.6 160 224C160 241.7 174.3 256 192 256C209.7 256 224 241.7 224 224zM320 576C342.1 576 360 558.1 360 536C360 513.9 342.1 496 320 496C297.9 496 280 513.9 280 536C280 558.1 297.9 576 320 576z"/>
+                    {/if}
+                  </svg>
+                </button>
+              </div>
+              
+              <!-- Edit Button (not expandable, just a button) -->
+              <div class="btn-add-app-container controls" class:hidden={helpExpanded || closeExpanded}>
+                <button 
+                  class="btn btn-add-app {isEditMode ? 'btn-enabled' : ''}"
+                  onclick={toggleEditMode} 
+                  disabled={!audioInitialised}
+                  aria-label={isEditMode ? 'Exit edit mode' : 'Enter edit mode to configure bindings'}
+                  title={isEditMode ? 'Exit Edit Mode' : 'Edit Bindings'}
+                >
+                  <svg class="add-app-icon" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 640 640" width="24" height="24" fill="currentColor">
+                    <path d="M416.9 85.2L372 130.1L509.9 268L554.8 223.1C568.4 209.6 576 191.2 576 172C576 152.8 568.4 134.4 554.8 120.9L519.1 85.2C505.6 71.6 487.2 64 468 64C448.8 64 430.4 71.6 416.9 85.2zM338.1 164L122.9 379.1C112.2 389.8 104.4 403.2 100.3 417.8L64.9 545.6C62.6 553.9 64.9 562.9 71.1 569C77.3 575.1 86.2 577.5 94.5 575.2L222.3 539.7C236.9 535.6 250.2 527.9 261 517.1L476 301.9L338.1 164z"/>
+                  </svg>
+                </button>
+              </div>
+              
+              <!-- Close Button Container (same pattern as btn-add-app-container) -->
+              <div 
+                class="btn-add-app-container controls"
+                class:expanded={closeExpanded}
+                class:hidden={helpExpanded}
+              >
+                {#if closeExpanded}
+                  <div class="add-app-list">
+                    <button 
+                      class="add-app-list-item"
+                      onclick={async () => { await invoke('quit_application'); }}
+                    >
+                      Quit Application
+                    </button>
+                    <button 
+                      class="add-app-list-item"
+                      onclick={async () => { const window = (await import('@tauri-apps/api/window')).Window.getCurrent(); await window.hide(); closeExpanded = false; }}
+                    >
+                      Minimise to Tray
+                    </button>
+                  </div>
+                {/if}
+                <button 
+                  class="btn btn-add-app"
+                  onclick={() => {
+                    closeExpanded = !closeExpanded;
+                    if (closeExpanded) helpExpanded = false;
+                  }}
+                  aria-label={closeExpanded ? "Cancel" : "Close application"}
+                  title={closeExpanded ? "Cancel" : "Quit"}
+                  aria-expanded={closeExpanded}
+                >
+                  <svg class="add-app-icon" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 640 640" width="24" height="24" fill="currentColor">
+                    <path d="M183.1 137.4C170.6 124.9 150.3 124.9 137.8 137.4C125.3 149.9 125.3 170.2 137.8 182.7L275.2 320L137.9 457.4C125.4 469.9 125.4 490.2 137.9 502.7C150.4 515.2 170.7 515.2 183.2 502.7L320.5 365.3L457.9 502.6C470.4 515.1 490.7 515.1 503.2 502.6C515.7 490.1 515.7 469.8 503.2 457.3L365.8 320L503.1 182.6C515.6 170.1 515.6 149.8 503.1 137.3C490.6 124.8 470.3 124.8 457.8 137.3L320.5 274.7L183.1 137.4z"/>
+                  </svg>
+                </button>
+              </div>
+            </div>
           </div>
-        </div>
       {/if}
       {:else}
         <!-- Onboarding View -->
@@ -2192,19 +2280,11 @@
   }
 
   /* Ensure content is above overlay */
-  .app-header,
   .mixer-container,
   .status-text,
   .error-banner,
   footer {
     z-index: 2;
-  }
-
-  .app-header {
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-    width: 100%;
   }
 
   h1 {
@@ -2309,6 +2389,7 @@
     flex: 1;
     min-height: 0;
     align-items: center;
+    transition: opacity 0.3s ease, transform 0.3s ease;
   }
 
   /* ===== CHANNEL STRIP (Vertical Layout) ===== */
@@ -2355,18 +2436,75 @@
 
   .controls-bar {
     display: flex;
+    flex-direction: row;
     justify-content: center;
-    align-items: center;
-    width: 100%;
+    align-items: flex-end;
     gap: 1rem;
+    height: 0;
     max-height: 0;
-    overflow: visible;
-    transition: max-height 0.3s ease, padding 0.3s ease;
+    overflow: hidden;
+    transition: height 0.3s ease, max-height 0.3s ease, padding 0.3s ease;
+    position: relative;
   }
 
-  .controls-bar > .btn {
+  .controls-bar.open {
+    height: 60px;
+    max-height: 60px;
+    overflow: visible;
+  }
+
+  /* When any menu is expanded, controls-bar expands to accommodate */
+  .controls-bar.expanded {
+    height: 200px;
+    max-height: 200px;
+    overflow: visible;
+  }
+
+  /* Controls variant of btn-add-app-container - matches standard btn-add-app-container - matches standard btn-add-app-container */
+  .btn-add-app-container.controls {
+    height: 46px;
+    width: 46px;
+    justify-content: flex-end;
+    transition: width 0.3s ease, height 0.3s ease, background 0.3s ease, border-color 0.3s ease, transform 0.3s ease, opacity 0.3s ease;
+    transform: scale(0);
+  }
+
+  .btn-add-app-container.controls.hidden {
     transform: scale(0) !important;
-    transition: transform 0.3s ease;
+    opacity: 0;
+    pointer-events: none;
+  }
+
+  .btn-add-app-container.controls .btn-add-app {
+    height: 46px;
+  }
+
+  /* Expanded state - simple width/height transition like standard Add App button */
+  .btn-add-app-container.controls.expanded {
+    height: 150px;
+    width: 220px;
+    transform: scale(1) !important;
+    background: var(--bg-card);
+    border-color: var(--text-muted);
+    justify-content: flex-start;
+  }
+
+  .btn-add-app-container.controls .btn-add-app.btn-enabled {
+    border-color: var(--text-primary);
+    color: var(--text-primary);
+  }
+
+  /* Help text styling */
+  .help-text {
+    padding: 0.75rem 1rem;
+    margin: 0;
+    font-size: 0.8rem;
+    line-height: 1.4;
+    text-align: left;
+  }
+
+  .help-text strong {
+    color: var(--text-primary);
   }
 
   .controls-hover-zone {
@@ -2378,6 +2516,12 @@
     flex-shrink: 0;
     min-height: 12px;
     cursor: pointer;
+    transition: min-height 0.3s ease;
+  }
+
+  .controls-hover-zone.expanded {
+    min-height: auto;
+    cursor: default;
   }
 
   .controls-hover-zone::before {
@@ -2391,16 +2535,27 @@
     margin: 4px 0;
   }
 
+  .controls-hover-zone.expanded::before {
+    display: none;
+  }
+
   .controls-hover-zone:hover::before {
     opacity: 0.6;
   }
 
-  .controls-hover-zone:hover .controls-bar {
-    max-height: 60px;
-    padding: 0.5rem 0;
+  .controls-hover-zone.expanded .controls-bar {
+    max-height: 50vh;
   }
 
-  .controls-hover-zone:hover .controls-bar > .btn {
+  .controls-hover-zone:hover .btn-add-app-container.controls {
+    transform: scale(1);
+  }
+
+  .controls-hover-zone:hover .btn-add-app-container.controls.hidden {
+    transform: scale(0) !important;
+  }
+
+  .controls-hover-zone:hover .btn-add-app-container.controls.expanded {
     transform: scale(1) !important;
   }
 
@@ -2413,13 +2568,6 @@
     flex: 1;
     min-height: 0;
     gap: 1.5rem;
-  }
-
-  .onboarding-bottom-controls {
-    display: flex;
-    justify-content: center;
-    align-items: flex-start;
-    width: 100%;
   }
 
   /* Onboarding variant: circular when collapsed, expands upward */
@@ -2522,6 +2670,11 @@
   .btn-add-app-container.expanded .add-app-icon {
     opacity: 1;
     transform: rotate(45deg);
+  }
+
+  /* Do not rotate icons for controls-bar expandables */
+  .btn-add-app-container.controls.expanded .add-app-icon {
+    transform: none;
   }
 
   /* Application list container */
@@ -2975,101 +3128,5 @@
   .btn-pill.btn-disabled:hover:not(:disabled) {
     border: 1.5px solid var(--text-primary);
     box-shadow: 0 0 80px rgba(255, 255, 255, 0.45);
-  }
-
-  /* ===== GETTING STARTED BUTTON ===== */
-  .btn-getting-started-container {
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    justify-content: flex-end;
-    width: 180px;
-    height: 46px;
-    border-radius: 29px;
-    background: transparent;
-    border: 1px solid transparent;
-    transition: width 0.3s ease, height 0.3s ease, background 0.3s ease, border-color 0.3s ease, transform 0.3s ease, opacity 0.3s ease;
-  }
-
-  .btn-getting-started-container.expanded {
-    height: 100%;
-    background: var(--bg-card);
-    border-color: var(--text-muted);
-    justify-content: flex-start;
-  }
-
-  .btn-getting-started-container.hidden {
-    transform: scale(0);
-    opacity: 0;
-    pointer-events: none;
-  }
-
-  .btn-getting-started {
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    gap: 8px;
-    width: 180px;
-    height: 46px;
-    padding: 0;
-    font-size: 1rem;
-    font-weight: 500;
-    border-radius: 29px;
-    background: var(--bg-card);
-    border: 0.5px solid var(--text-muted);
-    color: var(--text-primary);
-    cursor: pointer;
-    flex-shrink: 0;
-    transition: border 0.2s ease, box-shadow 0.2s ease, background 0.2s ease;
-  }
-
-  .btn-getting-started:hover:not(:disabled) {
-    border: 1.5px solid var(--text-primary);
-    box-shadow: 0 0 80px rgba(255, 255, 255, 0.45);
-  }
-
-  .btn-getting-started-container.expanded .btn-getting-started {
-    width: calc(100% - 12px);
-    height: 46px;
-    margin: 6px;
-    background: transparent;
-    border-color: transparent;
-  }
-
-  .btn-getting-started-container.expanded .btn-getting-started:hover:not(:disabled) {
-    background: var(--bg-card-hover);
-    border-color: transparent;
-    box-shadow: none;
-  }
-
-  .getting-started-content {
-    padding: 16px 20px;
-    text-align: left;
-    width: 100%;
-    flex: 1;
-    min-height: 0;
-    overflow-y: auto;
-  }
-
-  .getting-started-content p {
-    margin: 0 0 12px 0;
-    font-size: 0.85rem;
-    color: var(--text-muted);
-    line-height: 1.4;
-  }
-
-  .getting-started-content p:last-child {
-    margin-bottom: 0;
-  }
-
-  .getting-started-content strong {
-    color: var(--text-primary);
-  }
-
-  /* Keep the Getting Started label on a single line */
-  .getting-started-text {
-    white-space: nowrap;
-    overflow: hidden;
-    text-overflow: ellipsis;
   }
 </style>
