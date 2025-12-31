@@ -2460,9 +2460,9 @@
     overflow: visible;
   }
 
-  /* Controls variant of btn-add-app-container - matches standard btn-add-app-container - matches standard btn-add-app-container */
+  /* Controls variant of btn-add-app-container - matches standard btn-add-app-container */
   .btn-add-app-container.controls {
-    height: 46px;
+    height: 100%;
     width: 46px;
     justify-content: flex-end;
     transition: width 0.3s ease, height 0.3s ease, background 0.3s ease, border-color 0.3s ease, transform 0.3s ease, opacity 0.3s ease;
@@ -2479,9 +2479,9 @@
     height: 46px;
   }
 
-  /* Expanded state - simple width/height transition like standard Add App button */
+  /* Expanded state - fills available space in controls-bar */
   .btn-add-app-container.controls.expanded {
-    height: 150px;
+    height: 100%;
     width: 220px;
     transform: scale(1) !important;
     background: var(--bg-card);
