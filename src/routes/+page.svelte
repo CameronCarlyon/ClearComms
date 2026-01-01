@@ -2443,7 +2443,7 @@
     height: 0;
     max-height: 0;
     overflow: hidden;
-    transition: height 0.3s ease, max-height 0.3s ease, padding 0.3s ease;
+    transition: height 0.3s ease, max-height 0.3s ease, padding 0.3s ease, gap 0.3s ease;
     position: relative;
   }
 
@@ -2458,6 +2458,7 @@
     height: 200px;
     max-height: 200px;
     overflow: visible;
+    gap: 0;
   }
 
   /* Controls variant of btn-add-app-container - matches standard btn-add-app-container */
@@ -2473,6 +2474,9 @@
     transform: scale(0) !important;
     opacity: 0;
     pointer-events: none;
+    width: 0 !important;
+    margin: 0;
+    overflow: hidden;
   }
 
   .btn-add-app-container.controls .btn-add-app {
@@ -2482,7 +2486,7 @@
   /* Expanded state - fills available space in controls-bar */
   .btn-add-app-container.controls.expanded {
     height: 100%;
-    width: 220px;
+    width: 100%;
     transform: scale(1) !important;
     background: var(--bg-card);
     border-color: var(--text-muted);
