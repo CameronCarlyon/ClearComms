@@ -2095,13 +2095,13 @@
                 {#if closeExpanded}
                   <div class="add-app-list">
                     <button 
-                      class="add-app-list-item"
+                      class="btn-add-app"
                       onclick={async () => { await invoke('quit_application'); }}
                     >
-                      Quit Application
+                      Quit ClearComms
                     </button>
                     <button 
-                      class="add-app-list-item"
+                      class="btn-add-app"
                       onclick={async () => { const window = (await import('@tauri-apps/api/window')).Window.getCurrent(); await window.hide(); closeExpanded = false; }}
                     >
                       Minimise to Tray
@@ -2118,9 +2118,13 @@
                   title={closeExpanded ? "Cancel" : "Quit"}
                   aria-expanded={closeExpanded}
                 >
-                  <svg class="add-app-icon" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 640 640" width="24" height="24" fill="currentColor">
-                    <path d="M183.1 137.4C170.6 124.9 150.3 124.9 137.8 137.4C125.3 149.9 125.3 170.2 137.8 182.7L275.2 320L137.9 457.4C125.4 469.9 125.4 490.2 137.9 502.7C150.4 515.2 170.7 515.2 183.2 502.7L320.5 365.3L457.9 502.6C470.4 515.1 490.7 515.1 503.2 502.6C515.7 490.1 515.7 469.8 503.2 457.3L365.8 320L503.1 182.6C515.6 170.1 515.6 149.8 503.1 137.3C490.6 124.8 470.3 124.8 457.8 137.3L320.5 274.7L183.1 137.4z"/>
-                  </svg>
+                  {#if closeExpanded}
+                    <span>Return</span>
+                  {:else}
+                    <svg class="add-app-icon" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 640 640" width="24" height="24" fill="currentColor">
+                      <path d="M183.1 137.4C170.6 124.9 150.3 124.9 137.8 137.4C125.3 149.9 125.3 170.2 137.8 182.7L275.2 320L137.9 457.4C125.4 469.9 125.4 490.2 137.9 502.7C150.4 515.2 170.7 515.2 183.2 502.7L320.5 365.3L457.9 502.6C470.4 515.1 490.7 515.1 503.2 502.6C515.7 490.1 515.7 469.8 503.2 457.3L365.8 320L503.1 182.6C515.6 170.1 515.6 149.8 503.1 137.3C490.6 124.8 470.3 124.8 457.8 137.3L320.5 274.7L183.1 137.4z"/>
+                    </svg>
+                  {/if}
                 </button>
               </div>
             </div>
@@ -2440,9 +2444,10 @@
     justify-content: center;
     align-items: flex-end;
     gap: 1rem;
+    width: 100%;
     height: 0;
     max-height: 0;
-    overflow: hidden;
+    overflow: visible;
     transition: height 0.3s ease, max-height 0.3s ease, padding 0.3s ease, gap 0.3s ease;
     position: relative;
   }
@@ -2463,11 +2468,12 @@
 
   /* Controls variant of btn-add-app-container - matches standard btn-add-app-container */
   .btn-add-app-container.controls {
-    height: 100%;
+    height: 46px;
     width: 46px;
     justify-content: flex-end;
     transition: width 0.3s ease, height 0.3s ease, background 0.3s ease, border-color 0.3s ease, transform 0.3s ease, opacity 0.3s ease;
     transform: scale(0);
+    align-self: flex-end;
   }
 
   .btn-add-app-container.controls.hidden {
@@ -2485,8 +2491,9 @@
 
   /* Expanded state - fills available space in controls-bar */
   .btn-add-app-container.controls.expanded {
-    height: 100%;
+    height: fit-content;
     width: 100%;
+    flex: 1;
     transform: scale(1) !important;
     background: var(--bg-card);
     border-color: var(--text-muted);
@@ -2686,8 +2693,6 @@
     display: flex;
     flex-direction: column;
     width: 100%;
-    padding: 6px;
-    gap: 2px;
     overflow-y: auto;
     flex: 1;
     min-height: 0;
