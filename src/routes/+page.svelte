@@ -113,7 +113,6 @@
   let dragTargets = $state<Map<string, number>>(new Map());
   let dragAnimationFrames = $state<Map<string, number>>(new Map());
   let manuallyControlledSessions = $state<Set<string>>(new Set());
-  let showCloseConfirmation = $state(false);
   
   // "Add Application" list expansion state in edit mode
   let addAppListExpanded = $state(false);
@@ -431,24 +430,6 @@
     }
   }
 
-  function showCloseDialog() {
-    console.log("[ClearComms] showCloseDialog called, setting showCloseConfirmation to true");
-    showCloseConfirmation = true;
-  }
-
-  function cancelClose() {
-    showCloseConfirmation = false;
-  }
-
-  async function confirmClose() {
-    await invoke("quit_application");
-  }
-
-  async function minimiseToTray() {
-    const window = (await import("@tauri-apps/api/window")).Window.getCurrent();
-    await window.hide();
-  }
-
   onMount(() => {
     // Apply debug overrides if enabled
     if (DEBUG.ENABLED) {
@@ -487,15 +468,6 @@
   // ─────────────────────────────────────────────────────────────────────────────
   
   function applyDebugOverrides() {
-    // Close confirmation screen
-    if (DEBUG.FORCE_CLOSE_CONFIRMATION) {
-      showCloseConfirmation = true;
-      initStatus = "Ready";
-      audioInitialised = true;
-      console.log("[DEBUG] Forcing close confirmation screen");
-      return;
-    }
-    
     // Boot screen with error
     if (DEBUG.FORCE_BOOT_ERROR) {
       initStatus = "Failed";
@@ -514,7 +486,6 @@
     // Main application
     if (DEBUG.FORCE_MAIN_APP) {
       initStatus = "Ready";
-      showCloseConfirmation = false;
       
       // Audio initialisation state
       audioInitialised = !DEBUG.FORCE_AUDIO_NOT_INITIALISED;
@@ -1613,23 +1584,7 @@
   }
 </script>
 
-{#if showCloseConfirmation}
-  <!-- Close Confirmation Screen -->
-  <div class="close-screen">
-    <h1 class="close-title">Close ClearComms?</h1>    
-    <div class="close-buttons">
-      <button class="btn btn-pill btn-close" onclick={confirmClose} aria-label="Close application">
-        Close
-      </button>
-      <button class="btn btn-pill btn-enabled" onclick={minimiseToTray} aria-label="Minimise to system tray">
-        Minimise
-      </button>
-      <button class="btn btn-pill btn-disabled" onclick={cancelClose} aria-label="Cancel and return to application">
-        Return
-      </button>
-    </div>
-  </div>
-{:else if initStatus === 'Ready'}
+{#if initStatus === 'Ready'}
   <!-- Main Application -->
   <main role="application" aria-label="ClearComms Audio Mixer">
     <a href="#main-content" class="skip-link">Skip to main content</a>
@@ -3061,81 +3016,5 @@
 
   .btn-restart:hover {
     box-shadow: 0 0 100px rgba(255, 255, 255, 0.75);
-  }
-
-  /* ===== CLOSE CONFIRMATION SCREEN ===== */
-  .close-screen {
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    justify-content: center;
-    height: 100vh;
-    width: 100vw;
-    background: transparent;
-    gap: 2rem;
-    padding: 2rem;
-    box-sizing: border-box;
-  }
-
-  .close-title {
-    font-size: 2rem;
-    font-weight: 600;
-    color: var(--text-primary);
-    margin: 0;
-    text-align: center;
-  }
-
-  .close-buttons {
-    display: flex;
-    flex-direction: column;
-    gap: 1rem;
-    width: 100%;
-    max-width: 400px;
-  }
-
-  .btn-pill {
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    padding: 0;
-    font-size: 1rem;
-    font-weight: 500;
-    width: 100%;
-    max-width: 180px;
-    height: 46px;
-    border-radius: 29px;
-    cursor: pointer;
-    transition: background 0.2s ease, color 0.2s ease, border 0.2s ease, box-shadow 0.2s ease;
-  }
-
-  .btn-pill.btn-close {
-    background: #ff4444;
-    border: 2px solid #ff4444;
-    color: white;
-  }
-
-  .btn-pill.btn-close:hover:not(:disabled) {
-    box-shadow: 0 0 100px rgba(255, 68, 68, 0.35);
-  }
-
-  .btn-pill.btn-enabled {
-    background: var(--text-primary);
-    color: var(--bg-primary);
-    border: 2px solid var(--text-primary);
-  }
-
-  .btn-pill.btn-enabled:hover:not(:disabled) {
-    box-shadow: 0 0 100px rgba(255, 255, 255, 0.75);
-  }
-
-  .btn-pill.btn-disabled {
-    background: var(--bg-card);
-    color: var(--text-primary);
-    border: 0.5px solid var(--text-muted);
-  }
-
-  .btn-pill.btn-disabled:hover:not(:disabled) {
-    border: 1.5px solid var(--text-primary);
-    box-shadow: 0 0 80px rgba(255, 255, 255, 0.45);
   }
 </style>

@@ -2,8 +2,5 @@
 	"/": [
 		"src/routes/+layout.ts",
 		"src/routes/+layout.ts"
-	],
-	"/close": [
-		"src/routes/+layout.ts"
 	]
 }
