@@ -2447,6 +2447,7 @@
   /* Expanded state - fills available space in controls-bar */
   .btn-add-app-container.controls.expanded {
     height: fit-content;
+    max-height: 100%;
     width: 100%;
     flex: 1;
     transform: scale(1) !important;
