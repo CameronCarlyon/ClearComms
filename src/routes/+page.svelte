@@ -2415,9 +2415,8 @@
 
   /* When any menu is expanded, controls-bar expands to accommodate */
   .controls-bar.expanded {
-    height: 200px;
-    max-height: 200px;
-    overflow: visible;
+    height: 180px;
+    max-height: 150px;
     gap: 0;
   }
 
@@ -2444,10 +2443,9 @@
     height: 46px;
   }
 
-  /* Expanded state - fills available space in controls-bar */
+  /* Expanded state - sizes to content */
   .btn-add-app-container.controls.expanded {
-    height: fit-content;
-    max-height: 100%;
+    height: 100%;
     width: 100%;
     flex: 1;
     transform: scale(1) !important;
