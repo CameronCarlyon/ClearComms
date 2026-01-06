@@ -2050,7 +2050,7 @@
                 {#if closeExpanded}
                   <div class="add-app-list">
                     <button 
-                      class="btn-add-app"
+                      class="btn btn-add-app btn-quit"
                       onclick={async () => { await invoke('quit_application'); }}
                     >
                       Quit ClearComms
@@ -2139,36 +2139,6 @@
     {:else}
       <p class="status-text">Initialising...</p>
     {/if}
-
-  <!-- Getting Started Button at Bottom (only in onboarding) -->
-  {#if !isEditMode && pinnedApps.size === 0}
-    <!-- <div class="onboarding-bottom-controls">
-      <div 
-        class="btn-getting-started-container"
-        class:expanded={gettingStartedExpanded}
-      >
-        {#if gettingStartedExpanded}
-          <div class="getting-started-content">
-            <p><strong>1.</strong> Click the + button to add an audio application</p>
-            <p><strong>2.</strong> Move a hardware axis to bind volume control</p>
-            <p><strong>3.</strong> Press a hardware button to bind mute toggle</p>
-          </div>
-        {/if}
-
-        <button 
-          class="btn btn-getting-started"
-          onclick={() => { 
-            gettingStartedExpanded = !gettingStartedExpanded;
-            if (gettingStartedExpanded) addAppListExpanded = false;
-          }}
-          aria-expanded={gettingStartedExpanded}
-          aria-label={gettingStartedExpanded ? "Close getting started guide" : "Open getting started guide"}
-        >
-          <span class="getting-started-text">Getting Started</span>
-        </button>
-      </div>
-    </div> -->
-  {/if}
 
   <footer>
     <p style="font-size: 0.8rem; color: var(--text-muted); text-align: center; margin: 0;">
@@ -2399,7 +2369,6 @@
     justify-content: center;
     align-items: flex-end;
     gap: 1rem;
-    width: 100%;
     height: 0;
     max-height: 0;
     overflow: visible;
@@ -2439,15 +2408,10 @@
     overflow: hidden;
   }
 
-  .btn-add-app-container.controls .btn-add-app {
-    height: 46px;
-  }
-
-  /* Expanded state - sizes to content */
+  /* Expanded state - matches add-app expansion behaviour */
   .btn-add-app-container.controls.expanded {
     height: 100%;
     width: 100%;
-    flex: 1;
     transform: scale(1) !important;
     background: var(--bg-card);
     border-color: var(--text-muted);
@@ -2650,6 +2614,7 @@
     overflow-y: auto;
     flex: 1;
     min-height: 0;
+    margin: 6px;
   }
 
   .add-app-list::-webkit-scrollbar {
