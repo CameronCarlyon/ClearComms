@@ -2050,16 +2050,16 @@
                 {#if closeExpanded}
                   <div class="add-app-list">
                     <button 
-                      class="btn btn-add-app btn-quit"
+                      class="btn-close btn btn-add-app"
                       onclick={async () => { await invoke('quit_application'); }}
                     >
-                      Quit ClearComms
+                      Quit
                     </button>
                     <button 
-                      class="btn-add-app"
+                      class="btn btn-add-app"
                       onclick={async () => { const window = (await import('@tauri-apps/api/window')).Window.getCurrent(); await window.hide(); closeExpanded = false; }}
                     >
-                      Minimise to Tray
+                      Minimise
                     </button>
                   </div>
                 {/if}
@@ -2250,20 +2250,17 @@
     transform: scale(0.98);
   }
 
-  .btn-close {
-    width: 46px;
-    height: 46px;
-    border-radius: 50%;
-    font-size: 1.3rem;
-    font-weight: 600;
+  .btn-close:hover {
     background: #ff4444;
     color: white;
     border: 2px solid #ff4444;
+    box-shadow: 0 0 100px rgba(255, 68, 68, 0.35);
     transition: background 0.2s ease, color 0.2s ease, box-shadow 0.2s ease;
   }
-
-  .btn-close:hover:not(:disabled) {
-    box-shadow: 0 0 100px rgba(255, 68, 68, 0.35);
+.btn-close:hover {
+    background: #ff4444;
+    color: white;
+    box-shadow: 0 0 80px rgba(255, 68, 68, 0.5);
   }
 
   .error-banner {
@@ -2578,9 +2575,16 @@
   }
 
   .btn-add-app-container.expanded .btn-add-app:hover:not(:disabled) {
-    border-color: transparent;
+    border: 1px solid transparent;
     box-shadow: none;
     background: var(--bg-card-hover);
+  }
+
+  /* Quit button in expanded close menu - more specific selector */
+  .btn-add-app-container.controls.expanded .btn-close:hover:not(:disabled) {
+    background: #ff4444 !important;
+    color: white !important;
+    box-shadow: 0 0 80px rgba(255, 68, 68, 0.5) !important;
   }
 
   .btn-add-app:disabled {
@@ -2614,7 +2618,6 @@
     overflow-y: auto;
     flex: 1;
     min-height: 0;
-    margin: 6px;
   }
 
   .add-app-list::-webkit-scrollbar {
