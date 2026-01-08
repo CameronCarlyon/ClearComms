@@ -2065,6 +2065,7 @@
                 {/if}
                 <button 
                   class="btn btn-add-app"
+                  style="margin-top: 0px"
                   onclick={() => {
                     closeExpanded = !closeExpanded;
                     if (closeExpanded) helpExpanded = false;
@@ -2381,7 +2382,7 @@
 
   /* When any menu is expanded, controls-bar expands to accommodate */
   .controls-bar.expanded {
-    height: 180px;
+    height: 175px;
     max-height: 150px;
     gap: 0;
   }
@@ -2408,11 +2409,16 @@
   /* Expanded state - matches add-app expansion behaviour */
   .btn-add-app-container.controls.expanded {
     height: 100%;
-    width: 100%;
     transform: scale(1) !important;
     background: var(--bg-card);
     border-color: var(--text-muted);
     justify-content: flex-start;
+  }
+
+  /* In the controls Close/Help panels, let the list fill space
+     so the toggle button sits at the very bottom */
+  .btn-add-app-container.controls.expanded .add-app-list {
+    flex: 1;
   }
 
   .btn-add-app-container.controls .btn-add-app.btn-enabled {
@@ -2538,7 +2544,7 @@
     width: 180px;
     background: var(--bg-card);
     border-color: var(--text-muted);
-    justify-content: flex-start;
+    justify-content: space-between;
   }
 
   /* ===== ADD APP BUTTON (Expandable) ===== */
@@ -2584,7 +2590,6 @@
   .btn-add-app-container.controls.expanded .btn-close:hover:not(:disabled) {
     background: #ff4444 !important;
     color: white !important;
-    box-shadow: 0 0 80px rgba(255, 68, 68, 0.5) !important;
   }
 
   .btn-add-app:disabled {
@@ -2616,7 +2621,6 @@
     flex-direction: column;
     width: 100%;
     overflow-y: auto;
-    flex: 1;
     min-height: 0;
   }
 
