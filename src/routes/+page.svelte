@@ -2251,19 +2251,6 @@
     transform: scale(0.98);
   }
 
-  .btn-close:hover {
-    background: #ff4444;
-    color: white;
-    border: 2px solid #ff4444;
-    box-shadow: 0 0 100px rgba(255, 68, 68, 0.35);
-    transition: background 0.2s ease, color 0.2s ease, box-shadow 0.2s ease;
-  }
-.btn-close:hover {
-    background: #ff4444;
-    color: white;
-    box-shadow: 0 0 80px rgba(255, 68, 68, 0.5);
-  }
-
   .error-banner {
     padding: 10px 14px;
     margin-bottom: 12px;
@@ -2419,6 +2406,12 @@
      so the toggle button sits at the very bottom */
   .btn-add-app-container.controls.expanded .add-app-list {
     flex: 1;
+    overflow: hidden;
+  }
+
+  /* Allow shadow to render when Quit button is hovered */
+  .btn-add-app-container.controls.expanded .add-app-list:has(.btn-close:hover) {
+    overflow: visible;
   }
 
   .btn-add-app-container.controls .btn-add-app.btn-enabled {
@@ -2586,10 +2579,16 @@
     background: var(--bg-card-hover);
   }
 
-  /* Quit button in expanded close menu - more specific selector */
+  /* Quit button in expanded close menu - only red on hover */
+  .btn-add-app-container.controls.expanded .btn-close {
+    background: inherit;
+    color: inherit;
+  }
+
   .btn-add-app-container.controls.expanded .btn-close:hover:not(:disabled) {
     background: #ff4444 !important;
     color: white !important;
+    box-shadow: 0 0 80px rgba(255, 68, 68, 0.5);
   }
 
   .btn-add-app:disabled {
