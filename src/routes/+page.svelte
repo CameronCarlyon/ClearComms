@@ -2001,9 +2001,9 @@
               >
                 {#if helpExpanded}
                   <div class="add-app-list">
-                    <p class="help-text"><strong>1.</strong> Click the + button to add an audio application</p>
-                    <p class="help-text"><strong>2.</strong> Move a hardware axis to bind volume control</p>
-                    <p class="help-text"><strong>3.</strong> Press a hardware button to bind mute toggle</p>
+                    <p class="help-text">Click the + button to add an audio application</p>
+                    <p class="help-text">Move a hardware axis to bind volume control</p>
+                    <p class="help-text">Press a hardware button to bind mute toggle</p>
                   </div>
                 {/if}
                 <button 
@@ -2407,6 +2407,11 @@
   .btn-add-app-container.controls.expanded .add-app-list {
     flex: 1;
     overflow: hidden;
+  }
+
+  /* Help button should allow scrolling */
+  .btn-add-app-container.controls.expanded .add-app-list:has(.help-text) {
+    overflow-y: auto;
   }
 
   /* Allow shadow to render when Quit button is hovered */
