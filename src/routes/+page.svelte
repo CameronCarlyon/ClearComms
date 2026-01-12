@@ -2001,9 +2001,12 @@
               >
                 {#if helpExpanded}
                   <div class="add-app-list">
-                    <p class="help-text">Click the + button to add an audio application</p>
-                    <p class="help-text">Move a hardware axis to bind volume control</p>
-                    <p class="help-text">Press a hardware button to bind mute toggle</p>
+                    <p class="help-text">Welcome to ClearComms</p>
+                    <p class="help-text">To get started, click the + button to pin an audio application.</p>
+                    <p class="help-text">Once an application has been pinned, you may invoke binding mode for either the volume or mute controls.</p>
+                    <p class="help-text">You can reverse the axis direction using the reverse button.</p>
+                    <p></p>
+                    <p class="help-text">For further information, check the <a href="https://github.com/CameronCarlyon/ClearComms" onclick={async (e) => { e.preventDefault(); await invoke('open_url', { url: 'https://github.com/CameronCarlyon/ClearComms' }); }} class="author-link" aria-label="Visit ClearComms repository on GitHub (opens in external browser)">documentation</a></p>
                   </div>
                 {/if}
                 <button 
@@ -2249,6 +2252,16 @@
 
   .btn:active:not(:disabled) {
     transform: scale(0.98);
+  }
+
+  /* Red styling for close/remove buttons (except Quit button in controls menu) */
+  .btn-close:not(.btn-add-app-container.controls .btn-close) {
+    background: #ff4444 !important;
+    color: white !important;
+  }
+
+  .btn-close:not(.btn-add-app-container.controls .btn-close):hover:not(:disabled) {
+    box-shadow: 0 0 80px rgba(255, 68, 68, 0.5);
   }
 
   .error-banner {
