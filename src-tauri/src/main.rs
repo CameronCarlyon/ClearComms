@@ -1,6 +1,6 @@
-//! ClearComms - Aviation Audio Control for Microsoft Flight Simulator
+//! ClearComms
 //!
-//! A lightweight companion application that provides synchronised intercom volume
+//! A lightweight desktop application that provides synchronised intercom volume
 //! control by linking cockpit audio controls, hardware, and external applications
 //! into one seamless system.
 //!
@@ -280,7 +280,7 @@ fn main() {
             let ignore_focus_loss_tray = ignore_focus_loss_for_setup.clone();
             let _tray = TrayIconBuilder::new()
                 .icon(app.default_window_icon().unwrap().clone())
-                .tooltip("ClearComms - Aviation Audio Control")
+                .tooltip("ClearComms")
                 .on_tray_icon_event(move |tray, event| {
                     let app = tray.app_handle();
                     
