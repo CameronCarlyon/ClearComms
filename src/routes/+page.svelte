@@ -1989,7 +1989,7 @@
             aria-label="Application controls"
           >
             <div 
-              class="controls-bar" 
+              class="dock" 
               class:open={controlsOpen}
               class:expanded={helpExpanded || closeExpanded}
             >
@@ -2361,7 +2361,7 @@
     opacity: 0.6;
   }
 
-  .controls-bar {
+  .dock {
     display: flex;
     flex-direction: row;
     justify-content: center;
@@ -2374,14 +2374,14 @@
     position: relative;
   }
 
-  .controls-bar.open {
+  .dock.open {
     height: 60px;
     max-height: 60px;
     overflow: visible;
   }
 
-  /* When any menu is expanded, controls-bar expands to accommodate */
-  .controls-bar.expanded {
+  /* When any menu is expanded, dock expands to accommodate */
+  .dock.expanded {
     height: 175px;
     max-height: 150px;
     gap: 0;
@@ -2486,7 +2486,7 @@
     opacity: 0.6;
   }
 
-  .controls-hover-zone.expanded .controls-bar {
+  .controls-hover-zone.expanded .dock {
     max-height: 50vh;
   }
 
@@ -2627,7 +2627,7 @@
     transform: rotate(45deg);
   }
 
-  /* Do not rotate icons for controls-bar expandables */
+  /* Do not rotate icons for dock expandables */
   .btn-add-app-container.controls.expanded .add-app-icon {
     transform: none;
   }

@@ -14,7 +14,7 @@
 //! ## Modules
 //!
 //! - [`audio_management`] - Windows Core Audio API integration
-//! - [`hardware_input`] - DirectInput/HID device polling
+//! - [`hardware_input`] - RawInput/HID device polling
 //! - [`simvar_input`] - SimConnect integration (planned)
 //! - [`native_menu`] - Windows system tray context menu
 //! - [`window_utils`] - Window positioning utilities
