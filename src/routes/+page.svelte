@@ -120,11 +120,11 @@
   // "Getting Started" expansion state in onboarding mode
   let gettingStartedExpanded = $state(false);
   
-  // "Help" expansion state in main app
-  let helpExpanded = $state(false);
+  // "Overflow Menu" expansion state in main app
+  let overflowMenuExpanded = $state(false);
   
-  // "Close" expansion state for quit confirmation
-  let closeExpanded = $state(false);
+  // "Close Menu" expansion state for quit confirmation
+  let closeMenuExpanded = $state(false);
 
   // Hover/open state for controls bar
   let controlsOpen = $state(false);
@@ -134,7 +134,7 @@
   };
 
   const handleControlsLeave = () => {
-    if (!helpExpanded && !closeExpanded) {
+    if (!overflowMenuExpanded && !closeMenuExpanded) {
       controlsOpen = false;
     }
   };
@@ -1982,7 +1982,7 @@
           <!-- Bottom hover zone for controls -->
           <div 
             class="controls-hover-zone" 
-            class:expanded={helpExpanded || closeExpanded}
+            class:expanded={overflowMenuExpanded || closeMenuExpanded}
             onmouseenter={handleControlsEnter}
             onmouseleave={handleControlsLeave}
             role="region"
@@ -1991,15 +1991,15 @@
             <div 
               class="dock" 
               class:open={controlsOpen}
-              class:expanded={helpExpanded || closeExpanded}
+              class:expanded={overflowMenuExpanded || closeMenuExpanded}
             >
-              <!-- Help Button Container (same pattern as btn-add-app-container) -->
+              <!-- Overflow Menu Button Container (same pattern as btn-add-app-container) -->
               <div 
-                class="btn-add-app-container controls"
-                class:expanded={helpExpanded}
-                class:hidden={closeExpanded}
+                class="btn-add-app-container controls overflow-menu"
+                class:expanded={overflowMenuExpanded}
+                class:hidden={closeMenuExpanded}
               >
-                {#if helpExpanded}
+                {#if overflowMenuExpanded}
                   <div class="add-app-list">
                     <p class="help-text">Welcome to ClearComms</p>
                     <p class="help-text">To get started, click the + button to pin an audio application.</p>
@@ -2012,15 +2012,15 @@
                 <button 
                   class="btn btn-add-app"
                   onclick={() => {
-                    helpExpanded = !helpExpanded;
-                    if (helpExpanded) closeExpanded = false;
+                    overflowMenuExpanded = !overflowMenuExpanded;
+                    if (overflowMenuExpanded) closeMenuExpanded = false;
                   }}
-                  aria-label={helpExpanded ? "Close help" : "Open help"}
-                  title={helpExpanded ? "Close" : "Help"}
-                  aria-expanded={helpExpanded}
+                  aria-label={overflowMenuExpanded ? "Close overflow menu" : "Open overflow menu"}
+                  title={overflowMenuExpanded ? "Close" : "Menu"}
+                  aria-expanded={overflowMenuExpanded}
                 >
                   <svg class="add-app-icon" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 640 640" width="24" height="24" fill="currentColor">
-                    {#if helpExpanded}
+                    {#if overflowMenuExpanded}
                       <path d="M183.1 137.4C170.6 124.9 150.3 124.9 137.8 137.4C125.3 149.9 125.3 170.2 137.8 182.7L275.2 320L137.9 457.4C125.4 469.9 125.4 490.2 137.9 502.7C150.4 515.2 170.7 515.2 183.2 502.7L320.5 365.3L457.9 502.6C470.4 515.1 490.7 515.1 503.2 502.6C515.7 490.1 515.7 469.8 503.2 457.3L365.8 320L503.1 182.6C515.6 170.1 515.6 149.8 503.1 137.3C490.6 124.8 470.3 124.8 457.8 137.3L320.5 274.7L183.1 137.4z"/>
                     {:else}
                       <path d="M96 320C96 289.1 121.1 264 152 264C182.9 264 208 289.1 208 320C208 350.9 182.9 376 152 376C121.1 376 96 350.9 96 320zM264 320C264 289.1 289.1 264 320 264C350.9 264 376 289.1 376 320C376 350.9 350.9 376 320 376C289.1 376 264 350.9 264 320zM488 264C518.9 264 544 289.1 544 320C544 350.9 518.9 376 488 376C457.1 376 432 350.9 432 320C432 289.1 457.1 264 488 264z"/>
@@ -2030,7 +2030,7 @@
               </div>
               
               <!-- Edit Button (not expandable, just a button) -->
-              <div class="btn-add-app-container controls" class:hidden={helpExpanded || closeExpanded}>
+              <div class="btn-add-app-container controls" class:hidden={overflowMenuExpanded || closeMenuExpanded}>
                 <button 
                   class="btn btn-add-app {isEditMode ? 'btn-enabled' : ''}"
                   onclick={toggleEditMode} 
@@ -2044,13 +2044,13 @@
                 </button>
               </div>
               
-              <!-- Close Button Container (same pattern as btn-add-app-container) -->
+              <!-- Close Menu Button Container (same pattern as btn-add-app-container) -->
               <div 
-                class="btn-add-app-container controls"
-                class:expanded={closeExpanded}
-                class:hidden={helpExpanded}
+                class="btn-add-app-container controls close-menu"
+                class:expanded={closeMenuExpanded}
+                class:hidden={overflowMenuExpanded}
               >
-                {#if closeExpanded}
+                {#if closeMenuExpanded}
                   <div class="add-app-list">
                     <button 
                       class="btn-close btn btn-add-app"
@@ -2060,7 +2060,7 @@
                     </button>
                     <button 
                       class="btn btn-add-app"
-                      onclick={async () => { const window = (await import('@tauri-apps/api/window')).Window.getCurrent(); await window.hide(); closeExpanded = false; }}
+                      onclick={async () => { const window = (await import('@tauri-apps/api/window')).Window.getCurrent(); await window.hide(); closeMenuExpanded = false; }}
                     >
                       Minimise
                     </button>
@@ -2070,14 +2070,14 @@
                   class="btn btn-add-app"
                   style="margin-top: 0px"
                   onclick={() => {
-                    closeExpanded = !closeExpanded;
-                    if (closeExpanded) helpExpanded = false;
+                    closeMenuExpanded = !closeMenuExpanded;
+                    if (closeMenuExpanded) overflowMenuExpanded = false;
                   }}
-                  aria-label={closeExpanded ? "Cancel" : "Close application"}
-                  title={closeExpanded ? "Cancel" : "Quit"}
-                  aria-expanded={closeExpanded}
+                  aria-label={closeMenuExpanded ? "Cancel" : "Close application"}
+                  title={closeMenuExpanded ? "Cancel" : "Quit"}
+                  aria-expanded={closeMenuExpanded}
                 >
-                  {#if closeExpanded}
+                  {#if closeMenuExpanded}
                     <span>Return</span>
                   {:else}
                     <svg class="add-app-icon" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 640 640" width="24" height="24" fill="currentColor">
