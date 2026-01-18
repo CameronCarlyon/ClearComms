@@ -139,6 +139,56 @@
     }
   };
 
+  const handleControlsFocusOut = (event: FocusEvent) => {
+    // Check if focus is moving outside the controls-hover-zone
+    const controlsZone = (event.currentTarget as HTMLElement);
+    const relatedTarget = event.relatedTarget as HTMLElement | null;
+    
+    if (!relatedTarget || !controlsZone.contains(relatedTarget)) {
+      // Focus is leaving the controls zone entirely
+      controlsOpen = false;
+      overflowMenuExpanded = false;
+      closeMenuExpanded = false;
+    }
+  };
+
+  const isElementVisible = (el: HTMLElement) => {
+    const style = window.getComputedStyle(el);
+    if (style.visibility === "hidden" || style.display === "none") return false;
+    return el.offsetParent !== null || el.getClientRects().length > 0;
+  };
+
+  const getAppFocusables = () => {
+    return Array.from(
+      document.querySelectorAll<HTMLElement>(
+        'button, [href], input, select, textarea, [tabindex]:not([tabindex="-1"]), [role="button"]'
+      )
+    ).filter((el) => !el.hasAttribute('disabled') && el.getAttribute('aria-hidden') !== 'true' && isElementVisible(el));
+  };
+
+  const handleGlobalTab = (event: KeyboardEvent) => {
+    if (event.key !== "Tab" || event.defaultPrevented) return;
+
+    const focusables = getAppFocusables();
+    if (focusables.length === 0) return;
+
+    const first = focusables[0];
+    const last = focusables[focusables.length - 1];
+    const active = document.activeElement as HTMLElement | null;
+
+    if (!event.shiftKey) {
+      if (active === last || active === document.body || active === null) {
+        event.preventDefault();
+        first.focus();
+      }
+    } else {
+      if (active === first || active === document.body || active === null) {
+        event.preventDefault();
+        last.focus();
+      }
+    }
+  };
+
   const POLL_LOG_INTERVAL = 200;
   const BUTTON_CACHE_LOG_INTERVAL = 200;
   const LIVE_UPDATE_MIN_INTERVAL_MS = 40;
@@ -1584,6 +1634,8 @@
   }
 </script>
 
+<svelte:window on:keydown={handleGlobalTab} />
+
 {#if initStatus === 'Ready'}
   <!-- Main Application -->
   <main role="application" aria-label="ClearComms Audio Mixer">
@@ -1985,6 +2037,7 @@
             class:expanded={overflowMenuExpanded || closeMenuExpanded}
             onmouseenter={handleControlsEnter}
             onmouseleave={handleControlsLeave}
+            onfocusout={handleControlsFocusOut}
             role="region"
             aria-label="Application controls"
           >
@@ -2015,6 +2068,11 @@
                     overflowMenuExpanded = !overflowMenuExpanded;
                     if (overflowMenuExpanded) closeMenuExpanded = false;
                   }}
+                  onfocus={() => {
+                    controlsOpen = true;
+                    overflowMenuExpanded = true;
+                    closeMenuExpanded = false;
+                  }}
                   aria-label={overflowMenuExpanded ? "Close overflow menu" : "Open overflow menu"}
                   title={overflowMenuExpanded ? "Close" : "Menu"}
                   aria-expanded={overflowMenuExpanded}
@@ -2034,6 +2092,11 @@
                 <button 
                   class="btn btn-add-app {isEditMode ? 'btn-enabled' : ''}"
                   onclick={toggleEditMode} 
+                  onfocus={() => {
+                    controlsOpen = true;
+                    overflowMenuExpanded = false;
+                    closeMenuExpanded = false;
+                  }}
                   disabled={!audioInitialised}
                   aria-label={isEditMode ? 'Exit edit mode' : 'Enter edit mode to configure bindings'}
                   title={isEditMode ? 'Exit Edit Mode' : 'Edit Bindings'}
@@ -2072,6 +2135,11 @@
                   onclick={() => {
                     closeMenuExpanded = !closeMenuExpanded;
                     if (closeMenuExpanded) overflowMenuExpanded = false;
+                  }}
+                  onfocus={() => {
+                    controlsOpen = true;
+                    closeMenuExpanded = true;
+                    overflowMenuExpanded = false;
                   }}
                   aria-label={closeMenuExpanded ? "Cancel" : "Close application"}
                   title={closeMenuExpanded ? "Cancel" : "Quit"}
@@ -2374,14 +2442,16 @@
     position: relative;
   }
 
-  .dock.open {
+  .dock.open,
+  .controls-hover-zone:focus-within .dock {
     height: 60px;
     max-height: 60px;
     overflow: visible;
   }
 
   /* When any menu is expanded, dock expands to accommodate */
-  .dock.expanded {
+  .dock.expanded,
+  .controls-hover-zone:focus-within .dock.expanded {
     height: 175px;
     max-height: 150px;
     gap: 0;
@@ -2446,10 +2516,6 @@
     text-align: left;
   }
 
-  .help-text strong {
-    color: var(--text-primary);
-  }
-
   .controls-hover-zone {
     display: flex;
     flex-direction: column;
@@ -2482,23 +2548,28 @@
     display: none;
   }
 
-  .controls-hover-zone:hover::before {
+  .controls-hover-zone:hover::before,
+  .controls-hover-zone:focus-within::before {
     opacity: 0.6;
   }
 
-  .controls-hover-zone.expanded .dock {
+  .controls-hover-zone.expanded .dock,
+  .controls-hover-zone:focus-within.expanded .dock {
     max-height: 50vh;
   }
 
-  .controls-hover-zone:hover .btn-add-app-container.controls {
+  .controls-hover-zone:hover .btn-add-app-container.controls,
+  .controls-hover-zone:focus-within .btn-add-app-container.controls {
     transform: scale(1);
   }
 
-  .controls-hover-zone:hover .btn-add-app-container.controls.hidden {
+  .controls-hover-zone:hover .btn-add-app-container.controls.hidden,
+  .controls-hover-zone:focus-within .btn-add-app-container.controls.hidden {
     transform: scale(0) !important;
   }
 
-  .controls-hover-zone:hover .btn-add-app-container.controls.expanded {
+  .controls-hover-zone:hover .btn-add-app-container.controls.expanded,
+  .controls-hover-zone:focus-within .btn-add-app-container.controls.expanded {
     transform: scale(1) !important;
   }
 
