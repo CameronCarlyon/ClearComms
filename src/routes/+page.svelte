@@ -1638,9 +1638,7 @@
 
 {#if initStatus === 'Ready'}
   <!-- Main Application -->
-  <main role="application" aria-label="ClearComms Audio Mixer">
-    <a href="#main-content" class="skip-link">Skip to main content</a>
-
+  <main role="application" aria-label="ClearComms">
     {#if errorMsg}
       <div class="error-banner" role="alert" aria-live="assertive">{errorMsg}</div>
     {/if}
@@ -2070,8 +2068,18 @@
                   }}
                   onfocus={() => {
                     controlsOpen = true;
-                    overflowMenuExpanded = true;
-                    closeMenuExpanded = false;
+                    if (!overflowMenuExpanded) {
+                      overflowMenuExpanded = true;
+                      closeMenuExpanded = false;
+                      // Move focus to first interactive element in menu after it renders
+                      setTimeout(() => {
+                        const menu = document.querySelector('.overflow-menu .add-app-list');
+                        const firstInteractive = menu?.querySelector('a, button');
+                        if (firstInteractive instanceof HTMLElement) {
+                          firstInteractive.focus();
+                        }
+                      }, 50);
+                    }
                   }}
                   aria-label={overflowMenuExpanded ? "Close overflow menu" : "Open overflow menu"}
                   title={overflowMenuExpanded ? "Close" : "Menu"}
@@ -2138,8 +2146,18 @@
                   }}
                   onfocus={() => {
                     controlsOpen = true;
-                    closeMenuExpanded = true;
-                    overflowMenuExpanded = false;
+                    if (!closeMenuExpanded) {
+                      closeMenuExpanded = true;
+                      overflowMenuExpanded = false;
+                      // Move focus to first button in menu after it renders
+                      setTimeout(() => {
+                        const menu = document.querySelector('.close-menu .add-app-list');
+                        const firstButton = menu?.querySelector('button');
+                        if (firstButton instanceof HTMLElement) {
+                          firstButton.focus();
+                        }
+                      }, 50);
+                    }
                   }}
                   aria-label={closeMenuExpanded ? "Cancel" : "Close application"}
                   title={closeMenuExpanded ? "Cancel" : "Quit"}
