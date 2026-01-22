@@ -1826,6 +1826,7 @@
                   aria-label="{session.is_muted ? 'Unmute' : 'Mute'} {session.display_name}"
                   aria-pressed={session.is_muted}
                   title={session.is_muted ? 'Unmute' : 'Mute'}
+                  disabled={isInactiveSession}
                 >
                   {#if session.is_muted || session.volume === 0}
                     <!-- Muted or 0% volume -->
@@ -2066,19 +2067,19 @@
                     overflowMenuExpanded = !overflowMenuExpanded;
                     if (overflowMenuExpanded) closeMenuExpanded = false;
                   }}
-                  onfocus={() => {
-                    controlsOpen = true;
-                    if (!overflowMenuExpanded) {
+                  onkeydown={(e) => {
+                    if (e.key === 'Tab' && !e.shiftKey && !overflowMenuExpanded) {
+                      e.preventDefault();
                       overflowMenuExpanded = true;
                       closeMenuExpanded = false;
-                      // Move focus to first interactive element in menu after it renders
+                      controlsOpen = true;
                       setTimeout(() => {
                         const menu = document.querySelector('.overflow-menu .add-app-list');
                         const firstInteractive = menu?.querySelector('a, button');
                         if (firstInteractive instanceof HTMLElement) {
                           firstInteractive.focus();
                         }
-                      }, 50);
+                      }, 0);
                     }
                   }}
                   aria-label={overflowMenuExpanded ? "Close overflow menu" : "Open overflow menu"}
@@ -2144,19 +2145,19 @@
                     closeMenuExpanded = !closeMenuExpanded;
                     if (closeMenuExpanded) overflowMenuExpanded = false;
                   }}
-                  onfocus={() => {
-                    controlsOpen = true;
-                    if (!closeMenuExpanded) {
+                  onkeydown={(e) => {
+                    if (e.key === 'Tab' && !e.shiftKey && !closeMenuExpanded) {
+                      e.preventDefault();
                       closeMenuExpanded = true;
                       overflowMenuExpanded = false;
-                      // Move focus to first button in menu after it renders
+                      controlsOpen = true;
                       setTimeout(() => {
                         const menu = document.querySelector('.close-menu .add-app-list');
                         const firstButton = menu?.querySelector('button');
                         if (firstButton instanceof HTMLElement) {
                           firstButton.focus();
                         }
-                      }, 50);
+                      }, 0);
                     }
                   }}
                   aria-label={closeMenuExpanded ? "Cancel" : "Close application"}
