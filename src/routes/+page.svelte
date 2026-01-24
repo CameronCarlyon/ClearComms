@@ -221,7 +221,7 @@
   // Memory Profiling (Dev Mode)
   // ─────────────────────────────────────────────────────────────────────────────
   
-  const IS_DEV = import.meta.env.DEV;
+  const IS_DEV = typeof (import.meta as any).hot !== 'undefined';
   let memoryProfilerInterval: number | null = null;
   let memorySnapshots: { timestamp: number; heapUsed: number; heapTotal: number }[] = [];
   const MEMORY_PROFILER_INTERVAL = 60000; // Log every 60 seconds
@@ -2053,12 +2053,40 @@
               >
                 {#if overflowMenuExpanded}
                   <div class="add-app-list">
-                    <p class="help-text">Welcome to ClearComms</p>
-                    <p class="help-text">To get started, click the + button to pin an audio application.</p>
-                    <p class="help-text">Once an application has been pinned, you may invoke binding mode for either the volume or mute controls.</p>
-                    <p class="help-text">You can reverse the axis direction using the reverse button.</p>
-                    <p></p>
-                    <p class="help-text">For further information, check the <a href="https://github.com/CameronCarlyon/ClearComms" onclick={async (e) => { e.preventDefault(); await invoke('open_url', { url: 'https://github.com/CameronCarlyon/ClearComms' }); }} class="author-link" aria-label="Visit ClearComms repository on GitHub (opens in external browser)">documentation</a></p>
+                    <div style="display: flex; gap: 12px; width: 100%;">
+                      <button
+                        class="add-app-list-item"
+                        style="flex: 1; display: flex; align-items: center; justify-content: center; gap: 8px;"
+                        onclick={async (e) => {
+                          e.preventDefault();
+                          await invoke('open_url', { url: 'https://github.com/CameronCarlyon/ClearComms' });
+                        }}
+                        aria-label="Visit ClearComms repository on GitHub (opens in external browser)"
+                        title="GitHub Repository"
+                        type="button"
+                      >
+                        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 640 640" width="20" height="20" fill="currentColor" aria-hidden="true">
+                          <path d="M237.9 461.4C237.9 463.4 235.6 465 232.7 465C229.4 465.3 227.1 463.7 227.1 461.4C227.1 459.4 229.4 457.8 232.3 457.8C235.3 457.5 237.9 459.1 237.9 461.4zM206.8 456.9C206.1 458.9 208.1 461.2 211.1 461.8C213.7 462.8 216.7 461.8 217.3 459.8C217.9 457.8 216 455.5 213 454.6C210.4 453.9 207.5 454.9 206.8 456.9zM251 455.2C248.1 455.9 246.1 457.8 246.4 460.1C246.7 462.1 249.3 463.4 252.3 462.7C255.2 462 257.2 460.1 256.9 458.1C256.6 456.2 253.9 454.9 251 455.2zM316.8 72C178.1 72 72 177.3 72 316C72 426.9 141.8 521.8 241.5 555.2C254.3 557.5 258.8 549.6 258.8 543.1C258.8 536.9 258.5 502.7 258.5 481.7C258.5 481.7 188.5 496.7 173.8 451.9C173.8 451.9 162.4 422.8 146 415.3C146 415.3 123.1 399.6 147.6 399.9C147.6 399.9 172.5 401.9 186.2 425.7C208.1 464.3 244.8 453.2 259.1 446.6C261.4 430.6 267.9 419.5 275.1 412.9C219.2 406.7 162.8 398.6 162.8 302.4C162.8 274.9 170.4 261.1 186.4 243.5C183.8 237 175.3 210.2 189 175.6C209.9 169.1 258 202.6 258 202.6C278 197 299.5 194.1 320.8 194.1C342.1 194.1 363.6 197 383.6 202.6C383.6 202.6 431.7 169 452.6 175.6C466.3 210.3 457.8 237 455.2 243.5C471.2 261.2 481 275 481 302.4C481 398.9 422.1 406.6 366.2 412.9C375.4 420.8 383.2 435.8 383.2 459.3C383.2 493 382.9 534.7 382.9 542.9C382.9 549.4 387.5 557.3 400.2 555C500.2 521.8 568 426.9 568 316C568 177.3 455.5 72 316.8 72zM169.2 416.9C167.9 417.9 168.2 420.2 169.9 422.1C171.5 423.7 173.8 424.4 175.1 423.1C176.4 422.1 176.1 419.8 174.4 417.9C172.8 416.3 170.5 415.6 169.2 416.9zM158.4 408.8C157.7 410.1 158.7 411.7 160.7 412.7C162.3 413.7 164.3 413.4 165 412C165.7 410.7 164.7 409.1 162.7 408.1C160.7 407.5 159.1 407.8 158.4 408.8zM190.8 444.4C189.2 445.7 189.8 448.7 192.1 450.6C194.4 452.9 197.3 453.2 198.6 451.6C199.9 450.3 199.3 447.3 197.3 445.4C195.1 443.1 192.1 442.8 190.8 444.4zM179.4 429.7C177.8 430.7 177.8 433.3 179.4 435.6C181 437.9 183.7 438.9 185 437.9C186.6 436.6 186.6 434 185 431.7C183.6 429.4 181 428.4 179.4 429.7z"/>
+                        </svg>
+                        <span>GitHub</span>
+                      </button>
+                      <button
+                        class="add-app-list-item"
+                        style="flex: 1; display: flex; align-items: center; justify-content: center; gap: 8px;"
+                        onclick={async (e) => {
+                          e.preventDefault();
+                          await invoke('open_url', { url: 'https://github.com/CameronCarlyon/ClearComms/blob/main/GUIDE.md' });
+                        }}
+                        aria-label="View ClearComms guide (opens in external browser)"
+                        title="User Guide"
+                        type="button"
+                      >
+                        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 640 640" width="20" height="20" fill="currentColor" aria-hidden="true">
+                          <path d="M224 224C224 171 267 128 320 128C373 128 416 171 416 224C416 266.7 388.1 302.9 349.5 315.4C321.1 324.6 288 350.7 288 392L288 416C288 433.7 302.3 448 320 448C337.7 448 352 433.7 352 416L352 392C352 390.3 352.6 387.9 355.5 384.7C358.5 381.4 363.4 378.2 369.2 376.3C433.5 355.6 480 295.3 480 224C480 135.6 408.4 64 320 64C231.6 64 160 135.6 160 224C160 241.7 174.3 256 192 256C209.7 256 224 241.7 224 224zM320 576C342.1 576 360 558.1 360 536C360 513.9 342.1 496 320 496C297.9 496 280 513.9 280 536C280 558.1 297.9 576 320 576z"/>
+                        </svg>
+                        <span>Guide</span>
+                      </button>
+                    </div>
                   </div>
                 {/if}
                 <button 
@@ -2090,7 +2118,7 @@
                     {#if overflowMenuExpanded}
                       <path d="M183.1 137.4C170.6 124.9 150.3 124.9 137.8 137.4C125.3 149.9 125.3 170.2 137.8 182.7L275.2 320L137.9 457.4C125.4 469.9 125.4 490.2 137.9 502.7C150.4 515.2 170.7 515.2 183.2 502.7L320.5 365.3L457.9 502.6C470.4 515.1 490.7 515.1 503.2 502.6C515.7 490.1 515.7 469.8 503.2 457.3L365.8 320L503.1 182.6C515.6 170.1 515.6 149.8 503.1 137.3C490.6 124.8 470.3 124.8 457.8 137.3L320.5 274.7L183.1 137.4z"/>
                     {:else}
-                      <path d="M96 320C96 289.1 121.1 264 152 264C182.9 264 208 289.1 208 320C208 350.9 182.9 376 152 376C121.1 376 96 350.9 96 320zM264 320C264 289.1 289.1 264 320 264C350.9 264 376 289.1 376 320C376 350.9 350.9 376 320 376C289.1 376 264 350.9 264 320zM488 264C518.9 264 544 289.1 544 320C544 350.9 518.9 376 488 376C457.1 376 432 350.9 432 320C432 289.1 457.1 264 488 264z"/>
+                      <path d="M259.1 73.5C262.1 58.7 275.2 48 290.4 48L350.2 48C365.4 48 378.5 58.7 381.5 73.5L396 143.5C410.1 149.5 423.3 157.2 435.3 166.3L503.1 143.8C517.5 139 533.3 145 540.9 158.2L570.8 210C578.4 223.2 575.7 239.8 564.3 249.9L511 297.3C511.9 304.7 512.3 312.3 512.3 320C512.3 327.7 511.8 335.3 511 342.7L564.4 390.2C575.8 400.3 578.4 417 570.9 430.1L541 481.9C533.4 495 517.6 501.1 503.2 496.3L435.4 473.8C423.3 482.9 410.1 490.5 396.1 496.6L381.7 566.5C378.6 581.4 365.5 592 350.4 592L290.6 592C275.4 592 262.3 581.3 259.3 566.5L244.9 496.6C230.8 490.6 217.7 482.9 205.6 473.8L137.5 496.3C123.1 501.1 107.3 495.1 99.7 481.9L69.8 430.1C62.2 416.9 64.9 400.3 76.3 390.2L129.7 342.7C128.8 335.3 128.4 327.7 128.4 320C128.4 312.3 128.9 304.7 129.7 297.3L76.3 249.8C64.9 239.7 62.3 223 69.8 209.9L99.7 158.1C107.3 144.9 123.1 138.9 137.5 143.7L205.3 166.2C217.4 157.1 230.6 149.5 244.6 143.4L259.1 73.5zM320.3 400C364.5 399.8 400.2 363.9 400 319.7C399.8 275.5 363.9 239.8 319.7 240C275.5 240.2 239.8 276.1 240 320.3C240.2 364.5 276.1 400.2 320.3 400z"/>
                     {/if}
                   </svg>
                 </button>
@@ -2233,7 +2261,7 @@
 
   <footer>
     <p style="font-size: 0.8rem; color: var(--text-muted); text-align: center; margin: 0;">
-      Crafted by <a href="https://cameroncarlyon.com" onclick={async (e) => { e.preventDefault(); await invoke('open_url', { url: 'https://cameroncarlyon.com' }); }} class="author-link" aria-label="Visit Cameron Carlyon's website (opens in external browser)">Cameron Carlyon</a>
+      Crafted by <a href="https://cameroncarlyon.com" onclick={async (e) => { e.preventDefault(); await invoke('open_url', { url: 'https://cameroncarlyon.com' }); }} class="hyperlink" aria-label="Visit Cameron Carlyon's website (opens in external browser)">Cameron Carlyon</a>
     </p>
   </footer>
 </main>
@@ -2262,26 +2290,6 @@
 
   * {
     box-sizing: border-box;
-  }
-
-  /* Skip link for keyboard navigation accessibility */
-  .skip-link {
-    position: absolute;
-    top: -40px;
-    left: 0;
-    background: var(--text-primary);
-    color: var(--bg-primary);
-    padding: 8px 16px;
-    text-decoration: none;
-    border-radius: 0 0 4px 0;
-    z-index: 100;
-    font-weight: 600;
-  }
-
-  .skip-link:focus {
-    top: 0;
-    outline: 2px solid var(--text-primary);
-    outline-offset: 2px;
   }
 
   main {
@@ -2380,7 +2388,7 @@
     color: var(--text-muted);
   }
 
-  .author-link {
+  .hyperlink {
     color: var(--text-muted);
     text-decoration: none;
     cursor: pointer;
@@ -2388,7 +2396,7 @@
     display: inline-block;
   }
 
-  .author-link:hover {
+  .hyperlink:hover {
     color: var(--text-primary);
     filter: drop-shadow(0 0 30px rgba(255, 255, 255, 1)) drop-shadow(0 0 60px rgba(255, 255, 255, 0.8)) drop-shadow(0 0 100px rgba(255, 255, 255, 0.6)) drop-shadow(0 0 140px rgba(255, 255, 255, 0.4));
   }
@@ -2511,11 +2519,6 @@
     overflow: hidden;
   }
 
-  /* Help button should allow scrolling */
-  .btn-add-app-container.controls.expanded .add-app-list:has(.help-text) {
-    overflow-y: auto;
-  }
-
   /* Allow shadow to render when Quit button is hovered */
   .btn-add-app-container.controls.expanded .add-app-list:has(.btn-close:hover) {
     overflow: visible;
@@ -2524,15 +2527,6 @@
   .btn-add-app-container.controls .btn-add-app.btn-enabled {
     border-color: var(--text-primary);
     color: var(--text-primary);
-  }
-
-  /* Help text styling */
-  .help-text {
-    padding: 0.75rem 1rem;
-    margin: 0;
-    font-size: 0.8rem;
-    line-height: 1.4;
-    text-align: left;
   }
 
   .controls-hover-zone {
