@@ -55,6 +55,7 @@ const RESIZE_ANIMATION_DURATION_MS: u64 = 200;
 /// Frame interval for resize animation (~60fps)
 const RESIZE_ANIMATION_FRAME_MS: u64 = 16;
 
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Tauri Commands - Window Management
 // ─────────────────────────────────────────────────────────────────────────────
@@ -238,9 +239,10 @@ async fn open_url(url: String) -> Result<(), String> {
 }
 
 fn main() {
-    let ignore_focus_loss = Arc::new(Mutex::new(false));
-    let ignore_focus_loss_for_setup = ignore_focus_loss.clone();
-    let ignore_focus_loss_for_events = ignore_focus_loss.clone();
+    // Timestamp of when the window was last shown - used to ignore focus loss immediately after showing
+    let window_show_time: Arc<Mutex<std::time::Instant>> = Arc::new(Mutex::new(std::time::Instant::now()));
+    let window_show_time_for_setup = window_show_time.clone();
+    let window_show_time_for_events = window_show_time.clone();
 
     tauri::Builder::default()
         .setup(move |app| {
@@ -252,10 +254,10 @@ fn main() {
                     use window_vibrancy::apply_acrylic;
                     use windows::Win32::Graphics::Dwm::*;
                     use windows::Win32::Foundation::HWND;
-                    
+
                     // Apply acrylic with automatic color matching to Windows theme
                     let _ = apply_acrylic(&window, None);
-                    
+
                     // Apply rounded corners
                     let hwnd = HWND(window.hwnd().unwrap().0 as *mut std::ffi::c_void);
                     let corner_preference: i32 = DWMWCP_ROUND.0;
@@ -267,8 +269,18 @@ fn main() {
                             std::mem::size_of::<i32>() as u32,
                         );
                     }
+
+                    // Disable window animations (instant hide/show)
+                    let disable_transitions: i32 = 1; // TRUE
+                    unsafe {
+                        let _ = DwmSetWindowAttribute(
+                            hwnd,
+                            DWMWA_TRANSITIONS_FORCEDISABLED,
+                            &disable_transitions as *const _ as *const _,
+                            std::mem::size_of::<i32>() as u32,
+                        );
+                    }
                 }
-                
                 // Position window in bottom-right corner
                 position_window_bottom_right(&window);
                 
@@ -277,7 +289,7 @@ fn main() {
             }
             
             // Build tray icon without menu (we'll use custom window)
-            let ignore_focus_loss_tray = ignore_focus_loss_for_setup.clone();
+            let window_show_time_tray = window_show_time_for_setup.clone();
             let _tray = TrayIconBuilder::new()
                 .icon(app.default_window_icon().unwrap().clone())
                 .tooltip("ClearComms")
@@ -298,9 +310,6 @@ fn main() {
                                         println!("[Tray] Hiding visible window");
                                         let _ = window.set_always_on_top(false);
                                         let _ = window.hide();
-                                        if let Ok(mut flag) = ignore_focus_loss_tray.lock() {
-                                            *flag = false;
-                                        }
                                     }
                                     Ok(false) | Err(_) => {
                                         // Window is hidden or error - show it
@@ -308,8 +317,9 @@ fn main() {
                                         position_window_bottom_right(&window);
                                         let _ = window.show();
                                         let _ = window.set_focus();
-                                        if let Ok(mut flag) = ignore_focus_loss_tray.lock() {
-                                            *flag = true;
+                                        // Record when we showed the window to ignore immediate focus loss
+                                        if let Ok(mut time) = window_show_time_tray.lock() {
+                                            *time = std::time::Instant::now();
                                         }
                                     }
                                 }
@@ -334,15 +344,6 @@ fn main() {
                     }
                 })
                 .build(app)?;
-
-            // Get main window and position it
-            if let Some(window) = app.get_webview_window("main") {
-                // Position window in bottom-right corner
-                position_window_bottom_right(&window);
-                
-                // Don't show window on startup (starts in tray)
-                let _ = window.hide();
-            }
             
             Ok(())
         })
@@ -353,14 +354,29 @@ fn main() {
                     let _ = window.hide();
                     api.prevent_close();
                 }
-                tauri::WindowEvent::Focused(false) => {
-                    // Window lost focus - hide it if not pinned, unless we just toggled it from the tray
-                    let mut ignore = ignore_focus_loss_for_events.lock().unwrap_or_else(|e| e.into_inner());
-                    if *ignore {
-                        *ignore = false;
-                        let _ = window.set_focus();
-                    } else if !window.is_always_on_top().unwrap_or(false) {
-                        let _ = window.hide();
+                tauri::WindowEvent::Focused(focused) => {
+                    let is_pinned = window.is_always_on_top().unwrap_or(false);
+                    println!("[Window] Focused: {}, Pinned: {}", focused, is_pinned);
+                    
+                    if !focused {
+                        // Window lost focus - check if we should ignore it (just showed window from tray)
+                        let should_ignore = if let Ok(time) = window_show_time_for_events.lock() {
+                            time.elapsed() < std::time::Duration::from_millis(100)
+                        } else {
+                            false
+                        };
+                        
+                        if should_ignore {
+                            // We just opened the window from tray - ignore this focus loss
+                            println!("[Window] Ignoring focus loss (window just shown)");
+                        } else if is_pinned {
+                            // Window is pinned - keep it visible
+                            println!("[Window] Pinned, staying visible");
+                        } else {
+                            // Window is not pinned - hide it immediately
+                            println!("[Window] Not pinned, hiding");
+                            let _ = window.hide();
+                        }
                     }
                 }
                 _ => {}
