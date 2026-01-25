@@ -363,8 +363,18 @@ fn main() {
                     let is_pinned = window.is_always_on_top().unwrap_or(false);
                     println!("[Window] Focused: {}, Pinned: {}", focused, is_pinned);
                     
-                    if !focused && !is_pinned {
-                        // Window lost focus and not pinned - hide it and record timestamp
+                    // Force redraw on any focus change when pinned to clear title bar artifacts
+                    if is_pinned {
+                        println!("[Window] Pinned, forcing redraw");
+                        if let Ok(size) = window.outer_size() {
+                            let _ = window.set_size(tauri::Size::Physical(tauri::PhysicalSize {
+                                width: size.width,
+                                height: size.height + 1,
+                            }));
+                            let _ = window.set_size(tauri::Size::Physical(size));
+                        }
+                    } else if !focused {
+                        // Window not pinned and lost focus - hide it and record timestamp
                         println!("[Window] Lost focus, hiding");
                         if let Ok(mut last) = last_hidden_for_events.lock() {
                             *last = Instant::now();
