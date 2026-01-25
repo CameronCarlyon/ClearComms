@@ -2786,78 +2786,59 @@
   }
 
   .volume-slider {
-    -webkit-appearance: none;
     appearance: none;
     width: 46px;
     flex: 1;
-    min-height: 0;
-    background: var(--bg-card);
-    border: 0.5px solid var(--text-muted);
+    background: transparent;
     cursor: pointer;
-    position: relative;
     writing-mode: vertical-lr;
     direction: rtl;
     border-radius: 2rem;
+    overflow: hidden;
+    border: 0.5px solid var(--text-muted);
+    box-sizing: border-box;
   }
 
   /* Track styling */
   .volume-slider::-webkit-slider-runnable-track {
-    width: 46px;
+    width: 100%;
     height: 100%;
-    background: linear-gradient(
-      to top,
-      var(--text-primary) 5.7%,
-      var(--text-primary) calc(5.7% + var(--volume-percent, 0%) * 0.886),
-      var(--bg-card) calc(5.7% + var(--volume-percent, 0%) * 0.886),
-      var(--bg-card) 94.3%
-    );
+    background: transparent;
     border-radius: 2rem;
-    cursor: pointer;
   }
 
   .volume-slider::-moz-range-track {
-    width: 46px;
+    width: 100%;
     height: 100%;
-    background: var(--bg-card);
-    border-radius: 23px;
-    cursor: pointer;
-    /* box-shadow: 0 2px 10px rgba(0, 0, 0, 0.2); */
+    border-radius: 2rem;
   }
 
-  /* Progress fill for Firefox */
-  .volume-slider::-moz-range-progress {
-    width: 46px;
-    background: var(--text-primary);
-    border-radius: 0 0 23px 23px;
-  }
-
-  /* Thumb styling - responsive circle */
+  /* Thumb styling - (draws itself and the bar below it using box-shadow) */
   .volume-slider::-webkit-slider-thumb {
     -webkit-appearance: none;
     appearance: none;
-    width: 46px;
-    height: 46px;
-    border-radius: 50%;
+    width: 100%;
+    height: 45px;
+    border-radius: 2rem;
     background: var(--text-primary);
-    cursor: pointer;
     border: none;
+    box-shadow: 0 1000px 0 1000px var(--text-primary);
+    clip-path: inset(0 0 -1000px 0 round 2rem);
   }
 
   .volume-slider::-moz-range-thumb {
-    width: 46px;
-    height: 46px;
-    border-radius: 50%;
+    width: 45px;
+    height: 45px;
+    border-radius: 2rem;
     background: var(--text-primary);
-    cursor: pointer;
     border: none;
-    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.2);
+  }
+
+  .volume-bar-container {
+    position: relative;
   }
 
   /* Hover effect */
-  .volume-slider:hover:not(:disabled)::-webkit-slider-runnable-track {
-    border-color: rgba(255, 255, 255, 0.25);
-  }
-
   .volume-slider:hover:not(:disabled) {
     filter: drop-shadow(0 0 40px rgba(255, 255, 255, 0.25));
   }
