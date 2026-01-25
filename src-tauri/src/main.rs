@@ -239,10 +239,10 @@ async fn open_url(url: String) -> Result<(), String> {
 }
 
 fn main() {
-    // Timestamp of when the window was last shown - used to ignore focus loss immediately after showing
-    let window_show_time: Arc<Mutex<std::time::Instant>> = Arc::new(Mutex::new(std::time::Instant::now()));
-    let window_show_time_for_setup = window_show_time.clone();
-    let window_show_time_for_events = window_show_time.clone();
+    // Track when window was last hidden - used to detect if tray click caused focus loss
+    let last_hidden: Arc<Mutex<Instant>> = Arc::new(Mutex::new(Instant::now() - Duration::from_secs(10)));
+    let last_hidden_for_setup = last_hidden.clone();
+    let last_hidden_for_events = last_hidden.clone();
 
     tauri::Builder::default()
         .setup(move |app| {
@@ -289,7 +289,7 @@ fn main() {
             }
             
             // Build tray icon without menu (we'll use custom window)
-            let window_show_time_tray = window_show_time_for_setup.clone();
+            let last_hidden_tray = last_hidden_for_setup.clone();
             let _tray = TrayIconBuilder::new()
                 .icon(app.default_window_icon().unwrap().clone())
                 .tooltip("ClearComms")
@@ -302,26 +302,31 @@ fn main() {
                             button_state: MouseButtonState::Up,
                             ..
                         } => {
-                            // Left click: Toggle main window
                             if let Some(window) = app.get_webview_window("main") {
-                                match window.is_visible() {
-                                    Ok(true) => {
-                                        // Window is visible - hide it and unpin
-                                        println!("[Tray] Hiding visible window");
-                                        let _ = window.set_always_on_top(false);
-                                        let _ = window.hide();
-                                    }
-                                    Ok(false) | Err(_) => {
-                                        // Window is hidden or error - show it
-                                        println!("[Tray] Showing hidden window");
-                                        position_window_bottom_right(&window);
-                                        let _ = window.show();
-                                        let _ = window.set_focus();
-                                        // Record when we showed the window to ignore immediate focus loss
-                                        if let Ok(mut time) = window_show_time_tray.lock() {
-                                            *time = std::time::Instant::now();
-                                        }
-                                    }
+                                // Check if window was hidden very recently (within 200ms)
+                                // If so, this tray click caused that hide via focus loss - don't reopen
+                                let just_hidden = last_hidden_tray.lock()
+                                    .map(|t| t.elapsed() < Duration::from_millis(200))
+                                    .unwrap_or(false);
+                                
+                                let is_visible = window.is_visible().unwrap_or(false);
+                                
+                                println!("[Tray] Click - visible: {}, just_hidden: {}", is_visible, just_hidden);
+                                
+                                if is_visible {
+                                    // Window is visible - hide it
+                                    println!("[Tray] Hiding window");
+                                    let _ = window.set_always_on_top(false);
+                                    let _ = window.hide();
+                                } else if just_hidden {
+                                    // Window was just hidden by this click's focus loss - do nothing
+                                    println!("[Tray] Ignoring (just hidden by focus loss)");
+                                } else {
+                                    // Window is hidden and wasn't just hidden - show it
+                                    println!("[Tray] Showing window");
+                                    position_window_bottom_right(&window);
+                                    let _ = window.show();
+                                    let _ = window.set_focus();
                                 }
                             }
                         }
@@ -358,25 +363,13 @@ fn main() {
                     let is_pinned = window.is_always_on_top().unwrap_or(false);
                     println!("[Window] Focused: {}, Pinned: {}", focused, is_pinned);
                     
-                    if !focused {
-                        // Window lost focus - check if we should ignore it (just showed window from tray)
-                        let should_ignore = if let Ok(time) = window_show_time_for_events.lock() {
-                            time.elapsed() < std::time::Duration::from_millis(100)
-                        } else {
-                            false
-                        };
-                        
-                        if should_ignore {
-                            // We just opened the window from tray - ignore this focus loss
-                            println!("[Window] Ignoring focus loss (window just shown)");
-                        } else if is_pinned {
-                            // Window is pinned - keep it visible
-                            println!("[Window] Pinned, staying visible");
-                        } else {
-                            // Window is not pinned - hide it immediately
-                            println!("[Window] Not pinned, hiding");
-                            let _ = window.hide();
+                    if !focused && !is_pinned {
+                        // Window lost focus and not pinned - hide it and record timestamp
+                        println!("[Window] Lost focus, hiding");
+                        if let Ok(mut last) = last_hidden_for_events.lock() {
+                            *last = Instant::now();
                         }
+                        let _ = window.hide();
                     }
                 }
                 _ => {}
