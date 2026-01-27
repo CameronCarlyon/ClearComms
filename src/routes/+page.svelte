@@ -93,6 +93,7 @@
   let buttonMappings = $state<ButtonMapping[]>([]);
   let pinnedApps = $state<Set<string>>(new Set());
   let windowPinned = $state(false);
+  let dockContainer = $state<HTMLElement | null>(null);
   let pollingInterval: number | null = null;
   let audioMonitorInterval: number | null = null;
   let isPolling = $state(false);
@@ -1629,6 +1630,51 @@
       console.error("Error toggling window pin:", error);
     }
   }
+
+  function handleDockFocusIn() {
+    dockOpen = true;
+  }
+
+  function handleDockFocusOut(event: FocusEvent) {
+    // relatedTarget is where focus is moving TO
+    const nextFocus = event.relatedTarget as Node | null;
+    
+    // If focus is moving to another element inside the dock, do nothing
+    if (dockContainer && nextFocus && dockContainer.contains(nextFocus)) {
+      return;
+    }
+    
+    // Focus is leaving the dock entirely - close menus and dock
+    settingsMenuExpanded = false;
+    closeMenuExpanded = false;
+    dockOpen = false;
+  }
+
+  function handleSettingsMenuFocusOut(event: FocusEvent) {
+    const nextFocus = event.relatedTarget as Node | null;
+    const currentTarget = event.currentTarget as HTMLElement | null;
+    
+    // If focus is moving to another element inside this menu, do nothing
+    if (currentTarget && nextFocus && currentTarget.contains(nextFocus)) {
+      return;
+    }
+    
+    // Focus is leaving the settings menu - close it
+    settingsMenuExpanded = false;
+  }
+
+  function handleCloseMenuFocusOut(event: FocusEvent) {
+    const nextFocus = event.relatedTarget as Node | null;
+    const currentTarget = event.currentTarget as HTMLElement | null;
+    
+    // If focus is moving to another element inside this menu, do nothing
+    if (currentTarget && nextFocus && currentTarget.contains(nextFocus)) {
+      return;
+    }
+    
+    // Focus is leaving the close menu - close it
+    closeMenuExpanded = false;
+  }
 </script>
 
 <svelte:window on:keydown={handleGlobalTab} />
@@ -1779,7 +1825,7 @@
                   >
                     <span class="mapping-icon default" aria-hidden="true">
                       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 640 640" width="20" height="20" fill="currentColor">
-                        <path d="M80 416L128 416L262.1 535.2C268.5 540.9 276.7 544 285.2 544C304.4 544 320 528.4 320 509.2L320 130.8C320 111.6 304.4 96 285.2 96C276.7 96 268.5 99.1 262.1 104.8L128 224L80 224C53.5 224 32 245.5 32 272L32 368C32 394.5 53.5 416 80 416zM399 239C389.6 248.4 389.6 263.6 399 272.9L446 319.9L399 366.9C389.6 376.3 389.6 391.5 399 400.8C408.4 410.1 423.6 410.2 432.9 400.8L479.9 353.8L526.9 400.8C536.3 410.2 551.5 410.2 560.8 400.8C570.1 391.4 570.2 376.2 560.8 366.9L513.8 319.9L560.8 272.9C570.2 263.5 570.2 248.3 560.8 239C551.4 229.7 536.2 229.6 526.9 239L479.9 286L432.9 239C423.5 229.6 408.3 229.6 399 239z"/>
+                        <path d="M183.1 137.4C170.6 124.9 150.3 124.9 137.8 137.4C125.3 149.9 125.3 170.2 137.8 182.7L275.2 320L137.9 457.4C125.4 469.9 125.4 490.2 137.9 502.7C150.4 515.2 170.7 515.2 183.2 502.7L320.5 365.3L457.9 502.6C470.4 515.1 490.7 515.1 503.2 502.6C515.7 490.1 515.7 469.8 503.2 457.3L365.8 320L503.1 182.6C515.6 170.1 515.6 149.8 503.1 137.3C490.6 124.8 470.3 124.8 457.8 137.3L320.5 274.7L183.1 137.4z"/>
                       </svg>
                     </span>
                     <span class="mapping-icon remove" aria-hidden="true">
@@ -1961,7 +2007,7 @@
                       type="button"
                     >
                       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 640 640" width="20" height="20" fill="currentColor" aria-hidden="true">
-                        <path d="M183.1 137.4C170.6 124.9 150.3 124.9 137.8 137.4C125.3 149.9 125.3 170.2 137.8 182.7L275.2 320L137.9 457.4C125.4 469.9 125.4 490.2 137.9 502.7C150.4 515.2 170.7 515.2 183.2 502.7L320.5 365.3L457.9 502.6C470.4 515.1 490.7 515.1 503.2 502.6C515.7 490.1 515.7 469.8 503.2 457.3L365.8 320L503.1 182.6C515.6 170.1 515.6 149.8 503.1 137.3C490.6 124.8 470.3 124.8 457.8 137.3L320.5 274.7L183.1 137.4z" />
+                        <path d="M183.1 137.4C170.6 124.9 150.3 124.9 137.8 137.4C125.3 149.9 125.3 170.2 137.8 182.7L275.2 320L137.9 457.4C125.4 469.9 125.4 490.2 137.9 502.7C150.4 515.2 170.7 515.2 183.2 502.7L320.5 365.3L457.9 502.6C470.4 515.1 490.7 515.1 503.2 502.6C515.7 490.1 515.7 469.8 503.2 457.3L365.8 320L503.1 182.6C515.6 170.1 515.6 149.8 503.1 137.3C490.6 124.8 470.3 124.8 457.8 137.3L320.5 274.7L183.1 137.4z"/>
                       </svg>
                     </button>
     
@@ -2038,6 +2084,9 @@
                 dockOpen = false;
               }
             }}
+            bind:this={dockContainer}
+            onfocusin={handleDockFocusIn}
+            onfocusout={handleDockFocusOut}
             role="region"
             aria-label="Application controls"
           >
@@ -2052,6 +2101,7 @@
                 class="btn-add-app-container controls settings-menu"
                 class:expanded={settingsMenuExpanded}
                 class:hidden={closeMenuExpanded}
+                onfocusout={handleSettingsMenuFocusOut}
               >
                 {#if settingsMenuExpanded}
                   <div class="add-app-list">
@@ -2156,6 +2206,7 @@
                 class="btn-add-app-container controls close-menu"
                 class:expanded={closeMenuExpanded}
                 class:hidden={settingsMenuExpanded}
+                onfocusout={handleCloseMenuFocusOut}
               >
                 {#if closeMenuExpanded}
                   <div class="add-app-list">
@@ -2275,7 +2326,7 @@
   <!-- Boot Screen -->
   <div class="boot-screen" role="status" aria-live="polite">
     <h1 class="boot-title">ClearComms</h1>
-    <p class="boot-status" class:error={initStatus === 'Failed'} role={initStatus === 'Failed' ? 'alert' : 'status'}>
+    <p class="boot-status" class:error={initStatus === 'Failed' ? true : false} role={initStatus === 'Failed' ? 'alert' : 'status'}>
       {initStatus === 'Failed' ? errorMsg : initStatus}
     </p>
     {#if initStatus === 'Failed'}
@@ -2580,16 +2631,11 @@
     max-height: 50vh;
   }
 
-  .dock-hover-zone:hover .btn-add-app-container.controls {
+  /* Show dock controls when dock is open or expanded */
+  .dock.open .btn-add-app-container.controls,
+  .dock.expanded .btn-add-app-container.controls,
+  .dock.settings-expanded .btn-add-app-container.controls {
     transform: scale(1);
-  }
-
-  .dock-hover-zone:hover .btn-add-app-container.controls.hidden {
-    transform: scale(0) !important;
-  }
-
-  .dock-hover-zone:hover .btn-add-app-container.controls.expanded {
-    transform: scale(1) !important;
   }
 
   /* ===== ONBOARDING VIEW ===== */
@@ -2653,6 +2699,7 @@
     width: 46px;
     height: 100%;
     min-width: 46px;
+    min-height: 46px;
     border-radius: 23px;
     background: var(--bg-card);
     border: 1px solid var(--text-muted);
