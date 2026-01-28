@@ -484,6 +484,16 @@
         pendingButtonBinding = null;
         addAppListExpanded = false;
       }
+      
+      // Close dock and menus when window loses focus
+      dockOpen = false;
+      settingsMenuExpanded = false;
+      closeMenuExpanded = false;
+      
+      // Move focus away from dock to prevent it reopening on tab-back
+      if (dockContainer && document.activeElement && dockContainer.contains(document.activeElement)) {
+        document.body.focus();
+      }
     };
 
     window.addEventListener('blur', handleBlur);
