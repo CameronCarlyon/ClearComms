@@ -1,6 +1,6 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
-  "productName": "clearcomms",
+  "productName": "ClearComms",
   "version": "0.1.0",
   "identifier": "com.cameroncarlyon.clearcomms",
   "build": {
@@ -32,14 +32,14 @@
     }
   },
   "bundle": {
-    "active": true,
-    "targets": "all",
-    "icon": [
-      "icons/32x32.png",
-      "icons/128x128.png",
-      "icons/128x128@2x.png",
-      "icons/icon.icns",
-      "icons/icon.ico"
-    ]
-  }
+  "active": true,
+  "targets": "all",
+  "icon": [
+    "icons/white/32x32.png",
+    "icons/white/128x128.png",
+    "icons/white/128x128@2x.png",
+    "icons/white/icon.icns",
+    "icons/white/icon.ico"
+  ]
+}
 }

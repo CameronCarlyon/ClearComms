@@ -25,8 +25,9 @@
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
+use tauri::image::Image;
 use tauri::Manager;
-use tauri::tray::{TrayIconBuilder, MouseButton, MouseButtonState};
+use tauri::tray::{TrayIconBuilder, TrayIconId, MouseButton, MouseButtonState};
 
 mod audio_management;
 mod hardware_input;
@@ -54,6 +55,81 @@ const RESIZE_ANIMATION_DURATION_MS: u64 = 200;
 
 /// Frame interval for resize animation (~60fps)
 const RESIZE_ANIMATION_FRAME_MS: u64 = 16;
+
+/// Tray icon identifier
+const TRAY_ICON_ID: &str = "clearcomms-tray";
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Theme Detection (Windows)
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// Checks if Windows is using light mode for applications.
+/// Returns `true` for light mode (use black icon), `false` for dark mode (use white icon).
+#[cfg(target_os = "windows")]
+fn is_windows_light_mode() -> bool {
+    use windows::Win32::System::Registry::{
+        RegCloseKey, RegOpenKeyExW, RegQueryValueExW, HKEY_CURRENT_USER, KEY_READ, REG_DWORD,
+    };
+    use windows::core::w;
+    
+    unsafe {
+        let mut hkey = windows::Win32::System::Registry::HKEY::default();
+        let subkey = w!("Software\\Microsoft\\Windows\\CurrentVersion\\Themes\\Personalize");
+        
+        // Open the registry key
+        if RegOpenKeyExW(HKEY_CURRENT_USER, subkey, 0, KEY_READ, &mut hkey).is_err() {
+            return false;
+        }
+        
+        let value_name = w!("AppsUseLightTheme");
+        let mut data: u32 = 0;
+        let mut data_size = std::mem::size_of::<u32>() as u32;
+        let mut data_type = REG_DWORD;
+        
+        let result = RegQueryValueExW(
+            hkey,
+            value_name,
+            None,
+            Some(&mut data_type),
+            Some(&mut data as *mut u32 as *mut u8),
+            Some(&mut data_size),
+        );
+        
+        let _ = RegCloseKey(hkey);
+        
+        if result.is_ok() {
+            // 1 = light mode, 0 = dark mode
+            data == 1
+        } else {
+            false
+        }
+    }
+}
+
+#[cfg(not(target_os = "windows"))]
+fn is_windows_light_mode() -> bool {
+    false
+}
+
+/// Loads the appropriate tray icon based on the current Windows theme.
+/// Returns the white icon for dark mode, black icon for light mode.
+fn load_theme_appropriate_icon() -> Image<'static> {
+    let is_light = is_windows_light_mode();
+    let icon_bytes: &[u8] = if is_light {
+        // Light mode: use black icon for contrast
+        include_bytes!("../icons/black/32x32.png")
+    } else {
+        // Dark mode: use white icon for contrast
+        include_bytes!("../icons/white/32x32.png")
+    };
+    
+    // Decode PNG to RGBA
+    let img = image::load_from_memory(icon_bytes).expect("Failed to decode tray icon PNG");
+    let rgba = img.to_rgba8();
+    let (width, height) = rgba.dimensions();
+    
+    Image::new_owned(rgba.into_raw(), width, height)
+}
 
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -288,10 +364,11 @@ fn main() {
                 let _ = window.hide();
             }
             
-            // Build tray icon without menu (we'll use custom window)
+            // Build tray icon with theme-appropriate icon
             let last_hidden_tray = last_hidden_for_setup.clone();
-            let _tray = TrayIconBuilder::new()
-                .icon(app.default_window_icon().unwrap().clone())
+            let tray_id = TrayIconId::new(TRAY_ICON_ID);
+            let _tray = TrayIconBuilder::with_id(tray_id)
+                .icon(load_theme_appropriate_icon())
                 .tooltip("ClearComms")
                 .on_tray_icon_event(move |tray, event| {
                     let app = tray.app_handle();
@@ -349,6 +426,38 @@ fn main() {
                     }
                 })
                 .build(app)?;
+            
+            // Spawn a background thread to monitor Windows theme changes
+            // and update the tray icon accordingly
+            let app_handle = app.handle().clone();
+            std::thread::spawn(move || {
+                let mut last_light_mode = is_windows_light_mode();
+                
+                loop {
+                    std::thread::sleep(Duration::from_secs(2));
+                    
+                    let current_light_mode = is_windows_light_mode();
+                    if current_light_mode != last_light_mode {
+                        last_light_mode = current_light_mode;
+                        
+                        // Update tray icon on the main thread
+                        let app_for_tray = app_handle.clone();
+                        let _ = app_handle.run_on_main_thread(move || {
+                            match app_for_tray.tray_by_id(TRAY_ICON_ID) {
+                                Some(tray) => {
+                                    let new_icon = load_theme_appropriate_icon();
+                                    if let Err(e) = tray.set_icon(Some(new_icon)) {
+                                        eprintln!("[Theme] Failed to update tray icon: {}", e);
+                                    }
+                                }
+                                None => {
+                                    eprintln!("[Theme] Could not find tray icon with id '{}'", TRAY_ICON_ID);
+                                }
+                            }
+                        });
+                    }
+                }
+            });
             
             Ok(())
         })
