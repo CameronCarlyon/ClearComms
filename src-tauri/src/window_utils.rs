@@ -22,7 +22,6 @@ const TASKBAR_HEIGHT: i32 = 72;
 /// Position the window in the bottom-right corner of the primary monitor.
 ///
 /// This places the window above the Windows taskbar with appropriate padding,
-/// creating a "widget-like" appearance similar to system utilities.
 ///
 /// # Arguments
 /// * `window` - The Tauri webview window to position

@@ -15,7 +15,7 @@
 //!
 //! - [`audio_management`] - Windows Core Audio API integration
 //! - [`hardware_input`] - RawInput/HID device polling
-//! - [`simvar_input`] - SimConnect integration (planned)
+//! - [`lvar_input`] - Flight Simulator LVar integration
 //! - [`native_menu`] - Windows system tray context menu
 //! - [`window_utils`] - Window positioning utilities
 
@@ -31,7 +31,7 @@ use tauri::tray::{TrayIconBuilder, TrayIconId, MouseButton, MouseButtonState};
 
 mod audio_management;
 mod hardware_input;
-mod simvar_input;
+mod lvar_input;
 mod native_menu;
 mod window_utils;
 
@@ -270,6 +270,35 @@ fn is_window_pinned(app: tauri::AppHandle) -> Result<bool, String> {
     } else {
         Err("Main window not found".to_string())
     }
+}
+
+/// Restart the application
+#[tauri::command]
+async fn restart_application(app: tauri::AppHandle) -> Result<(), String> {
+    // Close the current app gracefully
+    app.exit(0);
+    
+    // Relaunch the application
+    #[cfg(target_os = "windows")]
+    {
+        use std::process::Command;
+        use std::env;
+        
+        let current_exe = env::current_exe()
+            .map_err(|e| format!("Failed to get current executable: {}", e))?;
+        
+        Command::new(current_exe)
+            .spawn()
+            .map_err(|e| format!("Failed to restart application: {}", e))?;
+    }
+    
+    #[cfg(not(target_os = "windows"))]
+    {
+        // Placeholder for non-Windows platforms
+        return Err("Restart not implemented for this platform".to_string());
+    }
+    
+    Ok(())
 }
 
 /// Quit the application
@@ -512,6 +541,7 @@ fn main() {
             hide_main_window,
             toggle_pin_window,
             is_window_pinned,
+            restart_application,
             quit_application,
             open_url,
         ])

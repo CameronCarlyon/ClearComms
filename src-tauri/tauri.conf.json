@@ -14,8 +14,8 @@
       {
         "title": "ClearComms",
         "label": "main",
-        "width": 400,
-        "height": 1000,
+        "width": 600,
+        "height": 600,
         "resizable": false,
         "fullscreen": false,
         "decorations": false,
