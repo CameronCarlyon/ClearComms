@@ -106,7 +106,7 @@
     border-radius: 23px;
     background: var(--bg-card);
     border: 1px solid var(--text-muted);
-    color: white;
+    color: var(--text-primary);
     cursor: pointer;
     display: flex;
     align-items: center;

@@ -170,7 +170,7 @@
   }
 
   .btn-enabled :global(svg) {
-    fill: #181818;
+    fill: currentColor;
   }
 
   .btn-enabled:hover:not(:disabled) {
