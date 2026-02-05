@@ -399,8 +399,12 @@
     fetchWindowPinnedState();
     autoInitialise();
 
-    const handleBlur = () => {
-      if (isEditMode) {
+    const handleBlur = async () => {
+      // Fetch current pinned state to ensure we have the latest value
+      await fetchWindowPinnedState();
+      
+      // Only disable edit mode if window is NOT pinned on top
+      if (isEditMode && !windowPinned) {
         isEditMode = false;
         isBindingMode = false;
         isButtonBindingMode = false;
@@ -414,10 +418,19 @@
       closeMenuExpanded = false;
     };
 
+    const handleFocus = () => {
+      // Close menus when window regains focus (dock may be opened by focus events)
+      settingsMenuExpanded = false;
+      closeMenuExpanded = false;
+      addAppListExpanded = false;
+    };
+
     window.addEventListener('blur', handleBlur);
+    window.addEventListener('focus', handleFocus);
 
     return () => {
       window.removeEventListener('blur', handleBlur);
+      window.removeEventListener('focus', handleFocus);
     };
   });
 

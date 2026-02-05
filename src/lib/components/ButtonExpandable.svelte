@@ -11,6 +11,7 @@
     ariaLabel: string;
     title: string;
     variant?: 'default' | 'controls';
+    anchor?: 'left' | 'right';
     class?: string;
     icon?: Snippet;
     expandedIcon?: Snippet;
@@ -23,6 +24,7 @@
     ariaLabel, 
     title, 
     variant = 'default',
+    anchor = 'left',
     class: className = '',
     icon,
     expandedIcon,
@@ -35,7 +37,7 @@
 </script>
 
 <div 
-  class="btn-add-app-container {variant} {className}"
+  class="btn-add-app-container {variant} anchor-{anchor} {className}"
   class:expanded
 >
   {#if expanded && children}
@@ -68,53 +70,31 @@
 <style>
   .btn-add-app-container {
     position: relative;
-    width: 46px;
+    width: 100%;
     height: 100%;
     border-radius: 29px;
     display: flex;
     flex-direction: column;
-    align-items: center;
     justify-content: flex-end;
-    transition: width 0.3s ease, background 0.3s ease, border-color 0.3s ease;
+    transition: background 0.3s ease, border-color 0.3s ease;
     background: transparent;
     border: 1px solid transparent;
   }
 
+  /* Anchor positioning - button sticks to anchor side when collapsed */
+  .btn-add-app-container.anchor-left {
+    align-items: flex-start;
+  }
+
+  .btn-add-app-container.anchor-right {
+    align-items: flex-end;
+  }
+
   .btn-add-app-container.expanded {
-    width: 180px;
+    align-items: stretch;
     background: var(--bg-card);
     border-color: var(--text-muted);
     justify-content: space-between;
-  }
-
-  /* Controls variant */
-  .btn-add-app-container.controls {
-    height: 46px;
-    width: 46px;
-    justify-content: flex-end;
-    transition: width 0.3s ease, height 0.3s ease, background 0.3s ease, border-color 0.3s ease, transform 0.3s ease, opacity 0.3s ease;
-    transform: scale(0);
-    align-self: flex-end;
-  }
-
-  .btn-add-app-container.controls.expanded {
-    height: 100%;
-    transform: scale(1) !important;
-    background: var(--bg-card);
-    border-color: var(--text-muted);
-    justify-content: flex-start;
-  }
-
-  .btn-add-app-container.controls.expanded .add-app-list {
-    flex: 1;
-    overflow: hidden;
-  }
-
-  /* Hidden state */
-  .btn-add-app-container.hidden {
-    transform: scale(0);
-    opacity: 0;
-    pointer-events: none;
   }
 
   /* Button styles */
@@ -131,7 +111,7 @@
     display: flex;
     align-items: center;
     justify-content: center;
-    transition: border-color 0.2s ease, box-shadow 0.2s ease, height 0.3s ease, background 0.3s ease;
+    transition: border-color 0.2s ease, box-shadow 0.2s ease, height 0.3s ease, background 0.3s ease, width 0.3s ease;
     flex-shrink: 0;
   }
 

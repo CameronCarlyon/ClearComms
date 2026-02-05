@@ -30,7 +30,7 @@ src/
 │   │   ├── VolumeSlider.svelte   # Vertical volume control
 │   │   ├── MuteButton.svelte     # Mute toggle button
 │   │   ├── ChannelButton.svelte  # Unified channel control button (bind, toggle, action)
-│   │   ├── AppListItem.svelte    # Application list item
+│   │   ├── ListOption.svelte     # List option item
 │   │   ├── ExpandableButton.svelte # Button with expandable menu
 │   │   ├── Dock.svelte           # Bottom hover dock
 │   │   ├── BootScreen.svelte     # Loading/error state

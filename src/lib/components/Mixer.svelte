@@ -6,8 +6,7 @@
   import { createEventDispatcher } from 'svelte';
   import type { AudioSession, AxisMapping, ButtonMapping } from '$lib/types';
   import ApplicationChannel from './ApplicationChannel.svelte';
-  import ButtonExpandable from './ButtonExpandable.svelte';
-  import AppListItem from './AppListItem.svelte';
+  import ButtonAddApplication from './ButtonAddApplication.svelte';
   import { formatProcessName } from '$lib/stores/audioStore';
 
   interface Props {
@@ -35,6 +34,8 @@
     pendingButtonBinding,
     addAppListExpanded = $bindable()
   }: Props = $props();
+
+  let isOnboarding = $derived(boundSessions.length === 0);
 
   const dispatch = createEventDispatcher<{
     volumedragstart: { sessionId: string };
@@ -108,44 +109,22 @@
         </div>
       {:else}
         <!-- Add Application Button -->
-        <ButtonExpandable
+        <ButtonAddApplication
           bind:expanded={addAppListExpanded}
-          disabled={availableSessions.length === 0}
-          ariaLabel={availableSessions.length > 0 ? (addAppListExpanded ? "Close application list" : "Add application") : "No applications available"}
-          title={availableSessions.length > 0 ? (addAppListExpanded ? "Close" : "Add Application") : "No applications available"}
-        >
-          {#snippet children()}
-            {#each availableSessions as session}
-              <AppListItem
-                processName={session.process_name}
-                displayName={formatProcessName(session.process_name)}
-                on:select
-              />
-            {/each}
-          {/snippet}
-        </ButtonExpandable>
+          {availableSessions}
+          on:select
+        />
       {/if}
     {/if}
-  </div>
-{:else}
-  <!-- Onboarding View -->
-  <div class="onboarding-container">
-    <ButtonExpandable
-      bind:expanded={addAppListExpanded}
-      disabled={availableSessions.length === 0}
-      ariaLabel={availableSessions.length > 0 ? (addAppListExpanded ? "Close application list" : "Add application") : "No applications available"}
-      title={availableSessions.length > 0 ? (addAppListExpanded ? "Close" : "Add Application") : "No applications available"}
-    >
-      {#snippet children()}
-        {#each availableSessions as session}
-          <AppListItem
-            processName={session.process_name}
-            displayName={formatProcessName(session.process_name)}
-            on:select
-          />
-        {/each}
-      {/snippet}
-    </ButtonExpandable>
+
+    <!-- Onboarding View -->
+    {#if isOnboarding}
+      <ButtonAddApplication
+        bind:expanded={addAppListExpanded}
+        {availableSessions}
+        on:select
+      />
+    {/if}
   </div>
 {/if}
 
@@ -195,16 +174,6 @@
   .app-name.inactive {
     color: var(--text-muted);
     font-weight: 500;
-  }
-
-  .onboarding-container {
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    justify-content: center;
-    flex: 1;
-    min-height: 0;
-    gap: 1.5rem;
   }
 
   .volume-bar-container {
