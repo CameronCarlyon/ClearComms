@@ -155,7 +155,7 @@
     
     /* Interaction */
     cursor: pointer;
-    transition: box-shadow 0.2s ease, border-color 0.2s ease;
+    transition: box-shadow 0.2s ease, border-color 0.2s ease, background 0.2s ease;
   }
 
   .btn-channel:active:not(:disabled) {

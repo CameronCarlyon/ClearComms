@@ -1,6 +1,6 @@
 <!--
   VolumeSlider Component
-  Vertical volume slider with smooth drag, wheel, and click-to-animate support
+  Vertical volume slider with smooth drag, wheel, and animation support
 -->
 <script lang="ts">
   import { createEventDispatcher } from 'svelte';
@@ -178,11 +178,12 @@
   }
 
   .volume-slider:disabled {
-    opacity: 0.4;
+    opacity: 0.5;
     cursor: not-allowed;
   }
 
   .volume-slider:disabled::-webkit-slider-runnable-track {
     cursor: not-allowed;
+    opacity: 0;
   }
 </style>

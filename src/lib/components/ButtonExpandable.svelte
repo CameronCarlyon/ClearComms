@@ -12,6 +12,7 @@
     title: string;
     variant?: 'default' | 'controls';
     anchor?: 'left' | 'right';
+    onboarding?: boolean;
     class?: string;
     icon?: Snippet;
     expandedIcon?: Snippet;
@@ -25,6 +26,7 @@
     title, 
     variant = 'default',
     anchor = 'left',
+    onboarding = false,
     class: className = '',
     icon,
     expandedIcon,
@@ -39,6 +41,7 @@
 <div 
   class="btn-add-app-container {variant} anchor-{anchor} {className}"
   class:expanded
+  class:onboarding
 >
   {#if expanded && children}
     <div class="add-app-list" role="listbox">
@@ -70,13 +73,14 @@
 <style>
   .btn-add-app-container {
     position: relative;
-    width: 100%;
+    width: 46px;
     height: 100%;
     border-radius: 29px;
     display: flex;
     flex-direction: column;
+    align-items: center;
     justify-content: flex-end;
-    transition: background 0.3s ease, border-color 0.3s ease;
+    transition: width 0.3s ease, height 0.3s ease, background 0.3s ease, border-color 0.3s ease;
     background: transparent;
     border: 1px solid transparent;
   }
@@ -90,7 +94,13 @@
     align-items: flex-end;
   }
 
+  .btn-add-app-container.onboarding {
+    height: 46px;
+  }
+
   .btn-add-app-container.expanded {
+    width: 180px;
+    height: 100%;
     align-items: stretch;
     background: var(--bg-card);
     border-color: var(--text-muted);
@@ -99,7 +109,7 @@
 
   /* Button styles */
   .btn-add-app {
-    width: 46px;
+    width: 100%;
     height: 100%;
     min-width: 46px;
     min-height: 46px;
@@ -111,7 +121,7 @@
     display: flex;
     align-items: center;
     justify-content: center;
-    transition: border-color 0.2s ease, box-shadow 0.2s ease, height 0.3s ease, background 0.3s ease, width 0.3s ease;
+    transition: border-color 0.2s ease, box-shadow 0.2s ease, height 0.3s ease, background 0.3s ease, width 0.3s ease, margin 0.3s ease;
     flex-shrink: 0;
   }
 

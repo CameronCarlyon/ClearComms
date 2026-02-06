@@ -270,7 +270,7 @@
     flex-direction: column;
     align-items: center;
     gap: 1rem;
-    transition: all 0.2s ease;
+    transition: all 0.3s ease;
   }
 
   .application-channel.inactive {

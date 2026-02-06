@@ -112,18 +112,10 @@
         <ButtonAddApplication
           bind:expanded={addAppListExpanded}
           {availableSessions}
+          onboarding={isOnboarding}
           on:select
         />
       {/if}
-    {/if}
-
-    <!-- Onboarding View -->
-    {#if isOnboarding}
-      <ButtonAddApplication
-        bind:expanded={addAppListExpanded}
-        {availableSessions}
-        on:select
-      />
     {/if}
   </div>
 {/if}
