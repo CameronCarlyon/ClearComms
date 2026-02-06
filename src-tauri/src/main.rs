@@ -514,8 +514,13 @@ fn main() {
                     } else if !focused {
                         // Window not pinned and lost focus - hide it and record timestamp
                         println!("[Window] Lost focus, hiding");
-                        if let Ok(mut last) = last_hidden_for_events.lock() {
-                            *last = Instant::now();
+                        // Only update last_hidden if the window was actually visible
+                        if let Ok(is_visible) = window.is_visible() {
+                            if is_visible {
+                                if let Ok(mut last) = last_hidden_for_events.lock() {
+                                    *last = Instant::now();
+                                }
+                            }
                         }
                         let _ = window.hide();
                     }

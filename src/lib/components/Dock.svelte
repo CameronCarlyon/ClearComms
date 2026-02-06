@@ -6,7 +6,7 @@
   import { invoke } from '@tauri-apps/api/core';
   import { Window } from '@tauri-apps/api/window';
   import { createEventDispatcher } from 'svelte';
-  import { ButtonExpandable, ButtonRound } from '$lib/components';
+  import { ButtonExpandable, ButtonRound, ListOption } from '$lib/components';
   
   interface Props {
     dockOpen: boolean;
@@ -221,20 +221,19 @@
         <span style="font-size: 0.875rem;">Return</span>
       {/snippet}
       {#snippet children()}
-        <button 
-          class="btn-close menu-option"
-          onclick={handleQuit}
-          type="button"
-        >
-          Quit
-        </button>
-        <button 
-          class="menu-option"
-          onclick={handleMinimise}
-          type="button"
-        >
-          Minimise
-        </button>
+        <ListOption
+          displayName="Quit"
+          danger={true}
+          fullWidth={true}
+          ariaLabel="Quit the application"
+          on:select={handleQuit}
+        />
+        <ListOption
+          displayName="Minimise"
+          fullWidth={true}
+          ariaLabel="Minimise the application"
+          on:select={handleMinimise}
+        />
       {/snippet}
     </ButtonExpandable>
     </div>
@@ -397,37 +396,5 @@
   .settings-icon-button:active {
     background: var(--text-primary);
     color: var(--bg-primary);
-  }
-
-  /* Close menu content */
-  .menu-option {
-    width: calc(100% - 12px);
-    height: 46px;
-    min-height: 46px;
-    margin: 6px;
-    margin-top: 6px;
-    background: transparent;
-    border: none;
-    border-radius: 23px;
-    color: white;
-    cursor: pointer;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    transition: background 0.15s ease, box-shadow 0.2s ease;
-  }
-
-  .menu-option:hover {
-    background: var(--bg-card-hover);
-  }
-
-  .btn-close {
-    color: inherit;
-  }
-
-  .btn-close:hover {
-    background: #ff4444 !important;
-    color: white !important;
-    box-shadow: 0 0 80px rgba(255, 68, 68, 0.5);
   }
 </style>

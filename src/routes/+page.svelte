@@ -79,6 +79,7 @@
   let dragTargets = $state<Map<string, number>>(new Map());
   let dragAnimationFrames = $state<Map<string, number>>(new Map());
   let manuallyControlledSessions = $state<Set<string>>(new Set());
+  let pinnedAppsLoaded = $state(false);
   
   // Menu expansion states
   let addAppListExpanded = $state(false);
@@ -92,7 +93,10 @@
 
   $effect(() => {
     // Enforce edit mode when no pinned applications (onboarding mode)
-    if (pinnedApps.size === 0) {
+    if (!pinnedAppsLoaded || initStatus !== "Ready") {
+      return;
+    }
+    if (pinnedApps.size === 0 && !isEditMode) {
       isEditMode = true;
     }
   });
@@ -1431,6 +1435,8 @@
       }
     } catch (error) {
       console.error("Error loading pinned apps:", error);
+    } finally {
+      pinnedAppsLoaded = true;
     }
   }
 
