@@ -101,6 +101,13 @@
     }
   });
 
+  $effect(() => {
+    // Keep windowPinned state in sync when settings menu is opened
+    if (settingsMenuExpanded || dockOpen) {
+      fetchWindowPinnedState();
+    }
+  });
+
   // ─────────────────────────────────────────────────────────────────────────────
   // CONSTANTS
   // ─────────────────────────────────────────────────────────────────────────────
@@ -407,26 +414,34 @@
       // Fetch current pinned state to ensure we have the latest value
       await fetchWindowPinnedState();
       
-      // Only disable edit mode if window is NOT pinned on top
-      if (isEditMode && !windowPinned) {
-        isEditMode = false;
-        isBindingMode = false;
-        isButtonBindingMode = false;
-        pendingBinding = null;
-        pendingButtonBinding = null;
-        addAppListExpanded = false;
+      // Only close menus and disable edit mode if window is NOT pinned on top
+      if (!windowPinned) {
+        if (isEditMode) {
+          isEditMode = false;
+          isBindingMode = false;
+          isButtonBindingMode = false;
+          pendingBinding = null;
+          pendingButtonBinding = null;
+          addAppListExpanded = false;
+        }
+        
+        dockOpen = false;
+        settingsMenuExpanded = false;
+        closeMenuExpanded = false;
       }
-      
-      dockOpen = false;
-      settingsMenuExpanded = false;
-      closeMenuExpanded = false;
     };
 
-    const handleFocus = () => {
+    const handleFocus = async () => {
+      // Fetch current pinned state to ensure we have the latest value
+      await fetchWindowPinnedState();
+      
       // Close menus when window regains focus (dock may be opened by focus events)
-      settingsMenuExpanded = false;
-      closeMenuExpanded = false;
-      addAppListExpanded = false;
+      // But only if window is not pinned on top
+      if (!windowPinned) {
+        settingsMenuExpanded = false;
+        closeMenuExpanded = false;
+        addAppListExpanded = false;
+      }
     };
 
     window.addEventListener('blur', handleBlur);
