@@ -20,6 +20,7 @@
     pendingBinding: { sessionId: string; sessionName: string; processId: number; processName: string } | null;
     pendingButtonBinding: { sessionId: string; sessionName: string; processId: number; processName: string } | null;
     addAppListExpanded: boolean;
+    addAppComponentKey: number;
   }
 
   let {
@@ -32,7 +33,8 @@
     isButtonBindingMode,
     pendingBinding,
     pendingButtonBinding,
-    addAppListExpanded = $bindable()
+    addAppListExpanded = $bindable(),
+    addAppComponentKey
   }: Props = $props();
 
   let isOnboarding = $derived(boundSessions.length === 0);
@@ -109,12 +111,14 @@
         </div>
       {:else}
         <!-- Add Application Button -->
-        <ButtonAddApplication
-          bind:expanded={addAppListExpanded}
-          {availableSessions}
-          onboarding={isOnboarding}
-          on:select
-        />
+        {#key addAppComponentKey}
+          <ButtonAddApplication
+            bind:expanded={addAppListExpanded}
+            {availableSessions}
+            onboarding={isOnboarding}
+            on:select
+          />
+        {/key}
       {/if}
     {/if}
   </div>

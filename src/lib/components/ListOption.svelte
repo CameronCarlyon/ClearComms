@@ -12,6 +12,7 @@
     ariaLabel?: string;
     fullWidth?: boolean;
     animationIndex?: number;
+    class?: string;
   }
   
   let { 
@@ -20,7 +21,8 @@
     danger = false,
     ariaLabel,
     fullWidth = false,
-    animationIndex = 0
+    animationIndex = 0,
+    class: className = ''
   }: Props = $props();
   
   const dispatch = createEventDispatcher<{
@@ -34,7 +36,7 @@
 </script>
 
 <button 
-  class="list-option"
+  class="list-option {className}"
   class:danger
   class:full-width={fullWidth}
   role="option"
@@ -49,7 +51,7 @@
 <style>
   .list-option {
     padding: 1rem;
-    margin: 6px;
+    min-width: 100%;
     background: transparent;
     border: none;
     border-radius: 23px;
@@ -66,6 +68,12 @@
     animation: fadeInSlide 0.25s ease-out forwards;
     animation-delay: var(--animation-delay, 0s);
     opacity: 0;
+    height: 46px;
+    min-height: 46px;
+  }
+
+  .close-option {
+    text-align: center;
   }
 
   @keyframes fadeInSlide {

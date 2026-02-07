@@ -124,8 +124,8 @@
   <div 
     class="dock" 
     class:open={dockOpen}
-    class:expanded={closeMenuExpanded}
-    class:settings-expanded={settingsMenuExpanded}
+    class:expanded-close={closeMenuExpanded}
+    class:expanded-settings={settingsMenuExpanded}
   >
     <!-- Settings Menu -->
     <div class="settings-wrapper" class:expanded={settingsMenuExpanded} class:hidden={closeMenuExpanded}>
@@ -218,7 +218,7 @@
         </svg>
       {/snippet}
       {#snippet expandedIcon()}
-        <span style="font-size: 0.875rem;">Return</span>
+        <p>Return</p>
       {/snippet}
       {#snippet children()}
         <ListOption
@@ -226,12 +226,14 @@
           danger={true}
           fullWidth={true}
           ariaLabel="Quit the application"
+          class="close-option"
           on:select={handleQuit}
         />
         <ListOption
           displayName="Minimise"
           fullWidth={true}
           ariaLabel="Minimise the application"
+          class="close-option"
           on:select={handleMinimise}
         />
       {/snippet}
@@ -271,7 +273,12 @@
   }
 
   .dock-hover-zone.expanded::before {
-    display: none;
+    opacity: 0;
+    pointer-events: none;
+  }
+
+  .dock-hover-zone.expanded:hover::before {
+    opacity: 0;
   }
 
   .dock-hover-zone:hover::before {
@@ -296,14 +303,14 @@
     max-height: 60px;
   }
 
-  .dock.expanded {
-    height: 50vh;
-    max-height: 50vh;
+  .dock.expanded-settings {
+    height: 17vh;
+    max-height: 17vh;
   }
 
-  .dock.settings-expanded {
-    height: 50vh;
-    max-height: 50vh;
+  .dock.expanded-close {
+    height: 162px;
+    max-height: 162px;
   }
 
   /* Menu button wrappers */

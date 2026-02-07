@@ -25,6 +25,8 @@
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
+#[allow(unused_imports)]
+use lazy_static::lazy_static;
 use tauri::image::Image;
 use tauri::Manager;
 use tauri::tray::{TrayIconBuilder, TrayIconId, MouseButton, MouseButtonState};
@@ -38,23 +40,53 @@ mod window_utils;
 use window_utils::position_window_bottom_right;
 
 // ─────────────────────────────────────────────────────────────────────────────
+// Layout Measurement System
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// Stores measured layout dimensions from the frontend
+/// This allows window sizing to adapt to any DPI scaling or CSS changes
+#[derive(Debug, Clone)]
+struct LayoutMeasurements {
+    /// Actual rendered width of one ApplicationChannel component (logical pixels)
+    channel_width: u32,
+    /// Actual rendered gap between channels (logical pixels)
+    channel_gap: u32,
+    /// Base window width for single channel (logical pixels)
+    base_width: u32,
+}
+
+impl Default for LayoutMeasurements {
+    fn default() -> Self {
+        LayoutMeasurements {
+            channel_width: 48,   // CSS: max-width: 3rem = 48px at 100% scale
+            channel_gap: 48,     // CSS: gap: 3rem = 48px at 100% scale
+            base_width: 250,     // Standard base width for single channel
+        }
+    }
+}
+
+// Global layout measurements, protected by mutex
+lazy_static::lazy_static! {
+    static ref LAYOUT_MEASUREMENTS: Arc<Mutex<LayoutMeasurements>> = 
+        Arc::new(Mutex::new(LayoutMeasurements::default()));
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // Constants
 // ─────────────────────────────────────────────────────────────────────────────
 
-/// Base window width in pixels (for single channel)
-const BASE_WINDOW_WIDTH: u32 = 400;
-
-/// Additional width per audio channel in pixels
-const CHANNEL_WIDTH: u32 = 109;
-
-/// Fixed window height in pixels
-const WINDOW_HEIGHT: u32 = 1000;
+/// Fixed window height in pixels (logical pixels)
+/// This doesn't need to scale dynamically as content doesn't wrap vertically
+const WINDOW_HEIGHT: u32 = 700;
 
 /// Duration of window resize animation in milliseconds
-const RESIZE_ANIMATION_DURATION_MS: u64 = 200;
+const RESIZE_ANIMATION_DURATION_MS: u64 = 500;
 
-/// Frame interval for resize animation (~60fps)
-const RESIZE_ANIMATION_FRAME_MS: u64 = 16;
+/// Frame interval for resize animation in milliseconds
+/// Set to 8ms (~125fps) to provide smooth animations on high refresh rate monitors.
+/// The actual display refresh rate is handled by the OS, so this oversamples safely
+/// and provides butter-smooth animations on 60Hz, 120Hz, 144Hz, and 240Hz+ displays.
+const RESIZE_ANIMATION_FRAME_MS: u64 = 8;
 
 /// Tray icon identifier
 const TRAY_ICON_ID: &str = "clearcomms-tray";
@@ -133,8 +165,73 @@ fn load_theme_appropriate_icon() -> Image<'static> {
 
 
 // ─────────────────────────────────────────────────────────────────────────────
+// Window Width Calculation
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// Calculate the required window width for a given number of audio channels.
+///
+/// Uses dynamically measured layout dimensions from the frontend to adapt to any DPI scaling
+/// or CSS changes. Falls back to sensible defaults if measurements haven't been set.
+///
+/// Formula: base_width + ((channel_width + channel_gap) × (session_count - 1))
+///
+/// Returns logical pixel width. This value is converted to physical pixels in resize_window_to_content()
+/// using the display's DPI scale factor (e.g., 1.5 for 150% scaling on 4K displays).
+///
+/// # Arguments
+/// * `session_count` - Number of audio sessions to display
+///
+/// # Returns
+/// Window width in logical pixels (before DPI scaling)
+fn calculate_window_width(session_count: usize) -> u32 {
+    if session_count == 0 {
+        let measurements = LAYOUT_MEASUREMENTS.lock().unwrap();
+        return measurements.base_width;
+    }
+    
+    let measurements = LAYOUT_MEASUREMENTS.lock().unwrap();
+    let increment = measurements.channel_width + measurements.channel_gap;
+    
+    if session_count == 1 {
+        measurements.base_width
+    } else {
+        measurements.base_width + (increment * (session_count - 1) as u32)
+    }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // Tauri Commands - Window Management
 // ─────────────────────────────────────────────────────────────────────────────
+
+/// Update the layout measurements from the frontend.
+///
+/// The frontend measures the actual rendered width of UI components and sends these
+/// measurements to ensure accurate window sizing across all DPI scales and resolutions.
+///
+/// # Arguments
+/// * `channel_width` - Measured width of one ApplicationChannel component (logical pixels)
+/// * `channel_gap` - Measured gap between channels (logical pixels)
+/// * `base_width` - Measured base width for single channel (logical pixels)
+///
+/// # Returns
+/// Confirmation message with the stored measurements
+#[tauri::command]
+fn update_layout_measurements(
+    channel_width: u32,
+    channel_gap: u32,
+    base_width: u32,
+) -> Result<String, String> {
+    let mut measurements = LAYOUT_MEASUREMENTS.lock().map_err(|e| format!("Failed to lock measurements: {}", e))?;
+    measurements.channel_width = channel_width;
+    measurements.channel_gap = channel_gap;
+    measurements.base_width = base_width;
+    
+    println!("[Layout] Updated measurements: channel={}px, gap={}px, base={}px", 
+             channel_width, channel_gap, base_width);
+    
+    Ok(format!("Layout measurements updated: channel={}px, gap={}px, base={}px", 
+               channel_width, channel_gap, base_width))
+}
 
 /// Resize the main window to accommodate the number of audio channels.
 ///
@@ -149,39 +246,46 @@ fn load_theme_appropriate_icon() -> Image<'static> {
 /// Success message with new dimensions or error if window not found
 #[tauri::command]
 fn resize_window_to_content(app: tauri::AppHandle, session_count: usize) -> Result<String, String> {
-    let target_width = if session_count <= 1 {
-        BASE_WINDOW_WIDTH
-    } else {
-        BASE_WINDOW_WIDTH + (CHANNEL_WIDTH * (session_count - 1) as u32)
-    };
-    
     if let Some(window) = app.get_webview_window("main") {
-        // Get current window size
+        // Calculate logical pixel width
+        let logical_target_width = calculate_window_width(session_count);
+        
+        // Get the DPI scale factor (1.0 for 100%, 1.5 for 150%, etc.)
+        let scale_factor = window.scale_factor().map_err(|e| e.to_string())?;
+        
+        // Convert logical pixels to physical pixels
+        let physical_target_width = (logical_target_width as f64 * scale_factor) as u32;
+        let physical_window_height = (WINDOW_HEIGHT as f64 * scale_factor) as u32;
+        
+        // Get current window size (already in physical pixels)
         let current_size = window.outer_size().map_err(|e| e.to_string())?;
         let current_width = current_size.width;
         
-        // Skip animation if already at target size
-        if current_width == target_width {
-            return Ok(format!("Already at {}x{}", target_width, WINDOW_HEIGHT));
+        // Skip animation if already at target size (within 1px tolerance for rounding)
+        if (current_width as i32 - physical_target_width as i32).abs() <= 1 {
+            return Ok(format!("Already at {:?}x{:?} (scale: {})", physical_target_width, physical_window_height, scale_factor));
         }
         
         // Spawn animation thread to avoid blocking
         let window_clone = window.clone();
         std::thread::spawn(move || {
-            animate_window_resize(window_clone, current_width, target_width);
+            animate_window_resize(window_clone, current_width, physical_target_width, scale_factor);
         });
         
-        return Ok(format!("Animating to {}x{} for {} session(s)", target_width, WINDOW_HEIGHT, session_count));
+        return Ok(format!("Animating to {:?}x{:?} for {} session(s) (scale: {})", physical_target_width, physical_window_height, session_count, scale_factor));
     }
     
     Err("Main window not found".to_string())
 }
 
 /// Animate window width change with easing
-fn animate_window_resize(window: tauri::WebviewWindow, start_width: u32, target_width: u32) {
+fn animate_window_resize(window: tauri::WebviewWindow, start_width: u32, target_width: u32, scale_factor: f64) {
     let start_time = Instant::now();
     let duration = Duration::from_millis(RESIZE_ANIMATION_DURATION_MS);
     let frame_duration = Duration::from_millis(RESIZE_ANIMATION_FRAME_MS);
+    
+    // Calculate physical height from logical height
+    let physical_window_height = (WINDOW_HEIGHT as f64 * scale_factor) as u32;
     
     loop {
         let elapsed = start_time.elapsed();
@@ -203,10 +307,10 @@ fn animate_window_resize(window: tauri::WebviewWindow, start_width: u32, target_
             start_width - ((start_width - target_width) as f64 * eased_progress) as u32
         };
         
-        // Set window size
+        // Set window size using physical pixels
         let _ = window.set_size(tauri::Size::Physical(tauri::PhysicalSize {
             width: current_width,
-            height: WINDOW_HEIGHT,
+            height: physical_window_height,
         }));
         
         // Reposition window to stay anchored to bottom-right
@@ -541,6 +645,7 @@ fn main() {
             audio_management::set_session_mute,
             audio_management::check_default_device_changed,
             audio_management::cleanup_audio_manager,
+            update_layout_measurements,
             resize_window_to_content,
             show_main_window,
             hide_main_window,

@@ -1,6 +1,6 @@
 <!--
   ButtonExpandable Component
-  A button that expands to show a list of options (used for Add App, Settings, Close menus)
+  A button that expands to show a list of options (Utilised for Add Application, Settings Menu, Close Menu)
 -->
 <script lang="ts">
   import type { Snippet } from 'svelte';
@@ -105,6 +105,7 @@
     background: var(--bg-card);
     border-color: var(--text-muted);
     justify-content: space-between;
+    overflow: hidden;
   }
 
   /* Button styles */
@@ -123,6 +124,7 @@
     justify-content: center;
     transition: border-color 0.2s ease, box-shadow 0.2s ease, height 0.3s ease, background 0.3s ease, width 0.3s ease, margin 0.3s ease;
     flex-shrink: 0;
+    font-size: 0.8rem;
   }
 
   .btn-add-app-container.expanded .btn-add-app {
@@ -173,9 +175,10 @@
   .add-app-list {
     display: flex;
     flex-direction: column;
-    width: 100%;
     overflow-y: auto;
     min-height: 0;
+    margin: 6px;
+    gap: 6px;
   }
 
   .add-app-list::-webkit-scrollbar {

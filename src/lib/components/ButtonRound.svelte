@@ -77,7 +77,7 @@
       case 'bind':
         return 'btn-disabled';
       case 'mapping':
-        return 'mapping-badge mapping-removable';
+        return 'btn-enabled mapping-badge mapping-removable';
       case 'action':
         return danger ? 'btn-close' : 'btn-disabled';
       default:
@@ -265,6 +265,6 @@
 
   .mapping-badge.mapping-removable:hover .mapping-icon.hover {
     opacity: 1;
-    color: var(--text-primary);
+    color: var(--bg-primary);
   }
 </style>

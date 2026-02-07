@@ -1,6 +1,6 @@
 <!--
   ButtonAddApplication Component
-  A specialized button for adding applications to the mixer
+  A button that expands into a menu for adding pinned applications to the mixer.
 -->
 <script lang="ts">
   import { createEventDispatcher } from 'svelte';

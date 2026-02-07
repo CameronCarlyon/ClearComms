@@ -46,6 +46,14 @@
   
   const isInactive = $derived(session.session_id.startsWith('inactive_'));
   const displayName = $derived(formatProcessName(session.process_name));
+  
+  let flipAnimation = $state(false);
+  
+  function handleToggleInversion() {
+    flipAnimation = true;
+    dispatch('toggleinversion', { processName: session.process_name });
+    setTimeout(() => { flipAnimation = false; }, 400);
+  }
 </script>
 
 <div 
@@ -80,9 +88,9 @@
         on:remove={() => dispatch('removebuttonmapping', { processName: session.process_name })}
       >
         {#snippet icon()}
-          <!-- Mute button icon (X) -->
+          <!-- Muted speaker icon -->
           <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 640 640" width="20" height="20" fill="currentColor">
-            <path d="M183.1 137.4C170.6 124.9 150.3 124.9 137.8 137.4C125.3 149.9 125.3 170.2 137.8 182.7L275.2 320L137.9 457.4C125.4 469.9 125.4 490.2 137.9 502.7C150.4 515.2 170.7 515.2 183.2 502.7L320.5 365.3L457.9 502.6C470.4 515.1 490.7 515.1 503.2 502.6C515.7 490.1 515.7 469.8 503.2 457.3L365.8 320L503.1 182.6C515.6 170.1 515.6 149.8 503.1 137.3C490.6 124.8 470.3 124.8 457.8 137.3L320.5 274.7L183.1 137.4z"/>
+            <path d="M80 416L128 416L262.1 535.2C268.5 540.9 276.7 544 285.2 544C304.4 544 320 528.4 320 509.2L320 130.8C320 111.6 304.4 96 285.2 96C276.7 96 268.5 99.1 262.1 104.8L128 224L80 224C53.5 224 32 245.5 32 272L32 368C32 394.5 53.5 416 80 416zM399 239C389.6 248.4 389.6 263.6 399 272.9L446 319.9L399 366.9C389.6 376.3 389.6 391.5 399 400.8C408.4 410.1 423.6 410.2 432.9 400.8L479.9 353.8L526.9 400.8C536.3 410.2 551.5 410.2 560.8 400.8C570.1 391.4 570.2 376.2 560.8 366.9L513.8 319.9L560.8 272.9C570.2 263.5 570.2 248.3 560.8 239C551.4 229.7 536.2 229.6 526.9 239L479.9 286L432.9 239C423.5 229.6 408.3 229.6 399 239z"/>
           </svg>
         {/snippet}
         {#snippet removeIcon()}
@@ -232,11 +240,11 @@
         ? `${axisMapping.inverted ? 'Disable' : 'Enable'} axis inversion for ${session.display_name}`
         : `No axis binding for ${session.display_name}`}
       title={axisMapping ? 'Reverse Axis Direction' : 'Bind an axis to enable inversion'}
-      on:toggle={() => dispatch('toggleinversion', { processName: session.process_name })}
+      on:toggle={handleToggleInversion}
     >
       {#snippet icon()}
         <!-- Vertical arrows icon -->
-        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 640 640" width="20" height="20" fill="currentColor">
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 640 640" width="20" height="20" fill="currentColor" class:flip-animate={flipAnimation}>
           <path d="M342.6 41.4C330.1 28.9 309.8 28.9 297.3 41.4L201.3 137.4C188.8 149.9 188.8 170.2 201.3 182.7C213.8 195.2 234.1 195.2 246.6 182.7L288 141.3L288 498.7L246.6 457.4C234.1 444.9 213.8 444.9 201.3 457.4C188.8 469.9 188.8 490.2 201.3 502.7L297.3 598.7C303.3 604.7 311.4 608.1 319.9 608.1C328.4 608.1 336.5 604.7 342.5 598.7L438.5 502.7C451 490.2 451 469.9 438.5 457.4C426 444.9 405.7 444.9 393.2 457.4L351.8 498.8L351.8 141.3L393.2 182.7C405.7 195.2 426 195.2 438.5 182.7C451 170.2 451 149.9 438.5 137.4L342.5 41.4z"/>
         </svg>
       {/snippet}
@@ -291,5 +299,23 @@
     overflow: hidden;
     text-overflow: ellipsis;
     max-width: 3rem;
+  }
+  
+  /* Flip animation for reverse axis button */
+  .flip-animate {
+    animation: flip-vertical 0.4s ease-in-out;
+  }
+  
+  @keyframes flip-vertical {
+    0% {
+      transform: rotateX(0deg);
+    }
+    50% {
+      transform: rotateX(90deg);
+      opacity: 0.3;
+    }
+    100% {
+      transform: rotateX(0deg);
+    }
   }
 </style>

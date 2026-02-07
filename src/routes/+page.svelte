@@ -86,6 +86,7 @@
   let settingsMenuExpanded = $state(false);
   let closeMenuExpanded = $state(false);
   let dockOpen = $state(false);
+  let addAppComponentKey = $state(0);
 
   // ─────────────────────────────────────────────────────────────────────────────
   // DERIVED STATE
@@ -105,6 +106,14 @@
     // Keep windowPinned state in sync when settings menu is opened
     if (settingsMenuExpanded || dockOpen) {
       fetchWindowPinnedState();
+    }
+  });
+
+  $effect(() => {
+    // Re-measure layout when channels are rendered in case of styling changes
+    // Only measure if we have pinned applications to measure against
+    if (pinnedApps.size > 0 && initStatus === "Ready" && audioSessions.length > 0) {
+      measureLayoutDimensions();
     }
   });
 
@@ -390,6 +399,13 @@
     if (!isEditMode) {
       addAppListExpanded = false;
       settingsMenuExpanded = false;
+      // Cancel any active binding modes when exiting edit mode
+      if (isBindingMode) {
+        cancelBinding();
+      }
+      if (isButtonBindingMode) {
+        cancelButtonBinding();
+      }
     }
   }
 
@@ -409,6 +425,10 @@
     loadPinnedApps();
     fetchWindowPinnedState();
     autoInitialise();
+    
+    // Measure layout dimensions once on mount
+    // This ensures the backend knows the actual rendered widths for all DPI scales
+    measureLayoutDimensions();
 
     const handleBlur = async () => {
       // Fetch current pinned state to ensure we have the latest value
@@ -665,6 +685,47 @@
   function cleanupStaleMappings() {
     // Intentionally kept empty - we preserve mappings for inactive apps
     return;
+  }
+
+  async function measureLayoutDimensions() {
+    try {
+      // Wait a tick to ensure elements are fully rendered
+      await new Promise(resolve => setTimeout(resolve, 100));
+      
+      // Find the mixer container and first channel
+      const mixer = document.querySelector<HTMLElement>('.mixer-container');
+      const firstChannel = document.querySelector<HTMLElement>('.application-channel');
+      
+      if (!mixer || !firstChannel) {
+        console.log("[Layout] Not yet ready for measurement - mixer or channel not found");
+        return;
+      }
+      
+      // Get actual rendered dimensions in logical pixels
+      const channelWidth = Math.round(firstChannel.clientWidth);
+      
+      // Get the gap from the mixer's computed style
+      const computedStyle = window.getComputedStyle(mixer);
+      const gapStr = computedStyle.gap;
+      const channelGap = parseInt(gapStr) || 48; // Fallback to 48px if can't parse
+      
+      // The base width accounts for the mixer padding and the first channel
+      // Calculate from main container padding: main { padding: 2.5rem } = 40px per side
+      const mainPadding = 80; // 40px left + 40px right
+      const baseWidth = channelWidth + mainPadding;
+      
+      // Send measurements to backend
+      const result = await invoke<string>('update_layout_measurements', {
+        channel_width: channelWidth,
+        channel_gap: channelGap,
+        base_width: baseWidth,
+      });
+      
+      console.log(`[Layout] ${result}`);
+    } catch (error) {
+      console.error("[Layout] Failed to measure and report layout dimensions:", error);
+      // Non-fatal error - window sizing will use defaults
+    }
   }
 
   async function resizeWindowToFit(sessionCount: number) {
@@ -1550,6 +1611,7 @@
     pinnedApps = new Set([...pinnedApps, processName]);
     savePinnedApps();
     addAppListExpanded = false;
+    addAppComponentKey += 1; // Force ButtonAddApplication to recreate
     if (!isEditMode) {
       isEditMode = true;
     }
@@ -1580,6 +1642,7 @@
         pendingBinding={pendingBinding}
         pendingButtonBinding={pendingButtonBinding}
         bind:addAppListExpanded
+        {addAppComponentKey}
         on:volumedragstart={handleVolumeDragStart}
         on:volumedragmove={handleVolumeDragMove}
         on:volumedragend={handleVolumeDragEnd}
