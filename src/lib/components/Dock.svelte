@@ -304,8 +304,8 @@
   }
 
   .dock.expanded-settings {
-    height: 17vh;
-    max-height: 17vh;
+    height: 110px;
+    max-height: 110px;
   }
 
   .dock.expanded-close {
@@ -320,8 +320,6 @@
     height: 46px;
     transform: scale(0);
     transition: transform 0.3s ease, opacity 0.3s ease, width 0.3s ease, flex 0.3s ease, height 0.3s ease;
-    flex: 0 0 auto;
-    align-self: flex-end;
   }
 
   .settings-wrapper.expanded,
@@ -377,15 +375,14 @@
   .settings-container {
     display: flex;
     flex-direction: row;
-    margin: 6px;
     justify-content: space-between;
   }
 
   .settings-icon-button {
-    width: 50px;
-    height: 50px;
-    min-width: 50px;
-    min-height: 50px;
+    width: 46px;
+    height: 46px;
+    min-width: 46px;
+    min-height: 46px;
     background: transparent;
     border: none;
     border-radius: 50%;
