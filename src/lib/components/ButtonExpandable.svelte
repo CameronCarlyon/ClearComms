@@ -1,6 +1,6 @@
 <!--
   ButtonExpandable Component
-  A button that expands to show a list of options (Utilised for Add Application, Settings Menu, Close Menu)
+  A button that expands to display a list of options (Utilised for Add Application, Settings Menu, Close Menu)
 -->
 <script lang="ts">
   import type { Snippet } from 'svelte';
@@ -62,7 +62,7 @@
     {:else if icon}
       {@render icon()}
     {:else}
-      <!-- Default plus/x icon -->
+      <!-- Default +/X icon -->
       <svg class="add-app-icon" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 640 640" width="24" height="24" fill="currentColor" aria-hidden="true">
         <path d="M352 128C352 110.3 337.7 96 320 96C302.3 96 288 110.3 288 128L288 288L128 288C110.3 288 96 302.3 96 320C96 337.7 110.3 352 128 352L288 352L288 512C288 529.7 302.3 544 320 544C337.7 544 352 529.7 352 512L352 352L512 352C529.7 352 544 337.7 544 320C544 302.3 529.7 288 512 288L352 288L352 128z"/>
       </svg>
@@ -80,9 +80,10 @@
     flex-direction: column;
     align-items: center;
     justify-content: flex-end;
-    transition: width 0.3s ease, height 0.3s ease, background 0.3s ease, border-color 0.3s ease;
+    transition: width 0.3s ease, height 0.3s ease, background 0.3s ease, border-color 0.3s ease, padding 0.3s ease;
     background: transparent;
     border: 1px solid transparent;
+    box-sizing: border-box;
   }
 
   /* Anchor positioning - button sticks to anchor side when collapsed */
@@ -101,11 +102,13 @@
   .btn-add-app-container.expanded {
     width: 180px;
     height: 100%;
+    max-height: 100%;
     align-items: stretch;
     background: var(--bg-card);
     border-color: var(--text-muted);
     justify-content: space-between;
     overflow: hidden;
+    padding: 6px;
   }
 
   /* Button styles */
@@ -130,12 +133,10 @@
   .btn-add-app-container.expanded .btn-add-app {
     width: calc(100% - 12px);
     height: 46px;
+    width: 100%;
     min-height: 46px;
-    margin: 6px;
-    margin-top: 0px;
     background: transparent;
     border-color: transparent;
-    border-radius: 23px;
   }
 
   .btn-add-app:hover:not(:disabled) {
@@ -177,7 +178,6 @@
     flex-direction: column;
     overflow-y: auto;
     min-height: 0;
-    margin: 6px;
     gap: 6px;
   }
 

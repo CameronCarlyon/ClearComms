@@ -17,6 +17,7 @@
     active?: boolean;
     disabled?: boolean;
     danger?: boolean;
+    alwaysEnabled?: boolean;
     ariaLabel?: string;
     title?: string;
     icon?: Snippet;
@@ -29,6 +30,7 @@
     active = false,
     disabled = false,
     danger = false,
+    alwaysEnabled = false,
     ariaLabel = '',
     title = '',
     icon,
@@ -73,7 +75,7 @@
     
     switch (variant) {
       case 'toggle':
-        return active ? 'btn-enabled' : 'btn-disabled';
+        return alwaysEnabled ? 'btn-enabled' : (active ? 'btn-enabled' : 'btn-disabled');
       case 'bind':
         return 'btn-disabled';
       case 'mapping':
@@ -89,6 +91,7 @@
 <button
   class="btn btn-channel {stateClass}"
   class:btn-bind={variant === 'bind' && !active}
+  class:binding={variant === 'bind' && active}
   class:active={active && variant === 'toggle'}
   class:button={variant === 'mapping'}
   onclick={handleClick}
@@ -158,10 +161,6 @@
     transition: box-shadow 0.2s ease, border-color 0.2s ease, background 0.2s ease;
   }
 
-  .btn-channel:active:not(:disabled) {
-    transform: scale(0.98);
-  }
-
   /* Variant: Enabled (solid white) */
   .btn-enabled {
     background: var(--text-primary);
@@ -181,6 +180,20 @@
   .btn-disabled:hover:not(:disabled) {
     border: 1.5px solid var(--text-primary);
     box-shadow: 0 0 80px rgba(255, 255, 255, 0.45);
+  }
+
+  /* Variant: Binding state (active bind button) */
+  .btn-channel.binding {
+    animation: pulse-shadow 2s ease-in-out infinite;
+  }
+
+  @keyframes pulse-shadow {
+    0%, 100% {
+      box-shadow: 0 0 80px rgba(255, 255, 255, 0.15);
+    }
+    50% {
+      box-shadow: 0 0 80px rgba(255, 255, 255, 0.5);
+    }
   }
 
   /* Variant: Unavailable (no interaction) */
