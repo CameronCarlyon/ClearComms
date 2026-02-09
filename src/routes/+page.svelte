@@ -464,14 +464,10 @@
     measureLayoutDimensions();
 
     // Listen for pin state changes from the backend (e.g., from context menu)
-    let unlisten: (() => void) | null = null;
-    listen('window-pin-changed', (event: { payload: boolean }) => {
+    // Store the promise so cleanup can unlisten even if it hasn't resolved yet
+    const unlistenPromise = listen('window-pin-changed', (event: { payload: boolean }) => {
       windowPinned = event.payload;
       console.log(`[Window] Pin state changed: ${windowPinned}`);
-    }).then(fn => {
-      unlisten = fn;
-    }).catch(error => {
-      console.error("Failed to set up pin state listener:", error);
     });
 
     const handleBlur = async () => {
@@ -514,9 +510,7 @@
     return () => {
       window.removeEventListener('blur', handleBlur);
       window.removeEventListener('focus', handleFocus);
-      if (unlisten) {
-        unlisten();
-      }
+      unlistenPromise.then(fn => fn()).catch(() => {});
     };
   });
 
@@ -576,6 +570,9 @@
     cleanupAllAnimations();
     cleanupAllLiveVolumeStates();
     cleanupAllCaches();
+    if (IS_DEV && typeof window !== 'undefined') {
+      delete (window as any).clearCommsDebug;
+    }
     console.log("[ClearComms] Component cleanup complete");
   });
 

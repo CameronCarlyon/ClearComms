@@ -38,6 +38,7 @@ declare module '$env/static/private' {
 	export const ChocolateyLastPathUpdate: string;
 	export const CHROME_CRASHPAD_PIPE_NAME: string;
 	export const CLAUDECODE: string;
+	export const CLAUDE_AGENT_SDK_VERSION: string;
 	export const CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: string;
 	export const CLAUDE_CODE_ENTRYPOINT: string;
 	export const COLOR: string;
@@ -105,6 +106,7 @@ declare module '$env/static/private' {
 	export const NUMBER_OF_PROCESSORS: string;
 	export const NVM_HOME: string;
 	export const NVM_SYMLINK: string;
+	export const OLDPWD: string;
 	export const OneDrive: string;
 	export const OneDriveConsumer: string;
 	export const ORIGINAL_PATH: string;
@@ -197,6 +199,7 @@ declare module '$env/dynamic/private' {
 		ChocolateyLastPathUpdate: string;
 		CHROME_CRASHPAD_PIPE_NAME: string;
 		CLAUDECODE: string;
+		CLAUDE_AGENT_SDK_VERSION: string;
 		CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: string;
 		CLAUDE_CODE_ENTRYPOINT: string;
 		COLOR: string;
@@ -264,6 +267,7 @@ declare module '$env/dynamic/private' {
 		NUMBER_OF_PROCESSORS: string;
 		NVM_HOME: string;
 		NVM_SYMLINK: string;
+		OLDPWD: string;
 		OneDrive: string;
 		OneDriveConsumer: string;
 		ORIGINAL_PATH: string;
