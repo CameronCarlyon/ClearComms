@@ -1,5 +1,6 @@
 <script lang="ts">
   import { invoke } from "@tauri-apps/api/core";
+  import { listen } from "@tauri-apps/api/event";
   import { onMount, onDestroy } from "svelte";
   import type { 
     AudioSession, 
@@ -18,7 +19,7 @@
     BootScreen, 
     Footer
   } from "$lib/components";
-  import { formatProcessName } from "$lib/stores/audioStore";
+  import { formatProcessName, SYSTEM_VOLUME_ID, SYSTEM_VOLUME_PROCESS_NAME, SYSTEM_VOLUME_DISPLAY_NAME, isSystemVolume } from "$lib/stores/audioStore";
 
   console.log("[ClearComms] Component script loaded");
 
@@ -70,14 +71,13 @@
   let previousAxisValues: Map<string, Record<string, number>> = new Map();
   let previousButtonStates: Map<string, Record<string, boolean>> = new Map();
   let lastHardwareAxisValues: Map<string, number> = new Map();
+  let axisActivated: Map<string, boolean> = new Map(); // Track if axis has had user input
   let errorMsg = $state("");
   let isEditMode = $state(false);
   let previousDisplayCount = $state(-1);
   let preMuteVolumes = $state<Map<string, number>>(new Map());
   let animatingSliders = $state<Set<string>>(new Set());
   let animationSignals = $state<Map<string, AnimationSignal>>(new Map());
-  let dragTargets = $state<Map<string, number>>(new Map());
-  let dragAnimationFrames = $state<Map<string, number>>(new Map());
   let manuallyControlledSessions = $state<Set<string>>(new Set());
   let pinnedAppsLoaded = $state(false);
   
@@ -195,7 +195,7 @@
     console.log(
       `[MemoryProfiler] Heap: ${formatBytes(snapshot.heapUsed)} / ${formatBytes(snapshot.heapTotal)} | ` +
       `Caches: axis=${previousAxisValues.size}, btn=${previousButtonStates.size}, hw=${lastHardwareAxisValues.size}, ` +
-      `live=${liveVolumeState.size}, anim=${animatingSliders.size}, drag=${dragAnimationFrames.size}`
+      `live=${liveVolumeState.size}, anim=${animatingSliders.size}`
     );
   }
   
@@ -225,13 +225,12 @@
     console.log(`previousAxisValues: ${previousAxisValues.size} entries`);
     console.log(`previousButtonStates: ${previousButtonStates.size} entries`);
     console.log(`lastHardwareAxisValues: ${lastHardwareAxisValues.size} entries`);
+    console.log(`axisActivated: ${axisActivated.size} entries`);
     console.log(`liveVolumeState: ${liveVolumeState.size} entries`);
     console.log(`hardwareVolumeTargets: ${hardwareVolumeTargets.size} entries`);
     console.log(`hardwareVolumeAnimations: ${hardwareVolumeAnimations.size} entries`);
     console.log(`animatingSliders: ${animatingSliders.size} entries`);
     console.log(`animationSignals: ${animationSignals.size} entries`);
-    console.log(`dragTargets: ${dragTargets.size} entries`);
-    console.log(`dragAnimationFrames: ${dragAnimationFrames.size} entries`);
     console.log(`manuallyControlledSessions: ${manuallyControlledSessions.size} entries`);
     console.log(`preMuteVolumes: ${preMuteVolumes.size} entries`);
     console.log(`audioSessions: ${audioSessions.length} entries`);
@@ -295,6 +294,26 @@
     const sessions: AudioSession[] = [];
     const foundProcessNames = new Set<string>();
     
+    // Handle system volume specially if it's bound
+    if (boundProcessNames.has(SYSTEM_VOLUME_PROCESS_NAME)) {
+      // System volume will be fetched and updated separately
+      const existingSystemSession = audioSessions.find(s => s.process_name === SYSTEM_VOLUME_PROCESS_NAME);
+      if (existingSystemSession) {
+        sessions.push(existingSystemSession);
+      } else {
+        // Placeholder until actual state is fetched
+        sessions.push({
+          session_id: SYSTEM_VOLUME_ID,
+          display_name: SYSTEM_VOLUME_DISPLAY_NAME,
+          process_id: 0,
+          process_name: SYSTEM_VOLUME_PROCESS_NAME,
+          volume: 1.0,
+          is_muted: false
+        });
+      }
+      foundProcessNames.add(SYSTEM_VOLUME_PROCESS_NAME);
+    }
+    
     for (const session of audioSessions) {
       if (boundProcessNames.has(session.process_name) && !foundProcessNames.has(session.process_name)) {
         sessions.push(session);
@@ -346,7 +365,21 @@
       ...pinnedApps
     ]);
     
-    return audioSessions.filter(s => !boundProcessNames.has(s.process_name));
+    const sessions = audioSessions.filter(s => !boundProcessNames.has(s.process_name));
+    
+    // Add system volume option if not already bound
+    if (!boundProcessNames.has(SYSTEM_VOLUME_PROCESS_NAME)) {
+      sessions.unshift({
+        session_id: SYSTEM_VOLUME_ID,
+        display_name: SYSTEM_VOLUME_DISPLAY_NAME,
+        process_id: 0,
+        process_name: SYSTEM_VOLUME_PROCESS_NAME,
+        volume: 1.0,
+        is_muted: false
+      });
+    }
+    
+    return sessions;
   }
 
   // ─────────────────────────────────────────────────────────────────────────────
@@ -430,6 +463,17 @@
     // This ensures the backend knows the actual rendered widths for all DPI scales
     measureLayoutDimensions();
 
+    // Listen for pin state changes from the backend (e.g., from context menu)
+    let unlisten: (() => void) | null = null;
+    listen('window-pin-changed', (event: { payload: boolean }) => {
+      windowPinned = event.payload;
+      console.log(`[Window] Pin state changed: ${windowPinned}`);
+    }).then(fn => {
+      unlisten = fn;
+    }).catch(error => {
+      console.error("Failed to set up pin state listener:", error);
+    });
+
     const handleBlur = async () => {
       // Fetch current pinned state to ensure we have the latest value
       await fetchWindowPinnedState();
@@ -470,6 +514,9 @@
     return () => {
       window.removeEventListener('blur', handleBlur);
       window.removeEventListener('focus', handleFocus);
+      if (unlisten) {
+        unlisten();
+      }
     };
   });
 
@@ -643,7 +690,7 @@
       } catch (error) {
         console.error("Audio monitoring error:", error);
       }
-    }, 3000);
+    }, 200); // Poll every 200ms for responsive external changes
   }
 
   function stopAudioMonitoring() {
@@ -657,6 +704,59 @@
     try {
       const sessions = await invoke<AudioSession[]>("get_audio_sessions");
       
+      // Track volume changes for smooth animation
+      const volumeChanges = new Map<string, { from: number; to: number }>();
+      
+      // If system volume is bound (pinned or has mappings), fetch and add it to the sessions
+      const hasSystemVolume = pinnedApps.has(SYSTEM_VOLUME_PROCESS_NAME) ||
+        axisMappings.some(m => m.processName === SYSTEM_VOLUME_PROCESS_NAME) ||
+        buttonMappings.some(m => m.processName === SYSTEM_VOLUME_PROCESS_NAME);
+      
+      if (hasSystemVolume) {
+        try {
+          const systemVolume = await invoke<number>("get_system_volume");
+          const systemMuted = await invoke<boolean>("get_system_mute");
+          
+          const systemSession: AudioSession = {
+            session_id: SYSTEM_VOLUME_ID,
+            display_name: SYSTEM_VOLUME_DISPLAY_NAME,
+            process_id: 0,
+            process_name: SYSTEM_VOLUME_PROCESS_NAME,
+            volume: systemVolume,
+            is_muted: systemMuted
+          };
+          
+          // Preserve manual control or animation state
+          const existingIndex = audioSessions.findIndex(s => s.session_id === SYSTEM_VOLUME_ID);
+          if (existingIndex !== -1) {
+            const existing = audioSessions[existingIndex];
+            
+            if (manuallyControlledSessions.has(SYSTEM_VOLUME_ID)) {
+              systemSession.volume = existing.volume;
+              systemSession.is_muted = existing.is_muted;
+            } else if (animatingSliders.has(SYSTEM_VOLUME_ID)) {
+              systemSession.volume = existing.volume;
+              systemSession.is_muted = existing.is_muted;
+            } else {
+              // Detect external changes and queue animation
+              const volumeDiff = Math.abs(systemSession.volume - existing.volume);
+              if (volumeDiff > 0.01) {
+                volumeChanges.set(SYSTEM_VOLUME_ID, { from: existing.volume, to: systemSession.volume });
+                systemSession.volume = existing.volume;
+              }
+              
+              if (systemSession.is_muted && existing.volume === 0) {
+                systemSession.volume = 0;
+              }
+            }
+          }
+          
+          sessions.push(systemSession);
+        } catch (error) {
+          console.error("Error fetching system volume:", error);
+        }
+      }
+      
       for (const newSession of sessions) {
         const existingIndex = audioSessions.findIndex(s => s.session_id === newSession.session_id);
         
@@ -668,13 +768,29 @@
             newSession.is_muted = existing.is_muted;
           } else if (animatingSliders.has(newSession.session_id)) {
             newSession.volume = existing.volume;
-          } else if (newSession.is_muted && existing.volume === 0) {
-            newSession.volume = 0;
+            newSession.is_muted = existing.is_muted;
+          } else {
+            // Detect external changes and queue animation
+            const volumeDiff = Math.abs(newSession.volume - existing.volume);
+            if (volumeDiff > 0.01) {
+              volumeChanges.set(newSession.session_id, { from: existing.volume, to: newSession.volume });
+              newSession.volume = existing.volume;
+            }
+            
+            if (newSession.is_muted && existing.volume === 0) {
+              newSession.volume = 0;
+            }
           }
         }
       }
       
       audioSessions = sessions;
+      
+      // Trigger smooth animations for external changes using requestAnimationFrame
+      for (const [sessionId, change] of volumeChanges) {
+        animateVolumeTo(sessionId, change.to, 200);
+      }
+      
       cleanupStaleMappings();
     } catch (error) {
       console.error("Error getting audio sessions:", error);
@@ -740,6 +856,24 @@
   // VOLUME CONTROL
   // ─────────────────────────────────────────────────────────────────────────────
 
+  // Helper: Invoke set volume for either regular session or system volume
+  async function invokeSetVolume(sessionId: string, volume: number): Promise<void> {
+    if (sessionId === SYSTEM_VOLUME_ID) {
+      await invoke("set_system_volume", { volume });
+    } else {
+      await invoke("set_session_volume", { sessionId, volume });
+    }
+  }
+
+  // Helper: Invoke set mute for either regular session or system volume
+  async function invokeSetMute(sessionId: string, muted: boolean): Promise<void> {
+    if (sessionId === SYSTEM_VOLUME_ID) {
+      await invoke("set_system_mute", { muted });
+    } else {
+      await invoke("set_session_mute", { sessionId, muted });
+    }
+  }
+
   function setSessionVolumeImmediate(sessionId: string, volume: number) {
     if (sessionId.startsWith('inactive_')) return;
     
@@ -800,8 +934,8 @@
 
       (async () => {
         try {
-          await invoke("set_session_volume", { sessionId, volume: volumeToSend });
-          await invoke("set_session_mute", { sessionId, muted: volumeToSend === 0 });
+          await invokeSetVolume(sessionId, volumeToSend);
+          await invokeSetMute(sessionId, volumeToSend === 0);
         } catch (error) {
           console.error(`Error applying live volume for ${sessionId}:`, error);
         } finally {
@@ -880,60 +1014,6 @@
     });
   }
   
-  function startDragAnimation(sessionId: string, targetVolume: number) {
-    if (sessionId.startsWith('inactive_')) return;
-    
-    dragTargets.set(sessionId, targetVolume);
-    
-    if (!dragAnimationFrames.has(sessionId)) {
-      const session = audioSessions.find(s => s.session_id === sessionId);
-      if (!session) return;
-      
-      const animate = () => {
-        const target = dragTargets.get(sessionId);
-        if (target === undefined) {
-          dragAnimationFrames.delete(sessionId);
-          return;
-        }
-        
-        const currentSession = audioSessions.find(s => s.session_id === sessionId);
-        if (!currentSession) {
-          dragAnimationFrames.delete(sessionId);
-          dragTargets.delete(sessionId);
-          return;
-        }
-        
-        const current = currentSession.volume;
-        const diff = target - current;
-        const smoothingFactor = 0.25;
-        const newVolume = current + (diff * smoothingFactor);
-        
-        if (Math.abs(diff) < 0.001) {
-          setSessionVolumeImmediate(sessionId, target);
-          dragAnimationFrames.delete(sessionId);
-          dragTargets.delete(sessionId);
-          return;
-        }
-        
-        setSessionVolumeImmediate(sessionId, newVolume);
-        const frameId = requestAnimationFrame(animate);
-        dragAnimationFrames.set(sessionId, frameId);
-      };
-      
-      const frameId = requestAnimationFrame(animate);
-      dragAnimationFrames.set(sessionId, frameId);
-    }
-  }
-  
-  function stopDragAnimation(sessionId: string) {
-    const frameId = dragAnimationFrames.get(sessionId);
-    if (frameId !== undefined) {
-      cancelAnimationFrame(frameId);
-    }
-    dragAnimationFrames.delete(sessionId);
-    dragTargets.delete(sessionId);
-  }
-
   function startHardwareVolumeInterpolation(sessionId: string, targetVolume: number) {
     if (sessionId.startsWith('inactive_')) return;
     
@@ -999,8 +1079,9 @@
       if (lastHardwareAxisValues.size > MAX_CACHE_SIZE) {
         console.warn("[ClearComms] Hardware axis cache size exceeded limit, clearing");
         lastHardwareAxisValues.clear();
+        axisActivated.clear();
       }
-      
+
       if (liveVolumeState.size > MAX_CACHE_SIZE) {
         console.warn("[ClearComms] Live volume state cache size exceeded limit, clearing");
         cleanupAllLiveVolumeStates();
@@ -1053,20 +1134,23 @@
       }
     }
     
-    for (const [sessionId, frameId] of dragAnimationFrames) {
-      if (!activeSessionIds.has(sessionId)) {
-        cancelAnimationFrame(frameId);
-        dragAnimationFrames.delete(sessionId);
-        dragTargets.delete(sessionId);
-      }
-    }
-    
     for (const [sessionId] of liveVolumeState) {
       if (!activeSessionIds.has(sessionId)) {
         clearLiveVolumeState(sessionId);
       }
     }
-    
+
+    // Clean up stale axis activation and hardware values
+    const activeMappingKeys = new Set(
+      axisMappings.map(m => `${m.deviceHandle}-${m.axisName}-${m.processName}`)
+    );
+    for (const key of Array.from(lastHardwareAxisValues.keys())) {
+      if (!activeMappingKeys.has(key)) {
+        lastHardwareAxisValues.delete(key);
+        axisActivated.delete(key);
+      }
+    }
+
     console.log("[ClearComms] Periodic memory cleanup completed");
   }
   
@@ -1074,8 +1158,8 @@
     if (sessionId.startsWith('inactive_')) return;
     
     try {
-      await invoke("set_session_volume", { sessionId, volume });
-      await invoke("set_session_mute", { sessionId, muted: volume === 0 });
+      await invokeSetVolume(sessionId, volume);
+      await invokeSetMute(sessionId, volume === 0);
       await refreshAudioSessions();
     } catch (error) {
       console.error("Error setting volume:", error);
@@ -1085,32 +1169,45 @@
 
   async function setSessionMute(sessionId: string, muted: boolean) {
     if (sessionId.startsWith('inactive_')) return;
-    
+
+    const sessionIndex = audioSessions.findIndex(s => s.session_id === sessionId);
+    if (sessionIndex === -1) return;
+    const session = audioSessions[sessionIndex];
+
+    // Cancel any ongoing animation before starting mute/unmute
+    cancelVolumeAnimation(sessionId);
+
     try {
-      const session = audioSessions.find(s => s.session_id === sessionId);
-      
-      if (muted && session && session.volume > 0) {
-        preMuteVolumes.set(sessionId, session.volume);
-        await animateVolumeTo(sessionId, 0);
-        await invoke("set_session_mute", { sessionId, muted: true });
-        
-        const sessionIndex = audioSessions.findIndex(s => s.session_id === sessionId);
-        if (sessionIndex !== -1) {
-          audioSessions[sessionIndex].is_muted = true;
-          audioSessions[sessionIndex].volume = 0;
+      if (muted && session.volume > 0) {
+        // Preserve original pre-mute volume (don't overwrite if mid-toggle)
+        if (!preMuteVolumes.has(sessionId)) {
+          preMuteVolumes.set(sessionId, session.volume);
         }
+
+        // Set muted state immediately for instant UI feedback
+        audioSessions[sessionIndex].is_muted = true;
+
+        // Fire-and-forget backend calls so animation starts without delay
+        invokeSetVolume(sessionId, 0).catch(e => console.error("Error setting mute volume:", e));
+        invokeSetMute(sessionId, true).catch(e => console.error("Error setting mute state:", e));
+
+        // Animate visual slider to 0; if cancelled (superseded), return early
+        const completed = await animateVolumeTo(sessionId, 0);
+        if (!completed) return;
+        audioSessions[sessionIndex].volume = 0;
       } else if (!muted) {
         const previousVolume = preMuteVolumes.get(sessionId) ?? 0.5;
-        
-        await invoke("set_session_volume", { sessionId, volume: previousVolume });
-        await invoke("set_session_mute", { sessionId, muted: false });
-        
-        const sessionIndex = audioSessions.findIndex(s => s.session_id === sessionId);
-        if (sessionIndex !== -1) {
-          audioSessions[sessionIndex].is_muted = false;
-        }
-        
-        await animateVolumeTo(sessionId, previousVolume, 200);
+
+        // Set unmuted state immediately for instant UI feedback
+        audioSessions[sessionIndex].is_muted = false;
+
+        // Fire-and-forget backend calls so animation starts without delay
+        invokeSetVolume(sessionId, previousVolume).catch(e => console.error("Error setting unmute volume:", e));
+        invokeSetMute(sessionId, false).catch(e => console.error("Error setting unmute state:", e));
+
+        // Animate visual slider to previous volume; if cancelled, return early
+        const completed = await animateVolumeTo(sessionId, previousVolume, 200);
+        if (!completed) return;
         preMuteVolumes.delete(sessionId);
       }
     } catch (error) {
@@ -1284,10 +1381,10 @@
       const movement = detectAxisMovement();
       if (movement) {
         createMapping(
-          movement.deviceHandle, 
-          movement.deviceName, 
-          movement.axisName, 
-          pendingBinding.sessionId, 
+          movement.deviceHandle,
+          movement.deviceName,
+          movement.axisName,
+          pendingBinding.sessionId,
           pendingBinding.sessionName,
           pendingBinding.processId,
           pendingBinding.processName
@@ -1304,28 +1401,50 @@
       const device = axisData.find(d => d.device_handle === mapping.deviceHandle);
       if (device && device.axes[mapping.axisName] !== undefined) {
         let axisValue = device.axes[mapping.axisName];
-        
+
         if (mapping.inverted) {
           axisValue = 1.0 - axisValue;
         }
-        
+
         const deadzoneThreshold = 0.01;
         if (axisValue < deadzoneThreshold) {
           axisValue = 0.0;
         } else if (axisValue > (1.0 - deadzoneThreshold)) {
           axisValue = 1.0;
         }
-        
+
         const mappingKey = `${mapping.deviceHandle}-${mapping.axisName}-${mapping.processName}`;
         const lastHardwareValue = lastHardwareAxisValues.get(mappingKey);
-        
-        if (lastHardwareValue === undefined || Math.abs(lastHardwareValue - axisValue) > 0.01) {
+        const isActivated = axisActivated.get(mappingKey);
+
+        // First time seeing this axis - store initial position but don't apply
+        if (lastHardwareValue === undefined) {
+          lastHardwareAxisValues.set(mappingKey, axisValue);
+          axisActivated.set(mappingKey, false);
+          continue;
+        }
+
+        // Axis not yet activated - check for significant user movement (>5% change)
+        if (!isActivated) {
+          const movement = Math.abs(axisValue - lastHardwareValue);
+          if (movement > 0.05) {
+            // User has moved the axis - activate it and apply
+            axisActivated.set(mappingKey, true);
+            console.log(`[ClearComms] Axis activated: ${mapping.deviceName} ${mapping.axisName} → ${mapping.sessionName}`);
+          } else {
+            // Not enough movement yet - don't apply
+            continue;
+          }
+        }
+
+        // Apply axis value if it has changed and axis is activated
+        if (Math.abs(lastHardwareValue - axisValue) > 0.01) {
           const session = audioSessions.find(s => s.process_name === mapping.processName);
-          
+
           if (session && !manuallyControlledSessions.has(session.session_id)) {
             try {
-              await invoke("set_session_volume", { sessionId: session.session_id, volume: axisValue });
-              await invoke("set_session_mute", { sessionId: session.session_id, muted: axisValue === 0 });
+              await invokeSetVolume(session.session_id, axisValue);
+              await invokeSetMute(session.session_id, axisValue === 0);
               startHardwareVolumeInterpolation(session.session_id, axisValue);
               lastHardwareAxisValues.set(mappingKey, axisValue);
             } catch (error) {
@@ -1410,19 +1529,13 @@
     }
     animationSignals.clear();
     animatingSliders.clear();
-    
-    for (const [sessionId, frameId] of dragAnimationFrames) {
-      cancelAnimationFrame(frameId);
-    }
-    dragAnimationFrames.clear();
-    dragTargets.clear();
-    
+
     for (const [sessionId, frameId] of hardwareVolumeAnimations) {
       cancelAnimationFrame(frameId);
     }
     hardwareVolumeAnimations.clear();
     hardwareVolumeTargets.clear();
-    
+
     console.log("[ClearComms] All animations cleaned up");
   }
   
@@ -1438,12 +1551,11 @@
     previousAxisValues.clear();
     previousButtonStates.clear();
     lastHardwareAxisValues.clear();
+    axisActivated.clear();
     preMuteVolumes.clear();
     manuallyControlledSessions.clear();
     hardwareVolumeTargets.clear();
     hardwareVolumeAnimations.clear();
-    dragTargets.clear();
-    dragAnimationFrames.clear();
     memorySnapshots = [];
     axisData = [];
     audioSessions = [];
@@ -1526,8 +1638,8 @@
 
   async function toggleWindowPinned() {
     try {
-      await invoke('toggle_pin_window');
-      await fetchWindowPinnedState();
+      const newState = await invoke<boolean>('toggle_pin_window');
+      windowPinned = newState;
     } catch (error) {
       console.error("Error toggling window pin:", error);
     }
@@ -1547,6 +1659,7 @@
 
   function handleVolumeDragMove(e: CustomEvent<{ sessionId: string; volume: number }>) {
     const { sessionId, volume } = e.detail;
+    cancelVolumeAnimation(sessionId);
     setSessionVolumeImmediate(sessionId, volume);
     scheduleLiveVolumeUpdate(sessionId, volume);
   }

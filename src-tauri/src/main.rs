@@ -350,17 +350,25 @@ fn hide_main_window(app: tauri::AppHandle) -> Result<(), String> {
     }
 }
 
+/// Helper function: Perform the actual pin toggle operation
+/// Returns the new pin state after toggling
+pub fn perform_pin_toggle(window: &tauri::WebviewWindow) -> Result<bool, String> {
+    position_window_bottom_right(window);
+    let _ = window.show();
+    let _ = window.set_focus();
+    
+    let current_state = window.is_always_on_top().unwrap_or(false);
+    let new_state = !current_state;
+    let _ = window.set_always_on_top(new_state);
+    Ok(new_state)
+}
+
 /// Toggle pin on top for main window
+/// Returns the new pin state
 #[tauri::command]
-fn toggle_pin_window(app: tauri::AppHandle) -> Result<(), String> {
+fn toggle_pin_window(app: tauri::AppHandle) -> Result<bool, String> {
     if let Some(window) = app.get_webview_window("main") {
-        position_window_bottom_right(&window);
-        let _ = window.show();
-        let _ = window.set_focus();
-        
-        let current_state = window.is_always_on_top().unwrap_or(false);
-        let _ = window.set_always_on_top(!current_state);
-        Ok(())
+        perform_pin_toggle(&window)
     } else {
         Err("Main window not found".to_string())
     }
@@ -645,6 +653,10 @@ fn main() {
             audio_management::set_session_mute,
             audio_management::check_default_device_changed,
             audio_management::cleanup_audio_manager,
+            audio_management::get_system_volume,
+            audio_management::get_system_mute,
+            audio_management::set_system_volume,
+            audio_management::set_system_mute,
             update_layout_measurements,
             resize_window_to_content,
             show_main_window,

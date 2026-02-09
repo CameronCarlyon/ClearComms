@@ -7,6 +7,7 @@ use windows::{
     core::*,
     Win32::System::Com::*,
     Win32::Media::Audio::*,
+    Win32::Media::Audio::Endpoints::*,
     Win32::Foundation::*,
     Win32::System::Threading::*,
 };
@@ -174,6 +175,109 @@ impl AudioManager {
             Ok(true)
         } else {
             Ok(false)
+        }
+    }
+    
+    /// Get the system (device endpoint) master volume level (0.0 to 1.0)
+    pub fn get_system_volume(&self) -> std::result::Result<f32, String> {
+        unsafe {
+            let enumerator: IMMDeviceEnumerator = CoCreateInstance(
+                &MMDeviceEnumerator,
+                None,
+                CLSCTX_ALL,
+            ).map_err(|e: Error| format!("Failed to create device enumerator: {}", e))?;
+
+            let device = enumerator
+                .GetDefaultAudioEndpoint(eRender, eConsole)
+                .map_err(|e: Error| format!("Failed to get default audio endpoint: {}", e))?;
+
+            let endpoint_volume: IAudioEndpointVolume = device
+                .Activate(CLSCTX_ALL, None)
+                .map_err(|e: Error| format!("Failed to activate endpoint volume: {}", e))?;
+
+            let volume = endpoint_volume
+                .GetMasterVolumeLevelScalar()
+                .map_err(|e: Error| format!("Failed to get master volume: {}", e))?;
+
+            Ok(volume)
+        }
+    }
+    
+    /// Get the system (device endpoint) mute state
+    pub fn get_system_mute(&self) -> std::result::Result<bool, String> {
+        unsafe {
+            let enumerator: IMMDeviceEnumerator = CoCreateInstance(
+                &MMDeviceEnumerator,
+                None,
+                CLSCTX_ALL,
+            ).map_err(|e: Error| format!("Failed to create device enumerator: {}", e))?;
+
+            let device = enumerator
+                .GetDefaultAudioEndpoint(eRender, eConsole)
+                .map_err(|e: Error| format!("Failed to get default audio endpoint: {}", e))?;
+
+            let endpoint_volume: IAudioEndpointVolume = device
+                .Activate(CLSCTX_ALL, None)
+                .map_err(|e: Error| format!("Failed to activate endpoint volume: {}", e))?;
+
+            let muted = endpoint_volume
+                .GetMute()
+                .map_err(|e: Error| format!("Failed to get mute state: {}", e))?
+                .as_bool();
+
+            Ok(muted)
+        }
+    }
+    
+    /// Set the system (device endpoint) master volume level (0.0 to 1.0)
+    pub fn set_system_volume(&self, volume: f32) -> std::result::Result<(), String> {
+        let volume = volume.clamp(0.0, 1.0);
+        
+        unsafe {
+            let enumerator: IMMDeviceEnumerator = CoCreateInstance(
+                &MMDeviceEnumerator,
+                None,
+                CLSCTX_ALL,
+            ).map_err(|e: Error| format!("Failed to create device enumerator: {}", e))?;
+
+            let device = enumerator
+                .GetDefaultAudioEndpoint(eRender, eConsole)
+                .map_err(|e: Error| format!("Failed to get default audio endpoint: {}", e))?;
+
+            let endpoint_volume: IAudioEndpointVolume = device
+                .Activate(CLSCTX_ALL, None)
+                .map_err(|e: Error| format!("Failed to activate endpoint volume: {}", e))?;
+
+            endpoint_volume
+                .SetMasterVolumeLevelScalar(volume, std::ptr::null())
+                .map_err(|e: Error| format!("Failed to set master volume: {}", e))?;
+
+            Ok(())
+        }
+    }
+    
+    /// Set the system (device endpoint) mute state
+    pub fn set_system_mute(&self, muted: bool) -> std::result::Result<(), String> {
+        unsafe {
+            let enumerator: IMMDeviceEnumerator = CoCreateInstance(
+                &MMDeviceEnumerator,
+                None,
+                CLSCTX_ALL,
+            ).map_err(|e: Error| format!("Failed to create device enumerator: {}", e))?;
+
+            let device = enumerator
+                .GetDefaultAudioEndpoint(eRender, eConsole)
+                .map_err(|e: Error| format!("Failed to get default audio endpoint: {}", e))?;
+
+            let endpoint_volume: IAudioEndpointVolume = device
+                .Activate(CLSCTX_ALL, None)
+                .map_err(|e: Error| format!("Failed to activate endpoint volume: {}", e))?;
+
+            endpoint_volume
+                .SetMute(BOOL(muted as i32), std::ptr::null())
+                .map_err(|e: Error| format!("Failed to set mute state: {}", e))?;
+
+            Ok(())
         }
     }
 
@@ -608,4 +712,60 @@ pub fn cleanup_audio_manager() -> std::result::Result<String, String> {
         }
         None => Ok("Audio manager not initialised".to_string())
     }
+}
+
+/// Get the system (device endpoint) master volume level
+#[tauri::command]
+pub fn get_system_volume() -> std::result::Result<f32, String> {
+    let lock = AUDIO_MANAGER
+        .lock()
+        .map_err(|e| format!("Failed to lock audio manager mutex: {}", e))?;
+    
+    let manager = lock
+        .as_ref()
+        .ok_or("Audio manager not initialised. Call init_audio_manager first.")?;
+    
+    manager.get_system_volume()
+}
+
+/// Get the system (device endpoint) mute state
+#[tauri::command]
+pub fn get_system_mute() -> std::result::Result<bool, String> {
+    let lock = AUDIO_MANAGER
+        .lock()
+        .map_err(|e| format!("Failed to lock audio manager mutex: {}", e))?;
+    
+    let manager = lock
+        .as_ref()
+        .ok_or("Audio manager not initialised. Call init_audio_manager first.")?;
+    
+    manager.get_system_mute()
+}
+
+/// Set the system (device endpoint) master volume level
+#[tauri::command]
+pub fn set_system_volume(volume: f32) -> std::result::Result<(), String> {
+    let lock = AUDIO_MANAGER
+        .lock()
+        .map_err(|e| format!("Failed to lock audio manager mutex: {}", e))?;
+    
+    let manager = lock
+        .as_ref()
+        .ok_or("Audio manager not initialised. Call init_audio_manager first.")?;
+    
+    manager.set_system_volume(volume)
+}
+
+/// Set the system (device endpoint) mute state
+#[tauri::command]
+pub fn set_system_mute(muted: bool) -> std::result::Result<(), String> {
+    let lock = AUDIO_MANAGER
+        .lock()
+        .map_err(|e| format!("Failed to lock audio manager mutex: {}", e))?;
+    
+    let manager = lock
+        .as_ref()
+        .ok_or("Audio manager not initialised. Call init_audio_manager first.")?;
+    
+    manager.set_system_mute(muted)
 }

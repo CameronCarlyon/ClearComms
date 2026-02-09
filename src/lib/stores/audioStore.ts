@@ -5,6 +5,15 @@
 import { writable, derived, get } from 'svelte/store';
 import type { AudioSession, AxisMapping, ButtonMapping, PendingBinding, PendingButtonBinding } from '$lib/types';
 
+// ─────────────────────────────────────────────────────────────────────────────
+// Constants
+// ─────────────────────────────────────────────────────────────────────────────
+
+/** Special identifier for system volume control */
+export const SYSTEM_VOLUME_ID = '__SYSTEM__';
+export const SYSTEM_VOLUME_PROCESS_NAME = '__SYSTEM__';
+export const SYSTEM_VOLUME_DISPLAY_NAME = 'System';
+
 // Audio sessions from Windows Audio API
 export const audioSessions = writable<AudioSession[]>([]);
 
@@ -18,11 +27,6 @@ export const pinnedApps = writable<Set<string>>(new Set());
 // Pending bindings (when user is binding a control)
 export const pendingBinding = writable<PendingBinding | null>(null);
 export const pendingButtonBinding = writable<PendingButtonBinding | null>(null);
-
-// Volume animation state
-export const animatingSliders = writable<Set<string>>(new Set());
-export const manuallyControlledSessions = writable<Set<string>>(new Set());
-export const preMuteVolumes = writable<Map<string, number>>(new Map());
 
 // Derived: Get all bound process names
 export const boundProcessNames = derived(
@@ -101,7 +105,21 @@ export const boundSessions = derived(
 export const availableSessions = derived(
   [audioSessions, boundProcessNames],
   ([$audioSessions, $boundNames]) => {
-    return $audioSessions.filter(s => !$boundNames.has(s.process_name));
+    const sessions = $audioSessions.filter(s => !$boundNames.has(s.process_name));
+    
+    // Add system volume option if not already bound
+    if (!$boundNames.has(SYSTEM_VOLUME_PROCESS_NAME)) {
+      sessions.unshift({
+        session_id: SYSTEM_VOLUME_ID,
+        display_name: SYSTEM_VOLUME_DISPLAY_NAME,
+        process_id: 0,
+        process_name: SYSTEM_VOLUME_PROCESS_NAME,
+        volume: 1.0,
+        is_muted: false
+      });
+    }
+    
+    return sessions;
   }
 );
 
@@ -172,6 +190,11 @@ export function loadPinnedApps(): void {
 
 // Helper: Format process name for display
 export function formatProcessName(processName: string): string {
+  // Special case for system volume
+  if (processName === SYSTEM_VOLUME_PROCESS_NAME) {
+    return SYSTEM_VOLUME_DISPLAY_NAME;
+  }
+  
   const customNames: Record<string, string> = {
     'vpilot.exe': 'vPilot',
     'couatl.exe': 'GSX'
@@ -188,4 +211,9 @@ export function formatProcessName(processName: string): string {
   ).join(' ');
   
   return name;
+}
+
+// Helper: Check if session is system volume
+export function isSystemVolume(session: AudioSession | null | undefined): boolean {
+  return session?.process_name === SYSTEM_VOLUME_PROCESS_NAME || session?.session_id === SYSTEM_VOLUME_ID;
 }

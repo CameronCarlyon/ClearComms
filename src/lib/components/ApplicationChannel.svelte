@@ -17,14 +17,14 @@
     isBindingAxis: boolean;
     isBindingButton: boolean;
   }
-  
-  let { 
-    session, 
-    axisMapping, 
-    buttonMapping, 
-    isEditMode, 
-    isBindingAxis, 
-    isBindingButton 
+
+  let {
+    session,
+    axisMapping,
+    buttonMapping,
+    isEditMode,
+    isBindingAxis,
+    isBindingButton
   }: Props = $props();
   
   const dispatch = createEventDispatcher<{
@@ -236,6 +236,7 @@
       variant="toggle"
       active={axisMapping?.inverted ?? false}
       disabled={!axisMapping}
+      alwaysEnabled={!!axisMapping}
       ariaLabel={axisMapping 
         ? `${axisMapping.inverted ? 'Disable' : 'Enable'} axis inversion for ${session.display_name}`
         : `No axis binding for ${session.display_name}`}

@@ -9,7 +9,7 @@ use windows::Win32::{
 };
 
 #[cfg(windows)]
-use tauri::Manager;
+use tauri::{Manager, Emitter};
 
 #[cfg(windows)]
 use crate::window_utils::position_window_bottom_right;
@@ -105,24 +105,27 @@ pub fn show_native_context_menu(app: &tauri::AppHandle, x: i32, y: i32) -> Resul
         } else if selected == MENU_PIN {
             if let Some(window) = app_clone.get_webview_window("main") {
                 let is_visible = window.is_visible().unwrap_or(false);
-                let current_pin_state = window.is_always_on_top().unwrap_or(false);
                 
-                if !is_visible {
-                    // Window is hidden - show it and pin it
-                    position_window_bottom_right(&window);
-                    let _ = window.show();
-                    let _ = window.set_focus();
-                    let _ = window.set_always_on_top(true);
-                    eprintln!("[Menu] Window shown and pinned on top");
-                } else if current_pin_state {
-                    // Window is visible and pinned - unpin and hide
-                    let _ = window.set_always_on_top(false);
-                    let _ = window.hide();
-                    eprintln!("[Menu] Pin on top toggled: true -> false (hidden)");
-                } else {
-                    // Window is visible but not pinned - pin it
-                    let _ = window.set_always_on_top(true);
-                    eprintln!("[Menu] Pin on top toggled: false -> true");
+                // Use the shared pin toggle logic from main.rs
+                // We'll just call the window methods directly here too since we're already in this context
+                match crate::perform_pin_toggle(&window) {
+                    Ok(new_pin_state) => {
+                        // Emit an event to notify the frontend about the pin state change
+                        if let Err(e) = app_clone.emit("window-pin-changed", new_pin_state) {
+                            eprintln!("[Menu] Failed to emit pin state event: {}", e);
+                        }
+                        
+                        if !is_visible {
+                            eprintln!("[Menu] Window shown and pinned on top");
+                        } else if new_pin_state {
+                            eprintln!("[Menu] Pin on top toggled: false -> true");
+                        } else {
+                            eprintln!("[Menu] Pin on top toggled: true -> false (hidden)");
+                        }
+                    }
+                    Err(e) => {
+                        eprintln!("[Menu] Failed to toggle pin: {}", e);
+                    }
                 }
             }
         } else if selected == MENU_QUIT {
