@@ -11,7 +11,7 @@
     displayName: string;
     disabled?: boolean;
   }
-  
+
   let { volume, sessionId, displayName, disabled = false }: Props = $props();
   
   const dispatch = createEventDispatcher<{
@@ -137,7 +137,7 @@
     appearance: none;
     width: 46px;
     flex: 1;
-    background: transparent;
+    background: var(--bg-card);
     cursor: pointer;
     writing-mode: vertical-lr;
     direction: rtl;

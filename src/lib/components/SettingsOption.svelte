@@ -1,60 +1,73 @@
 <!--
   SettingsOption Component
+  An icon button for settings menu items
 -->
 <script lang="ts">
-  import { createEventDispatcher } from 'svelte';
+  import type { Snippet } from 'svelte';
   
   interface Props {
-    processName: string;
-    displayName: string;
+    ariaLabel?: string;
+    ariaPressed?: boolean;
+    title?: string;
+    animationIndex?: number;
+    icon?: Snippet;
+    onclick?: (e: MouseEvent) => void;
   }
   
-  let { processName, displayName }: Props = $props();
-  
-  const dispatch = createEventDispatcher<{
-    select: { processName: string };
-  }>();
+  let { 
+    ariaLabel,
+    ariaPressed,
+    title,
+    animationIndex = 0,
+    icon,
+    onclick
+  }: Props = $props();
   
   function handleClick(e: MouseEvent) {
-    e.stopPropagation();
-    dispatch('select', { processName });
+    onclick?.(e);
   }
 </script>
 
-<button 
+<button
   class="settings-option"
-  role="option"
-  aria-selected="false"
   onclick={handleClick}
-  aria-label="Select {displayName}"
+  aria-label={ariaLabel}
+  aria-pressed={ariaPressed}
+  {title}
+  type="button"
+  style="--animation-delay: {animationIndex * 0.05}s"
 >
-  {displayName}
-    <div class="btn-radio-container">
-        <div class="btn-radio">
-
-        </div>
-    </div>
-    <textarea>
-    </textarea>
+  {#if icon}
+    {@render icon()}
+  {/if}
 </button>
 
 <style>
   .settings-option {
-    padding: 1rem;
-    margin: 6px;
+    width: 46px;
+    height: 46px;
+    min-width: 46px;
+    min-height: 46px;
     background: transparent;
     border: none;
-    border-radius: 23px;
-    color: var(--text-primary);
-    font-size: 0.8rem;
-    font-weight: 500;
-    text-align: left;
+    border-radius: 50%;
     cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
     transition: background 0.15s ease;
-    white-space: nowrap;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    flex-shrink: 0;
+    animation: fadeIn 0.25s ease-out forwards;
+    animation-delay: var(--animation-delay, 0s);
+    opacity: 0;
+  }
+  
+  @keyframes fadeIn {
+    from {
+      opacity: 0;
+    }
+    to {
+      opacity: 1;
+    }
   }
 
   .settings-option:hover {

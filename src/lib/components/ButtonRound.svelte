@@ -184,15 +184,23 @@
 
   /* Variant: Binding state (active bind button) */
   .btn-channel.binding {
-    animation: pulse-shadow 2s ease-in-out infinite;
+    animation: pulse-shadow 2.5s ease-in-out infinite;
+    transition: border-color 0.2s ease, background 0.2s ease;
+  }
+  
+  /* Hover overrides border-color for binding buttons */
+  .btn-channel.binding:hover {
+    border-color: var(--text-primary) !important;
   }
 
   @keyframes pulse-shadow {
     0%, 100% {
-      box-shadow: 0 0 80px rgba(255, 255, 255, 0.15);
+      box-shadow: 0 0 60px rgba(255, 255, 255, 0.2);
+      border-color: var(--text-muted);
     }
     50% {
-      box-shadow: 0 0 80px rgba(255, 255, 255, 0.5);
+      box-shadow: 0 0 100px rgba(255, 255, 255, 0.6);
+      border-color: var(--text-primary);
     }
   }
 

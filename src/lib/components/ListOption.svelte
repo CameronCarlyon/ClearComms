@@ -12,6 +12,7 @@
     ariaLabel?: string;
     fullWidth?: boolean;
     animationIndex?: number;
+    animationType?: 'fadeInSlide' | 'fadeIn';
     class?: string;
   }
   
@@ -22,6 +23,7 @@
     ariaLabel,
     fullWidth = false,
     animationIndex = 0,
+    animationType = 'fadeInSlide',
     class: className = ''
   }: Props = $props();
   
@@ -39,6 +41,7 @@
   class="list-option {className}"
   class:danger
   class:full-width={fullWidth}
+  class:fade-in={animationType === 'fadeIn'}
   role="option"
   aria-selected="false"
   onclick={handleClick}
@@ -65,7 +68,10 @@
     overflow: hidden;
     text-overflow: ellipsis;
     flex-shrink: 0;
-    animation: fadeInSlide 0.25s ease-out forwards;
+    animation-name: fadeInSlide;
+    animation-duration: 0.25s;
+    animation-timing-function: ease-out;
+    animation-fill-mode: forwards;
     animation-delay: var(--animation-delay, 0s);
     opacity: 0;
     height: 46px;
@@ -84,6 +90,19 @@
     to {
       opacity: 1;
       transform: translateY(0);
+    }
+  }
+  
+  .list-option.fade-in {
+    animation-name: fadeIn;
+  }
+  
+  @keyframes fadeIn {
+    from {
+      opacity: 0;
+    }
+    to {
+      opacity: 1;
     }
   }
 
