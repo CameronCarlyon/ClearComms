@@ -28,9 +28,6 @@ const INITIAL_DEVICE_CAPACITY: usize = 16;
 /// Initial capacity for HID device map
 const INITIAL_HID_DEVICE_CAPACITY: usize = 32;
 
-/// Maximum cache size before forced cleanup
-const MAX_CACHE_SIZE: usize = 100;
-
 /// Axis and button data from a hardware device
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AxisData {
@@ -177,17 +174,7 @@ impl HidInputManager {
         // Clear old cache entries to prevent unbounded growth
         self.axis_cache.clear();
         self.button_cache.clear();
-        
-        // Prevent excessive memory usage
-        if self.axis_cache.len() > MAX_CACHE_SIZE {
-            self.axis_cache.clear();
-            eprintln!("[Input] Cleared axis cache due to size limit");
-        }
-        if self.button_cache.len() > MAX_CACHE_SIZE {
-            self.button_cache.clear();
-            eprintln!("[Input] Cleared button cache due to size limit");
-        }
-        
+
         Ok(())
     }
 
@@ -250,9 +237,9 @@ impl HidInputManager {
                         
                         // Also provide discrete POV directions as buttons for convenience
                         buttons.insert("POV_Up".to_string(), pov_angle >= 315.0 || pov_angle <= 45.0);
-                        buttons.insert("POV_Right".to_string(), pov_angle >= 45.0 && pov_angle <= 135.0);
-                        buttons.insert("POV_Down".to_string(), pov_angle >= 135.0 && pov_angle <= 225.0);
-                        buttons.insert("POV_Left".to_string(), pov_angle >= 225.0 && pov_angle <= 315.0);
+                        buttons.insert("POV_Right".to_string(), (45.0..=135.0).contains(&pov_angle));
+                        buttons.insert("POV_Down".to_string(), (135.0..=225.0).contains(&pov_angle));
+                        buttons.insert("POV_Left".to_string(), (225.0..=315.0).contains(&pov_angle));
                     } else {
                         buttons.insert("POV_Centered".to_string(), true);
                     }
@@ -262,7 +249,7 @@ impl HidInputManager {
                     self.button_cache.insert(device.id, buttons.clone());
                     
                     all_axes.push(AxisData {
-                        device_handle: format!("{}", device.id),
+                        device_handle: device.id.to_string(),
                         device_name: device.name.clone(),
                         manufacturer: device.manufacturer.clone(),
                         product_id: device.product_id,
@@ -274,7 +261,7 @@ impl HidInputManager {
                     // Use cached values if read failed
                     let cached_buttons = self.button_cache.get(&device.id).cloned().unwrap_or_default();
                     all_axes.push(AxisData {
-                        device_handle: format!("{}", device.id),
+                        device_handle: device.id.to_string(),
                         device_name: device.name.clone(),
                         manufacturer: device.manufacturer.clone(),
                         product_id: device.product_id,
@@ -404,12 +391,6 @@ pub fn get_all_axis_values() -> Result<Vec<AxisData>, String> {
         .ok_or("Input not initialised. Call init_direct_input first.")?;
     
     manager.read_all_axes()
-}
-
-/// Update a test axis value (removed - reading real hardware)
-#[tauri::command]
-pub fn update_test_axis_value(_device_handle: String, _axis_name: String, _value: f32) -> Result<String, String> {
-    Err("Test axis updates are no longer supported. Reading real hardware data now.".to_string())
 }
 
 /// Clean up input manager resources

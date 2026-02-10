@@ -83,36 +83,33 @@ fn get_process_name(process_id: u32) -> String {
         return "System".to_string();
     }
 
-    match ProcessHandle::open(process_id) {
-        Ok(process_handle) => {
-            unsafe {
-                // Buffer for the executable path
-                let mut buffer = vec![0u16; MAX_PATH_LENGTH];
-                let mut size = buffer.len() as u32;
+    if let Ok(process_handle) = ProcessHandle::open(process_id) {
+        unsafe {
+            // Buffer for the executable path
+            let mut buffer = vec![0u16; MAX_PATH_LENGTH];
+            let mut size = buffer.len() as u32;
 
-                // Get the full executable path
-                let result = QueryFullProcessImageNameW(
-                    process_handle.as_handle(),
-                    PROCESS_NAME_WIN32,
-                    PWSTR(buffer.as_mut_ptr()),
-                    &mut size,
-                );
+            // Get the full executable path
+            let result = QueryFullProcessImageNameW(
+                process_handle.as_handle(),
+                PROCESS_NAME_WIN32,
+                PWSTR(buffer.as_mut_ptr()),
+                &mut size,
+            );
 
-                if result.is_ok() && size > 0 {
-                    // Convert to String
-                    let path = String::from_utf16_lossy(&buffer[0..size as usize]);
-                    
-                    // Extract just the filename from the full path
-                    if let Some(filename) = path.split('\\').last() {
-                        return filename.to_string();
-                    }
-                    
-                    return path;
+            if result.is_ok() && size > 0 {
+                // Convert to String
+                let path = String::from_utf16_lossy(&buffer[0..size as usize]);
+
+                // Extract just the filename from the full path
+                if let Some(filename) = path.split('\\').next_back() {
+                    return filename.to_string();
                 }
-                // ProcessHandle automatically closes on drop
+
+                return path;
             }
+            // ProcessHandle automatically closes on drop
         }
-        Err(_) => {}
     }
 
     // Fallback if we can't get the process name
@@ -159,9 +156,15 @@ impl AudioManager {
 
             let id = device.GetId()
                 .map_err(|e: Error| format!("Failed to get device ID: {}", e))?;
-            
-            id.to_string()
-                .map_err(|e| format!("Failed to convert device ID: {}", e))
+
+            let id_string = id.to_string()
+                .map_err(|e| format!("Failed to convert device ID: {}", e));
+
+            // Free COM-allocated PWSTR to prevent memory leak
+            // Win32 docs: "the caller is responsible for freeing the memory"
+            CoTaskMemFree(Some(id.0 as *const core::ffi::c_void));
+
+            id_string
         }
     }
     
@@ -178,113 +181,65 @@ impl AudioManager {
         }
     }
     
+    /// Get the system audio endpoint volume interface
+    fn get_endpoint_volume() -> std::result::Result<IAudioEndpointVolume, String> {
+        unsafe {
+            let enumerator: IMMDeviceEnumerator = CoCreateInstance(
+                &MMDeviceEnumerator,
+                None,
+                CLSCTX_ALL,
+            ).map_err(|e: Error| format!("Failed to create device enumerator: {}", e))?;
+
+            let device = enumerator
+                .GetDefaultAudioEndpoint(eRender, eConsole)
+                .map_err(|e: Error| format!("Failed to get default audio endpoint: {}", e))?;
+
+            device
+                .Activate(CLSCTX_ALL, None)
+                .map_err(|e: Error| format!("Failed to activate endpoint volume: {}", e))
+        }
+    }
+
     /// Get the system (device endpoint) master volume level (0.0 to 1.0)
     pub fn get_system_volume(&self) -> std::result::Result<f32, String> {
         unsafe {
-            let enumerator: IMMDeviceEnumerator = CoCreateInstance(
-                &MMDeviceEnumerator,
-                None,
-                CLSCTX_ALL,
-            ).map_err(|e: Error| format!("Failed to create device enumerator: {}", e))?;
-
-            let device = enumerator
-                .GetDefaultAudioEndpoint(eRender, eConsole)
-                .map_err(|e: Error| format!("Failed to get default audio endpoint: {}", e))?;
-
-            let endpoint_volume: IAudioEndpointVolume = device
-                .Activate(CLSCTX_ALL, None)
-                .map_err(|e: Error| format!("Failed to activate endpoint volume: {}", e))?;
-
-            let volume = endpoint_volume
+            Self::get_endpoint_volume()?
                 .GetMasterVolumeLevelScalar()
-                .map_err(|e: Error| format!("Failed to get master volume: {}", e))?;
-
-            Ok(volume)
+                .map_err(|e: Error| format!("Failed to get master volume: {}", e))
         }
     }
-    
+
     /// Get the system (device endpoint) mute state
     pub fn get_system_mute(&self) -> std::result::Result<bool, String> {
         unsafe {
-            let enumerator: IMMDeviceEnumerator = CoCreateInstance(
-                &MMDeviceEnumerator,
-                None,
-                CLSCTX_ALL,
-            ).map_err(|e: Error| format!("Failed to create device enumerator: {}", e))?;
-
-            let device = enumerator
-                .GetDefaultAudioEndpoint(eRender, eConsole)
-                .map_err(|e: Error| format!("Failed to get default audio endpoint: {}", e))?;
-
-            let endpoint_volume: IAudioEndpointVolume = device
-                .Activate(CLSCTX_ALL, None)
-                .map_err(|e: Error| format!("Failed to activate endpoint volume: {}", e))?;
-
-            let muted = endpoint_volume
+            Ok(Self::get_endpoint_volume()?
                 .GetMute()
                 .map_err(|e: Error| format!("Failed to get mute state: {}", e))?
-                .as_bool();
-
-            Ok(muted)
+                .as_bool())
         }
     }
-    
+
     /// Set the system (device endpoint) master volume level (0.0 to 1.0)
     pub fn set_system_volume(&self, volume: f32) -> std::result::Result<(), String> {
         let volume = volume.clamp(0.0, 1.0);
-        
         unsafe {
-            let enumerator: IMMDeviceEnumerator = CoCreateInstance(
-                &MMDeviceEnumerator,
-                None,
-                CLSCTX_ALL,
-            ).map_err(|e: Error| format!("Failed to create device enumerator: {}", e))?;
-
-            let device = enumerator
-                .GetDefaultAudioEndpoint(eRender, eConsole)
-                .map_err(|e: Error| format!("Failed to get default audio endpoint: {}", e))?;
-
-            let endpoint_volume: IAudioEndpointVolume = device
-                .Activate(CLSCTX_ALL, None)
-                .map_err(|e: Error| format!("Failed to activate endpoint volume: {}", e))?;
-
-            endpoint_volume
+            Self::get_endpoint_volume()?
                 .SetMasterVolumeLevelScalar(volume, std::ptr::null())
-                .map_err(|e: Error| format!("Failed to set master volume: {}", e))?;
-
-            Ok(())
+                .map_err(|e: Error| format!("Failed to set master volume: {}", e))
         }
     }
-    
+
     /// Set the system (device endpoint) mute state
     pub fn set_system_mute(&self, muted: bool) -> std::result::Result<(), String> {
         unsafe {
-            let enumerator: IMMDeviceEnumerator = CoCreateInstance(
-                &MMDeviceEnumerator,
-                None,
-                CLSCTX_ALL,
-            ).map_err(|e: Error| format!("Failed to create device enumerator: {}", e))?;
-
-            let device = enumerator
-                .GetDefaultAudioEndpoint(eRender, eConsole)
-                .map_err(|e: Error| format!("Failed to get default audio endpoint: {}", e))?;
-
-            let endpoint_volume: IAudioEndpointVolume = device
-                .Activate(CLSCTX_ALL, None)
-                .map_err(|e: Error| format!("Failed to activate endpoint volume: {}", e))?;
-
-            endpoint_volume
+            Self::get_endpoint_volume()?
                 .SetMute(BOOL(muted as i32), std::ptr::null())
-                .map_err(|e: Error| format!("Failed to set mute state: {}", e))?;
-
-            Ok(())
+                .map_err(|e: Error| format!("Failed to set mute state: {}", e))
         }
     }
 
     /// Enumerate all active audio sessions from all audio devices with proper resource management
     pub fn enumerate_sessions(&mut self) -> std::result::Result<Vec<AudioSession>, String> {
-        let _com_guard = (); // Simplified COM guard
-        
         unsafe {
             // Create device enumerator
             let enumerator: IMMDeviceEnumerator = CoCreateInstance(
@@ -343,17 +298,27 @@ impl AudioManager {
                                 continue;
                             }
 
-                            let session_id = session_control2
-                                .GetSessionInstanceIdentifier()
-                                .ok()
-                                .and_then(|s| s.to_string().ok())
-                                .unwrap_or_else(|| format!("session_{}", i));
+                            let session_id = match session_control2.GetSessionInstanceIdentifier() {
+                                Ok(pwstr) => {
+                                    let s = pwstr.to_string()
+                                        .unwrap_or_else(|_| format!("session_{}", i));
+                                    // Free COM-allocated PWSTR to prevent memory leak
+                                    CoTaskMemFree(Some(pwstr.0 as *const core::ffi::c_void));
+                                    s
+                                }
+                                Err(_) => format!("session_{}", i),
+                            };
 
-                            let display_name = session_control2
-                                .GetDisplayName()
-                                .ok()
-                                .and_then(|s| s.to_string().ok())
-                                .unwrap_or_else(|| format!("Process {}", process_id));
+                            let display_name = match session_control2.GetDisplayName() {
+                                Ok(pwstr) => {
+                                    let s = pwstr.to_string()
+                                        .unwrap_or_else(|_| format!("Process {}", process_id));
+                                    // Free COM-allocated PWSTR to prevent memory leak
+                                    CoTaskMemFree(Some(pwstr.0 as *const core::ffi::c_void));
+                                    s
+                                }
+                                Err(_) => format!("Process {}", process_id),
+                            };
 
                             // Get the actual process executable name
                             let process_name = get_process_name(process_id);

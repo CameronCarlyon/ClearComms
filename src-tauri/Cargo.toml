@@ -1,6 +1,6 @@
 [package]
 name = "ClearComms"
-version = "0.1.0"
+version = "1.0.0"
 description = "Radio companion application for Microsoft Flight Simulator."
 authors = ["you"]
 edition = "2021"

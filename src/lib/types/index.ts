@@ -84,23 +84,3 @@ export interface MemoryInfo {
   totalJSHeapSize?: number;
   usedJSHeapSize?: number;
 }
-
-/** Debug configuration options */
-export interface DebugConfig {
-  ENABLED: boolean;
-  FORCE_BOOT_SCREEN: boolean;
-  FORCE_BOOT_ERROR: boolean;
-  FORCE_CLOSE_CONFIRMATION: boolean;
-  FORCE_MAIN_APP: boolean;
-  BOOT_STATUS_TEXT: string;
-  BOOT_ERROR_MESSAGE: string;
-  FORCE_EDIT_MODE: boolean;
-  FORCE_NO_SESSIONS: boolean;
-  FORCE_ERROR_BANNER: boolean;
-  ERROR_BANNER_TEXT: string;
-  FORCE_MOCK_SESSIONS: boolean;
-  MOCK_SESSIONS: AudioSession[];
-  FORCE_BINDING_MODE: boolean;
-  FORCE_BUTTON_BINDING_MODE: boolean;
-  FORCE_AUDIO_NOT_INITIALISED: boolean;
-}

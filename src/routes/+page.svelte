@@ -21,7 +21,6 @@
   } from "$lib/components";
   import { formatProcessName, SYSTEM_VOLUME_ID, SYSTEM_VOLUME_PROCESS_NAME, SYSTEM_VOLUME_DISPLAY_NAME, isSystemVolume } from "$lib/stores/audioStore";
 
-  console.log("[ClearComms] Component script loaded");
 
   // ─────────────────────────────────────────────────────────────────────────────
   // DEBUG CONFIGURATION - Set these to preview different UI states
@@ -162,7 +161,6 @@
   
   function startMemoryProfiler() {
     if (!IS_DEV || memoryProfilerInterval) return;
-    console.log("[MemoryProfiler] Starting memory profiler (dev mode)");
     logMemorySnapshot();
     memoryProfilerInterval = setInterval(() => {
       logMemorySnapshot();
@@ -192,11 +190,6 @@
       memorySnapshots = memorySnapshots.slice(-MAX_MEMORY_SNAPSHOTS);
     }
     
-    console.log(
-      `[MemoryProfiler] Heap: ${formatBytes(snapshot.heapUsed)} / ${formatBytes(snapshot.heapTotal)} | ` +
-      `Caches: axis=${previousAxisValues.size}, btn=${previousButtonStates.size}, hw=${lastHardwareAxisValues.size}, ` +
-      `live=${liveVolumeState.size}, anim=${animatingSliders.size}`
-    );
   }
   
   function checkForMemoryLeaks() {
@@ -221,23 +214,7 @@
   }
   
   function logDetailedCacheStats() {
-    console.group("[MemoryProfiler] Detailed Cache Statistics");
-    console.log(`previousAxisValues: ${previousAxisValues.size} entries`);
-    console.log(`previousButtonStates: ${previousButtonStates.size} entries`);
-    console.log(`lastHardwareAxisValues: ${lastHardwareAxisValues.size} entries`);
-    console.log(`axisActivated: ${axisActivated.size} entries`);
-    console.log(`liveVolumeState: ${liveVolumeState.size} entries`);
-    console.log(`hardwareVolumeTargets: ${hardwareVolumeTargets.size} entries`);
-    console.log(`hardwareVolumeAnimations: ${hardwareVolumeAnimations.size} entries`);
-    console.log(`animatingSliders: ${animatingSliders.size} entries`);
-    console.log(`animationSignals: ${animationSignals.size} entries`);
-    console.log(`manuallyControlledSessions: ${manuallyControlledSessions.size} entries`);
-    console.log(`preMuteVolumes: ${preMuteVolumes.size} entries`);
-    console.log(`audioSessions: ${audioSessions.length} entries`);
-    console.log(`axisData: ${axisData.length} entries`);
-    console.log(`axisMappings: ${axisMappings.length} entries`);
-    console.log(`buttonMappings: ${buttonMappings.length} entries`);
-    console.groupEnd();
+    // Detailed cache statistics available via window.clearCommsDebug in dev mode
   }
   
   if (IS_DEV && typeof window !== 'undefined') {
@@ -247,16 +224,13 @@
       getSnapshots: () => memorySnapshots,
       forceCleanup: () => {
         performPeriodicCleanup();
-        console.log("[MemoryProfiler] Forced cleanup completed");
         logMemorySnapshot();
       },
       forceGC: () => {
         cleanupAllCaches();
-        console.log("[MemoryProfiler] Caches cleared, GC should run soon");
         setTimeout(logMemorySnapshot, 1000);
       }
     };
-    console.log("[MemoryProfiler] Debug functions available: window.clearCommsDebug.{logMemory, logCaches, getSnapshots, forceCleanup, forceGC}");
   }
 
   // ─────────────────────────────────────────────────────────────────────────────
@@ -448,7 +422,6 @@
 
   onMount(() => {
     if (DEBUG.ENABLED) {
-      console.log("[DEBUG] Debug mode enabled - applying overrides");
       applyDebugOverrides();
       return;
     }
@@ -467,7 +440,6 @@
     // Store the promise so cleanup can unlisten even if it hasn't resolved yet
     const unlistenPromise = listen('window-pin-changed', (event: { payload: boolean }) => {
       windowPinned = event.payload;
-      console.log(`[Window] Pin state changed: ${windowPinned}`);
     });
 
     const handleBlur = async () => {
@@ -565,7 +537,6 @@
   }
 
   onDestroy(() => {
-    console.log("[ClearComms] Component destroying, cleaning up resources...");
     stopPolling();
     cleanupAllAnimations();
     cleanupAllLiveVolumeStates();
@@ -573,7 +544,6 @@
     if (IS_DEV && typeof window !== 'undefined') {
       delete (window as any).clearCommsDebug;
     }
-    console.log("[ClearComms] Component cleanup complete");
   });
 
   // ─────────────────────────────────────────────────────────────────────────────
@@ -680,14 +650,11 @@
     audioMonitorInterval = setInterval(async () => {
       try {
         const deviceChanged = await invoke<boolean>("check_default_device_changed");
-        if (deviceChanged) {
-          console.log("Audio device changed - refreshing sessions");
-        }
         await refreshAudioSessions();
       } catch (error) {
         console.error("Audio monitoring error:", error);
       }
-    }, 200); // Poll every 200ms for responsive external changes
+    }, 1000); // Poll every 1s for external audio changes (reduces COM object pressure)
   }
 
   function stopAudioMonitoring() {
@@ -810,7 +777,6 @@
       const firstChannel = document.querySelector<HTMLElement>('.application-channel');
       
       if (!mixer || !firstChannel) {
-        console.log("[Layout] Not yet ready for measurement - mixer or channel not found");
         return;
       }
       
@@ -834,7 +800,6 @@
         base_width: baseWidth,
       });
       
-      console.log(`[Layout] ${result}`);
     } catch (error) {
       console.error("[Layout] Failed to measure and report layout dimensions:", error);
       // Non-fatal error - window sizing will use defaults
@@ -1148,7 +1113,6 @@
       }
     }
 
-    console.log("[ClearComms] Periodic memory cleanup completed");
   }
   
   async function setSessionVolumeFinal(sessionId: string, volume: number) {
@@ -1293,7 +1257,6 @@
     pinnedApps = new Set([...pinnedApps, processName]);
     savePinnedApps();
     
-    console.log(`[ClearComms] ✓ Mapped ${deviceName} ${axisName} → ${sessionName}`);
     saveMappings();
   }
 
@@ -1302,16 +1265,11 @@
     if (mapping) {
       mapping.inverted = !mapping.inverted;
       axisMappings = [...axisMappings];
-      console.log(`[ClearComms] Axis inversion ${mapping.inverted ? 'enabled' : 'disabled'} for ${mapping.sessionName}`);
       saveMappings();
     }
   }
 
   function removeMapping(processName: string) {
-    const mapping = axisMappings.find(m => m.processName === processName);
-    if (mapping) {
-      console.log(`[ClearComms] Removed mapping: ${mapping.deviceName} ${mapping.axisName} → ${mapping.sessionName}`);
-    }
     axisMappings = axisMappings.filter(m => m.processName !== processName);
     saveMappings();
   }
@@ -1325,30 +1283,17 @@
     pinnedApps = new Set([...pinnedApps, processName]);
     savePinnedApps();
     
-    console.log(`[ClearComms] ✓ Mapped ${deviceName} ${buttonName} → Mute ${sessionName}`);
     saveButtonMappings();
   }
 
   function removeButtonMapping(processName: string) {
-    const mapping = buttonMappings.find(m => m.processName === processName);
-    if (mapping) {
-      console.log(`[ClearComms] Removed button mapping: ${mapping.deviceName} ${mapping.buttonName} → Mute ${mapping.sessionName}`);
-    }
     buttonMappings = buttonMappings.filter(m => m.processName !== processName);
     saveButtonMappings();
   }
 
   function removeApplication(processName: string) {
-    const axisMapping = axisMappings.find(m => m.processName === processName);
-    if (axisMapping) {
-      console.log(`[ClearComms] Removed axis mapping for ${axisMapping.sessionName}`);
-    }
     axisMappings = axisMappings.filter(m => m.processName !== processName);
     
-    const btnMapping = buttonMappings.find(m => m.processName === processName);
-    if (btnMapping) {
-      console.log(`[ClearComms] Removed button mapping for ${btnMapping.sessionName}`);
-    }
     buttonMappings = buttonMappings.filter(m => m.processName !== processName);
     
     const newPinnedApps = new Set(pinnedApps);
@@ -1368,7 +1313,6 @@
       cancelVolumeAnimation(session.session_id);
     }
     
-    console.log(`[ClearComms] ✓ Completely removed application: ${processName}`);
     saveMappings();
     saveButtonMappings();
   }
@@ -1427,7 +1371,6 @@
           if (movement > 0.05) {
             // User has moved the axis - activate it and apply
             axisActivated.set(mappingKey, true);
-            console.log(`[ClearComms] Axis activated: ${mapping.deviceName} ${mapping.axisName} → ${mapping.sessionName}`);
           } else {
             // Not enough movement yet - don't apply
             continue;
@@ -1533,7 +1476,6 @@
     hardwareVolumeAnimations.clear();
     hardwareVolumeTargets.clear();
 
-    console.log("[ClearComms] All animations cleaned up");
   }
   
   function cleanupAllLiveVolumeStates() {
@@ -1541,7 +1483,6 @@
       clearLiveVolumeState(sessionId);
     }
     liveVolumeState.clear();
-    console.log("[ClearComms] Live volume states cleaned up");
   }
   
   function cleanupAllCaches() {
@@ -1559,7 +1500,6 @@
     axisMappings = [];
     buttonMappings = [];
     
-    console.log("[ClearComms] All caches cleared");
   }
 
   // ─────────────────────────────────────────────────────────────────────────────

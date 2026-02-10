@@ -89,47 +89,47 @@ pub fn show_native_context_menu(app: &tauri::AppHandle, x: i32, y: i32) -> Resul
         let _ = DestroyMenu(hmenu);
         
         // Handle the selected menu item (cmd is the menu item ID)
-        let app_clone = app.clone();
-        let selected = cmd.0 as usize;
-        
-        if selected == MENU_SHOW {
-            if let Some(window) = app_clone.get_webview_window("main") {
-                position_window_bottom_right(&window);
-                let _ = window.show();
-                let _ = window.set_focus();
+        match cmd.0 as usize {
+            MENU_SHOW => {
+                if let Some(window) = app.get_webview_window("main") {
+                    position_window_bottom_right(&window);
+                    let _ = window.show();
+                    let _ = window.set_focus();
+                }
             }
-        } else if selected == MENU_HIDE {
-            if let Some(window) = app_clone.get_webview_window("main") {
-                let _ = window.hide();
+            MENU_HIDE => {
+                if let Some(window) = app.get_webview_window("main") {
+                    let _ = window.hide();
+                }
             }
-        } else if selected == MENU_PIN {
-            if let Some(window) = app_clone.get_webview_window("main") {
-                let is_visible = window.is_visible().unwrap_or(false);
-                
-                // Use the shared pin toggle logic from main.rs
-                // We'll just call the window methods directly here too since we're already in this context
-                match crate::perform_pin_toggle(&window) {
-                    Ok(new_pin_state) => {
-                        // Emit an event to notify the frontend about the pin state change
-                        if let Err(e) = app_clone.emit("window-pin-changed", new_pin_state) {
-                            eprintln!("[Menu] Failed to emit pin state event: {}", e);
+            MENU_PIN => {
+                if let Some(window) = app.get_webview_window("main") {
+                    let is_visible = window.is_visible().unwrap_or(false);
+
+                    match crate::perform_pin_toggle(&window) {
+                        Ok(new_pin_state) => {
+                            if let Err(e) = app.emit("window-pin-changed", new_pin_state) {
+                                eprintln!("[Menu] Failed to emit pin state event: {}", e);
+                            }
+
+                            if !is_visible {
+                                eprintln!("[Menu] Window shown and pinned on top");
+                            } else if new_pin_state {
+                                eprintln!("[Menu] Pin on top toggled: false -> true");
+                            } else {
+                                eprintln!("[Menu] Pin on top toggled: true -> false (hidden)");
+                            }
                         }
-                        
-                        if !is_visible {
-                            eprintln!("[Menu] Window shown and pinned on top");
-                        } else if new_pin_state {
-                            eprintln!("[Menu] Pin on top toggled: false -> true");
-                        } else {
-                            eprintln!("[Menu] Pin on top toggled: true -> false (hidden)");
+                        Err(e) => {
+                            eprintln!("[Menu] Failed to toggle pin: {}", e);
                         }
-                    }
-                    Err(e) => {
-                        eprintln!("[Menu] Failed to toggle pin: {}", e);
                     }
                 }
             }
-        } else if selected == MENU_QUIT {
-            std::process::exit(0);
+            MENU_QUIT => {
+                std::process::exit(0);
+            }
+            _ => {}
         }
         
         Ok(())

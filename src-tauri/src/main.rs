@@ -25,8 +25,6 @@
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
-#[allow(unused_imports)]
-use lazy_static::lazy_static;
 use tauri::image::Image;
 use tauri::Manager;
 use tauri::tray::{TrayIconBuilder, TrayIconId, MouseButton, MouseButtonState};
@@ -476,7 +474,7 @@ fn main() {
                     let _ = apply_acrylic(&window, None);
 
                     // Apply rounded corners
-                    let hwnd = HWND(window.hwnd().unwrap().0 as *mut std::ffi::c_void);
+                    let hwnd = HWND(window.hwnd().unwrap().0);
                     let corner_preference: i32 = DWMWCP_ROUND.0;
                     unsafe {
                         let _ = DwmSetWindowAttribute(
@@ -645,7 +643,6 @@ fn main() {
             hardware_input::get_direct_input_status,
             hardware_input::enumerate_input_devices,
             hardware_input::get_all_axis_values,
-            hardware_input::update_test_axis_value,
             hardware_input::cleanup_input_manager,
             audio_management::init_audio_manager,
             audio_management::get_audio_sessions,

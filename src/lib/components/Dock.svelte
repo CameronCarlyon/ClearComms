@@ -86,7 +86,7 @@
     await invoke('open_url', { url: 'https://github.com/CameronCarlyon/ClearComms' });
   }
   
-  async function handleTogglePin(e: MouseEvent) {
+  function handleTogglePin(e: MouseEvent) {
     e.preventDefault();
     dispatch('togglewindowpinned');
   }

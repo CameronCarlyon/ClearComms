@@ -92,8 +92,4 @@
   .boot-status.error {
     color: #ff4444;
   }
-
-  :global(.restart-button) {
-    margin-top: 1rem;
-  }
 </style>

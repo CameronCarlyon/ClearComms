@@ -132,9 +132,8 @@
   }
 
   .btn-expandable.expanded .btn-expandable__trigger {
-    width: calc(100% - 12px);
-    height: 46px;
     width: 100%;
+    height: 46px;
     min-height: 46px;
     background: transparent;
     border-color: transparent;
