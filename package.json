@@ -1,7 +1,7 @@
 {
   "name": "clearcomms",
   "version": "1.0.0",
-  "description": "Synchronised intercom volume control for Microsoft Flight Simulator",
+  "description": "Integrated radio volume control for Microsoft Flight Simulator",
   "type": "module",
   "scripts": {
     "dev": "vite dev",
@@ -13,8 +13,7 @@
   },
   "license": "MIT",
   "dependencies": {
-    "@tauri-apps/api": "^2.10.1",
-    "@tauri-apps/plugin-opener": "^2.5.3"
+    "@tauri-apps/api": "^2.10.1"
   },
   "devDependencies": {
     "@sveltejs/adapter-static": "^3.0.6",

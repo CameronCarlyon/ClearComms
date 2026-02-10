@@ -1,5 +1,4 @@
 {
-  "$schema": "https://schema.tauri.app/config/2",
   "productName": "ClearComms",
   "version": "1.0.0",
   "identifier": "com.cameroncarlyon.clearcomms",
@@ -14,8 +13,8 @@
       {
         "title": "ClearComms",
         "label": "main",
-        "width": 600,
-        "height": 600,
+        "width": 700,
+        "height": 700,
         "resizable": false,
         "fullscreen": false,
         "decorations": false,

@@ -7,7 +7,33 @@ The goal is to keep you in the flightdeck environment and not fiddling with volu
 > [!NOTE]
 > In order to enable simulator integration, the [MobiFlight Event Module](https://docs.mobiflight.com/guides/wasm-module/) must be installed, though this is not a requirement for the application to function.
 
-Should you require instruction, please refer to the [user guide](docs/GUIDE.md). 
+## Requirements
+
+- **Operating System:** Windows 10 or later (x64)
+- **Microsoft Flight Simulator** (2020 or 2024) — optional, required only for simulator integration
+- **MobiFlight WASM Event Module** — optional, required only for simulator LVar access
+
+## Installation
+
+1. Download the latest installer from the [Releases](https://github.com/cameroncarlyon/ClearComms/releases) page.
+2. Run `ClearComms_x64-setup.exe` (NSIS) or `ClearComms_x64_en-US.msi` (MSI).
+3. Follow the on-screen prompts to complete installation.
+4. *(Optional)* Install the [MobiFlight WASM Event Module](https://docs.mobiflight.com/guides/wasm-module/) for simulator integration.
+
+## Usage
+
+1. Launch **ClearComms** — the application runs in the system tray.
+2. Click the tray icon to open the mixer panel.
+3. Click **+** to add audio applications (e.g. vPilot, GSX Pro) to the mixer.
+4. Adjust volume using the on-screen sliders, or map a hardware axis/button:
+   - Click the **gamepad icon** on a channel to begin axis binding — move a hardware axis to assign it.
+   - Click the **mute button binding icon** to assign a hardware button for mute toggle.
+   - Click the **vertical arrow icon** to swap axis travel direction.
+   - Click the **red rubbish bin icon** to remove the pinned application.
+5. Hover the mouse over the handle at the bottom of the window to open the dock.
+   - Click the **edit button** to exit edit mode.
+   - Click the **gear cog button** to open the settings menu.
+   - Click the **X** to open the close menu.
 
 ## Features
 
@@ -74,3 +100,7 @@ The architecture is intentionally designed to allow this dependency to be substi
 This stack balances **performance, portability, and extensibility**, allowing ClearComms to integrate appropriately with both the Windows operating system and Microsoft Flight Simulator whilst maintaining a small footprint and a scalable framework to enable future enhancements.
 
 A comprehensive technical breakdown of the application's architecture is provided [here](docs/DOCUMENTATION.md).
+
+## Licence
+
+This project is licensed under the [MIT Licence](LICENSE.md).

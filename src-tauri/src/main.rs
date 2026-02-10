@@ -664,7 +664,6 @@ fn main() {
             quit_application,
             open_url,
         ])
-        .plugin(tauri_plugin_opener::init())
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
 }

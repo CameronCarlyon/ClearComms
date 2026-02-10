@@ -1,5 +1,5 @@
 /**
- * TypeScript interfaces for ClearComms application
+ * TypeScript interfaces for ClearComms
  * Centralises all type definitions for audio sessions, mappings, and hardware input
  */
 
@@ -76,11 +76,4 @@ export interface AnimationSignal {
   cancelled: boolean;
   resolve?: (completed: boolean) => void;
   frameId?: number;
-}
-
-/** Memory info from performance API (Chromium only) */
-export interface MemoryInfo {
-  jsHeapSizeLimit?: number;
-  totalJSHeapSize?: number;
-  usedJSHeapSize?: number;
 }

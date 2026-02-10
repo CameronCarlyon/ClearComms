@@ -49,7 +49,6 @@ declare module '$env/static/private' {
 	export const FPS_BROWSER_APP_PROFILE_STRING: string;
 	export const FPS_BROWSER_USER_PROFILE_STRING: string;
 	export const GIT_ASKPASS: string;
-	export const GIT_PAGER: string;
 	export const HOME: string;
 	export const HOMEDRIVE: string;
 	export const HOMEPATH: string;
@@ -105,6 +104,13 @@ declare module '$env/static/private' {
 	export const SESSIONNAME: string;
 	export const SystemDrive: string;
 	export const SystemRoot: string;
+	export const TAURI_CLI_VERBOSITY: string;
+	export const TAURI_ENV_ARCH: string;
+	export const TAURI_ENV_DEBUG: string;
+	export const TAURI_ENV_FAMILY: string;
+	export const TAURI_ENV_PLATFORM: string;
+	export const TAURI_ENV_PLATFORM_VERSION: string;
+	export const TAURI_ENV_TARGET_TRIPLE: string;
 	export const TEMP: string;
 	export const TERM_PROGRAM: string;
 	export const TERM_PROGRAM_VERSION: string;
@@ -172,7 +178,6 @@ declare module '$env/dynamic/private' {
 		FPS_BROWSER_APP_PROFILE_STRING: string;
 		FPS_BROWSER_USER_PROFILE_STRING: string;
 		GIT_ASKPASS: string;
-		GIT_PAGER: string;
 		HOME: string;
 		HOMEDRIVE: string;
 		HOMEPATH: string;
@@ -228,6 +233,13 @@ declare module '$env/dynamic/private' {
 		SESSIONNAME: string;
 		SystemDrive: string;
 		SystemRoot: string;
+		TAURI_CLI_VERBOSITY: string;
+		TAURI_ENV_ARCH: string;
+		TAURI_ENV_DEBUG: string;
+		TAURI_ENV_FAMILY: string;
+		TAURI_ENV_PLATFORM: string;
+		TAURI_ENV_PLATFORM_VERSION: string;
+		TAURI_ENV_TARGET_TRIPLE: string;
 		TEMP: string;
 		TERM_PROGRAM: string;
 		TERM_PROGRAM_VERSION: string;

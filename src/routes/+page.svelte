@@ -10,8 +10,7 @@
     PendingBinding, 
     PendingButtonBinding,
     LiveVolumeState,
-    AnimationSignal,
-    MemoryInfo 
+    AnimationSignal
   } from "$lib/types";
   import { 
     Mixer,
@@ -141,6 +140,13 @@
   // ─────────────────────────────────────────────────────────────────────────────
   // MEMORY PROFILING (Dev Mode)
   // ─────────────────────────────────────────────────────────────────────────────
+  
+  /** Chromium memory info (may not be available in WebView2) */
+  interface MemoryInfo {
+    usedJSHeapSize?: number;
+    totalJSHeapSize?: number;
+    jsHeapSizeLimit?: number;
+  }
   
   const IS_DEV = typeof (import.meta as any).hot !== 'undefined';
   let memoryProfilerInterval: number | null = null;
