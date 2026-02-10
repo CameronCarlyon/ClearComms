@@ -28,18 +28,19 @@ src/
 │   │   ├── index.ts              # Barrel export for all components
 │   │   ├── ApplicationChannel.svelte  # Complete mixer channel strip
 │   │   ├── VolumeSlider.svelte   # Vertical volume control
-│   │   ├── MuteButton.svelte     # Mute toggle button
-│   │   ├── ChannelButton.svelte  # Unified channel control button (bind, toggle, action)
-│   │   ├── ListOption.svelte     # List option item
-│   │   ├── ExpandableButton.svelte # Button with expandable menu
+│   │   ├── Mixer.svelte          # Horizontal mixer layout container
+│   │   ├── ButtonExpandable.svelte # Button with expandable dropdown menu
+│   │   ├── ButtonAddApplication.svelte # Add app button with session list
+│   │   ├── ButtonPill.svelte     # Pill-shaped action button
+│   │   ├── ButtonRound.svelte    # Circular icon button (toggle/bind/mapping/action)
+│   │   ├── ListOption.svelte     # Dropdown list item
+│   │   ├── SettingsOption.svelte # Settings menu toggle item
 │   │   ├── Dock.svelte           # Bottom hover dock
 │   │   ├── BootScreen.svelte     # Loading/error state
 │   │   └── Footer.svelte         # Attribution footer
-│   ├── stores/         # Svelte stores for state management
-│   │   ├── index.ts              # Barrel export for stores
-│   │   ├── audioStore.ts         # Audio sessions and mappings
-│   │   ├── hardwareStore.ts      # Hardware input device state
-│   │   └── uiStore.ts            # UI state (edit mode, menus)
+│   ├── stores/         # Utility functions and constants
+│   │   ├── index.ts              # Barrel export (re-exports audioStore)
+│   │   └── audioStore.ts         # formatProcessName(), isSystemVolume(), constants
 │   └── types/          # TypeScript type definitions
 │       └── index.ts              # Centralised interfaces
 ├── routes/
@@ -80,8 +81,8 @@ src-tauri/
 - Use `camelCase` for variables and functions
 - Use `PascalCase` for components
 - Prefer TypeScript interfaces over types
-- Use Svelte stores for state management
-- Keep Tauri API calls in dedicated service files
+- Use Svelte 5 `$state` runes for reactive state, `$derived` for computed values, `$effect` for side effects
+- Tauri `invoke` calls are centralised in `+page.svelte`; components communicate via dispatched events
 - **Component-based architecture**: Break UI into focused, reusable components
 - Each component should be <150 lines and single-purpose
 - Main `+page.svelte` should primarily compose components, not contain all UI logic
@@ -104,7 +105,7 @@ src-tauri/
 5. **LVar Access**: Use Flight Simulator WASM bridge for simulator variable access
 6. **Input Handling**: Use async patterns for HID input polling
 7. **Tauri Commands**: Keep them focused and well-typed
-8. **State Management**: Use Svelte stores for reactive UI state (avoid prop drilling)
+8. **State Management**: Use Svelte 5 `$state` runes for reactive state; use `Map`/`Set` for non-reactive caches; persist configuration to `localStorage`
 9. **Comments**: Use comments to explain complex logic and provide context, making sure to explain why and not just what
 10. **Language**: Use British English spelling and terminology throughout code comments and documentation
 
