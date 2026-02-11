@@ -100,7 +100,8 @@
   }
 
   .btn-expandable.expanded {
-    width: 180px;
+    width: 166px;
+    max-width: 166px;
     height: 100%;
     max-height: 100%;
     align-items: stretch;
