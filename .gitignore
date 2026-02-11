@@ -65,6 +65,7 @@ test-results/
 
 # Ignore SvelteKit build output
 .svelte-kit/
+build/
 
 # Ignore editor folders
 .idea/
