@@ -109,19 +109,19 @@ pub fn show_native_context_menu(app: &tauri::AppHandle, x: i32, y: i32) -> Resul
                     match crate::perform_pin_toggle(&window) {
                         Ok(new_pin_state) => {
                             if let Err(e) = app.emit("window-pin-changed", new_pin_state) {
-                                eprintln!("[Menu] Failed to emit pin state event: {}", e);
+                                tracing::error!("[Menu] Failed to emit pin state event: {}", e);
                             }
 
                             if !is_visible {
-                                eprintln!("[Menu] Window shown and pinned on top");
+                                tracing::info!("[Menu] Window shown and pinned on top");
                             } else if new_pin_state {
-                                eprintln!("[Menu] Pin on top toggled: false -> true");
+                                tracing::info!("[Menu] Pin on top toggled: false -> true");
                             } else {
-                                eprintln!("[Menu] Pin on top toggled: true -> false (hidden)");
+                                tracing::info!("[Menu] Pin on top toggled: true -> false (hidden)");
                             }
                         }
                         Err(e) => {
-                            eprintln!("[Menu] Failed to toggle pin: {}", e);
+                            tracing::error!("[Menu] Failed to toggle pin: {}", e);
                         }
                     }
                 }

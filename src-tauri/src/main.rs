@@ -224,7 +224,7 @@ fn update_layout_measurements(
     measurements.channel_gap = channel_gap;
     measurements.base_width = base_width;
     
-    println!("[Layout] Updated measurements: channel={}px, gap={}px, base={}px", 
+    tracing::debug!("[Layout] Updated measurements: channel={}px, gap={}px, base={}px",
              channel_width, channel_gap, base_width);
     
     Ok(format!("Layout measurements updated: channel={}px, gap={}px, base={}px", 
@@ -454,6 +454,11 @@ async fn open_url(url: String) -> Result<(), String> {
 }
 
 fn main() {
+    #[cfg(debug_assertions)]
+    tracing_subscriber::fmt()
+        .with_max_level(tracing::Level::DEBUG)
+        .init();
+
     // Track when window was last hidden - used to detect if tray click caused focus loss
     let last_hidden: Arc<Mutex<Instant>> = Arc::new(Mutex::new(Instant::now() - Duration::from_secs(10)));
     let last_hidden_for_setup = last_hidden.clone();
@@ -527,19 +532,19 @@ fn main() {
                                 
                                 let is_visible = window.is_visible().unwrap_or(false);
                                 
-                                println!("[Tray] Click - visible: {}, just_hidden: {}", is_visible, just_hidden);
+                                tracing::debug!("[Tray] Click - visible: {}, just_hidden: {}", is_visible, just_hidden);
                                 
                                 if is_visible {
                                     // Window is visible - hide it
-                                    println!("[Tray] Hiding window");
+                                    tracing::debug!("[Tray] Hiding window");
                                     let _ = window.set_always_on_top(false);
                                     let _ = window.hide();
                                 } else if just_hidden {
                                     // Window was just hidden by this click's focus loss - do nothing
-                                    println!("[Tray] Ignoring (just hidden by focus loss)");
+                                    tracing::debug!("[Tray] Ignoring (just hidden by focus loss)");
                                 } else {
                                     // Window is hidden and wasn't just hidden - show it
-                                    println!("[Tray] Showing window");
+                                    tracing::debug!("[Tray] Showing window");
                                     position_window_bottom_right(&window);
                                     let _ = window.show();
                                     let _ = window.set_focus();
@@ -558,7 +563,7 @@ fn main() {
                             let y = position.y as i32;
                             
                             if let Err(e) = native_menu::show_native_context_menu(&app_clone, x, y) {
-                                eprintln!("[Tray] Error showing native menu: {}", e);
+                                tracing::error!("[Tray] Error showing native menu: {}", e);
                             }
                         }
                         _ => {}
@@ -586,11 +591,11 @@ fn main() {
                                 Some(tray) => {
                                     let new_icon = load_theme_appropriate_icon();
                                     if let Err(e) = tray.set_icon(Some(new_icon)) {
-                                        eprintln!("[Theme] Failed to update tray icon: {}", e);
+                                        tracing::error!("[Theme] Failed to update tray icon: {}", e);
                                     }
                                 }
                                 None => {
-                                    eprintln!("[Theme] Could not find tray icon with id '{}'", TRAY_ICON_ID);
+                                    tracing::warn!("[Theme] Could not find tray icon with id '{}'", TRAY_ICON_ID);
                                 }
                             }
                         });
@@ -609,11 +614,11 @@ fn main() {
                 }
                 tauri::WindowEvent::Focused(focused) => {
                     let is_pinned = window.is_always_on_top().unwrap_or(false);
-                    println!("[Window] Focused: {}, Pinned: {}", focused, is_pinned);
+                    tracing::debug!("[Window] Focused: {}, Pinned: {}", focused, is_pinned);
                     
                     // Force redraw on any focus change when pinned to clear title bar artifacts
                     if is_pinned {
-                        println!("[Window] Pinned, forcing redraw");
+                        tracing::debug!("[Window] Pinned, forcing redraw");
                         if let Ok(size) = window.outer_size() {
                             let _ = window.set_size(tauri::Size::Physical(tauri::PhysicalSize {
                                 width: size.width,
@@ -623,7 +628,7 @@ fn main() {
                         }
                     } else if !focused {
                         // Window not pinned and lost focus - hide it and record timestamp
-                        println!("[Window] Lost focus, hiding");
+                        tracing::debug!("[Window] Lost focus, hiding");
                         // Only update last_hidden if the window was actually visible
                         if let Ok(is_visible) = window.is_visible() {
                             if is_visible {

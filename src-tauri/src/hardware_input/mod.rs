@@ -91,7 +91,7 @@ impl HidInputManager {
     
     /// Clean up resources and caches
     pub fn cleanup(&mut self) {
-        eprintln!("[Input] Cleaning up HID input manager resources...");
+        tracing::info!("[Input] Cleaning up HID input manager resources...");
         
         // Clear all caches
         self.devices.clear();
@@ -103,7 +103,7 @@ impl HidInputManager {
         self.axis_cache.shrink_to_fit();
         self.button_cache.shrink_to_fit();
         
-        eprintln!("[Input] HID input manager cleanup complete");
+        tracing::info!("[Input] HID input manager cleanup complete");
     }
 
     /// Enumerate all connected game controllers with improved memory management
@@ -280,9 +280,9 @@ impl HidInputManager {
 #[cfg(windows)]
 impl Drop for HidInputManager {
     fn drop(&mut self) {
-        eprintln!("[Input] Dropping HID input manager...");
+        tracing::debug!("[Input] Dropping HID input manager...");
         self.cleanup();
-        eprintln!("[Input] HID input manager dropped");
+        tracing::debug!("[Input] HID input manager dropped");
     }
 }
 
@@ -311,19 +311,19 @@ static INPUT_MANAGER: Mutex<Option<HidInputManager>> = Mutex::new(None);
 /// Initialise input system and enumerate devices
 #[tauri::command]
 pub fn init_direct_input() -> Result<String, String> {
-    eprintln!("[Input] Initialising HID input manager...");
+    tracing::info!("[Input] Initialising HID input manager...");
     let mut manager = HidInputManager::new()?;
-    
-    eprintln!("[Input] Enumerating devices...");
+
+    tracing::info!("[Input] Enumerating devices...");
     manager.enumerate_devices()?;
-    
+
     let device_count = manager.get_devices().len();
-    eprintln!("[Input] Found {} joystick device(s)", device_count);
-    
+    tracing::info!("[Input] Found {} joystick device(s)", device_count);
+
     // Log device details if any found
     if device_count > 0 {
         for device in manager.get_devices() {
-            eprintln!("[Input]   - {}", device.to_display_string());
+            tracing::info!("[Input]   - {}", device.to_display_string());
         }
     }
     

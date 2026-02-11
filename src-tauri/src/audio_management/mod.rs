@@ -120,7 +120,7 @@ fn get_process_name(process_id: u32) -> String {
 impl AudioManager {
     /// Create a new audio manager instance
     pub fn new() -> std::result::Result<Self, String> {
-        eprintln!("[Audio] Initialising COM library...");
+        tracing::info!("[Audio] Initialising COM library...");
         // Initialize COM for this thread
         unsafe {
             CoInitializeEx(None, COINIT_APARTMENTTHREADED)
@@ -128,10 +128,10 @@ impl AudioManager {
                 .map_err(|e: Error| format!("Failed to initialize COM: {}", e))?;
         }
         
-        eprintln!("[Audio] Detecting default audio device...");
+        tracing::info!("[Audio] Detecting default audio device...");
         // Get initial default device ID
         let device_id = Self::get_default_device_id()?;
-        eprintln!("[Audio] Default device: {}", device_id);
+        tracing::info!("[Audio] Default device: {}", device_id);
         
         Ok(Self {
             sessions: HashMap::new(),
@@ -173,7 +173,7 @@ impl AudioManager {
         let new_device_id = Self::get_default_device_id()?;
         
         if new_device_id != self.current_device_id {
-            eprintln!("[Audio] Default device changed: {} -> {}", self.current_device_id, new_device_id);
+            tracing::info!("[Audio] Default device changed: {} -> {}", self.current_device_id, new_device_id);
             self.current_device_id = new_device_id;
             Ok(true)
         } else {
@@ -355,7 +355,7 @@ impl AudioManager {
                 let mut session_keys: Vec<String> = self.sessions.keys().cloned().collect();
                 session_keys.truncate(MAX_SESSION_CACHE_SIZE / 2); // Remove oldest half
                 self.sessions.retain(|k, _| session_keys.contains(k));
-                eprintln!("[Audio] Cache size limit reached, pruned to {} entries", self.sessions.len());
+                tracing::warn!("[Audio] Cache size limit reached, pruned to {} entries", self.sessions.len());
             }
 
             self.enumerate_calls = self.enumerate_calls.wrapping_add(1);
@@ -368,7 +368,7 @@ impl AudioManager {
             };
 
             if counts_changed || self.enumerate_calls % LOG_INTERVAL == 0 {
-                eprintln!(
+                tracing::debug!(
                     "[Audio] enumerate_sessions: {} active (cache size {}, calls: {})",
                     active_count,
                     cache_count,
@@ -555,7 +555,7 @@ impl AudioManager {
 impl AudioManager {
     /// Explicit cleanup method for proper resource management
     pub fn cleanup(&mut self) {
-        eprintln!("[Audio] Cleaning up audio manager resources...");
+        tracing::info!("[Audio] Cleaning up audio manager resources...");
         
         // Clear internal caches
         self.sessions.clear();
@@ -569,7 +569,7 @@ impl AudioManager {
         // Reset device ID to release string memory
         self.current_device_id = String::new();
         
-        eprintln!("[Audio] Audio manager cleanup complete");
+        tracing::info!("[Audio] Audio manager cleanup complete");
     }
 }
 
@@ -577,12 +577,12 @@ impl Drop for AudioManager {
     fn drop(&mut self) {
         #[cfg(windows)]
         {
-            eprintln!("[Audio] Dropping audio manager...");
+            tracing::debug!("[Audio] Dropping audio manager...");
             self.cleanup();
             unsafe {
                 CoUninitialize();
             }
-            eprintln!("[Audio] Audio manager dropped");
+            tracing::debug!("[Audio] Audio manager dropped");
         }
     }
 }
@@ -593,7 +593,7 @@ static AUDIO_MANAGER: Mutex<Option<AudioManager>> = Mutex::new(None);
 /// Initialize the audio manager
 #[tauri::command]
 pub fn init_audio_manager() -> std::result::Result<String, String> {
-    eprintln!("[Audio] Initialising audio manager...");
+    tracing::info!("[Audio] Initialising audio manager...");
     let manager = AudioManager::new()?;
     
     let mut lock = AUDIO_MANAGER
@@ -602,7 +602,7 @@ pub fn init_audio_manager() -> std::result::Result<String, String> {
     
     *lock = Some(manager);
     
-    eprintln!("[Audio] Audio manager ready");
+    tracing::info!("[Audio] Audio manager ready");
     Ok("Audio manager initialised successfully".to_string())
 }
 
