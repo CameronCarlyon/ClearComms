@@ -78,7 +78,7 @@
   
   async function handleOpenGuide(e: MouseEvent) {
     e.preventDefault();
-    await invoke('open_url', { url: 'https://github.com/CameronCarlyon/ClearComms/blob/main/GUIDE.md' });
+    await invoke('open_url', { url: 'https://github.com/CameronCarlyon/ClearComms?tab=readme-ov-file#usage' });
   }
   
   async function handleOpenGithub(e: MouseEvent) {
@@ -296,11 +296,12 @@
   .dock {
     display: flex;
     flex-direction: row;
-    justify-content: space-between;
+    justify-content: center;
+    gap: 1rem;
     align-items: flex-end;
     height: 0;
     max-height: 0;
-    transition: height 0.3s ease, max-height 0.3s ease, padding 0.3s ease;
+    transition: height 0.3s ease, max-height 0.3s ease, padding 0.3s ease, gap 0.3s ease;
     position: relative;
     width: 180px;
   }
@@ -313,11 +314,13 @@
   .dock.expanded-settings {
     height: 110px;
     max-height: 110px;
+    gap: 0rem;
   }
 
   .dock.expanded-close {
     height: 162px;
     max-height: 162px;
+    gap: 0rem;
   }
 
   /* Menu button wrappers */
@@ -331,9 +334,12 @@
 
   .settings-wrapper.expanded,
   .close-wrapper.expanded {
+    display: flex;
+    flex-direction: row;
+    justify-content: center;;
     height: 100%;
-    flex: 1 1 1;
     width: 100%;
+    flex: 1 1 1;
     transform: scale(1);
   }
 
