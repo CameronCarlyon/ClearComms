@@ -60,11 +60,30 @@
   const isBindingNewApp = $derived(
     isBindingMode && pendingBinding !== null && !boundSessions.some(s => s.process_name === pendingBinding?.processName)
   );
+
+  let mixerContainer: HTMLDivElement;
+
+  function handleWheel(event: WheelEvent) {
+    const container = mixerContainer;
+    if (!container) return;
+
+    // Don't scroll if hovering over a volume slider
+    const target = event.target as HTMLElement;
+    if (target.classList.contains('volume-slider') || target.closest('.volume-bar-container')) {
+      return;
+    }
+
+    // Only handle wheel event if container has horizontal scroll
+    if (container.scrollWidth > container.clientWidth) {
+      event.preventDefault();
+      container.scrollLeft += event.deltaY > 0 ? 50 : -50;
+    }
+  }
 </script>
 
 {#if boundSessions.length > 0 || isEditMode}
   <!-- Mixer View -->
-  <div class="mixer-container">
+  <div class="mixer-container" bind:this={mixerContainer} onwheel={handleWheel}>
     {#each boundSessions as session (session.session_id)}
       {@const mapping = axisMappings.find(m => m.processName === session.process_name)}
       {@const buttonMapping = buttonMappings.find(m => m.processName === session.process_name)}
@@ -129,12 +148,15 @@
     display: flex;
     flex-direction: row;
     justify-content: center;
-    gap: 3rem;
-    overflow: visible;
+    gap: 46px;
+    overflow-x: scroll;
     flex: 1;
     min-height: 0;
     align-items: center;
     transition: opacity 0.3s ease, transform 0.3s ease;
+    scroll-behavior: smooth;
+    scrollbar-width: none;
+    padding: 0rem 2.5rem;
   }
 
   .application-channel {
