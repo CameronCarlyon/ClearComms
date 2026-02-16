@@ -26,7 +26,7 @@
   // ─────────────────────────────────────────────────────────────────────────────
   
   const DEBUG = {
-    ENABLED: true, // Global debugging toggle
+    ENABLED: false, // Global debugging toggle
     FORCE_BOOT_SCREEN: false, // Force application to hang on boot screen
     FORCE_BOOT_ERROR: false, // Force application to display boot error with restart button
     FORCE_AUDIO_NOT_INITIALISED: false, // Force application to behave as if audio subsystem failed to initialise
@@ -36,7 +36,7 @@
     ERROR_BANNER_TEXT: "Critical error", // Text to display in error banner
     FORCE_WARNING_BANNER: false, // Force application to display warning banner
     WARNING_BANNER_TEXT: "Update available", // Text to display in warning banner
-    FORCE_MOCK_SESSIONS: true, // Force application to use mock audio sessions for testing UI without actual audio subsystem (overrides FORCE_NO_SESSIONS)
+    FORCE_MOCK_SESSIONS: false, // Force application to use mock audio sessions for testing UI without actual audio subsystem (overrides FORCE_NO_SESSIONS)
     MOCK_SESSIONS: [
       { session_id: "mock_1", display_name: "Discord", process_id: 1234, process_name: "discord.exe", volume: 0.75, is_muted: false },
       { session_id: "mock_2", display_name: "Spotify", process_id: 5678, process_name: "spotify.exe", volume: 0.50, is_muted: false },
@@ -298,7 +298,7 @@
     let displayCount = boundProcessNames.size;
     
     if (isEditMode && displayCount >= 1) {
-      displayCount += 1;
+      displayCount += 2;
     }
     
     if (audioInitialised && displayCount !== previousDisplayCount) {
@@ -830,18 +830,23 @@
       // Get the gap from the mixer's computed style
       const computedStyle = window.getComputedStyle(mixer);
       const gapStr = computedStyle.gap;
-      const channelGap = parseInt(gapStr) || 48; // Fallback to 48px if can't parse
+      const channelGap = parseInt(gapStr) || 50; // Fallback to 50px if can't parse
       
-      // The base width accounts for the mixer padding and the first channel
-      // Calculate from main container padding: main { padding: 2.5rem } = 40px per side
-      const mainPadding = 80; // 40px left + 40px right
-      const baseWidth = channelWidth + mainPadding;
+      // Measure the main container's horizontal padding (one side)
+      // Expected: 100px total (50px per side)
+      const mainEl = document.querySelector<HTMLElement>('main');
+      let padding = 50; // Sensible default (100px total)
+      if (mainEl) {
+        const mainStyle = window.getComputedStyle(mainEl);
+        padding = parseInt(mainStyle.paddingLeft) || 50;
+      }
       
       // Send measurements to backend
+      // The Rust formula is: (n × channelWidth) + ((n-1) × channelGap) + (2 × padding)
       const result = await invoke<string>('update_layout_measurements', {
         channel_width: channelWidth,
         channel_gap: channelGap,
-        base_width: baseWidth,
+        padding: padding,
       });
       
     } catch (error) {
@@ -1797,8 +1802,7 @@
     justify-content: space-between;
     overflow: hidden;
     box-sizing: border-box;
-    padding: 2.5rem;
-    padding-bottom: 1rem;
+    padding: 50px 0rem 1rem 0rem;
     position: relative;
   }
 

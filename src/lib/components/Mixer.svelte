@@ -148,8 +148,10 @@
     display: flex;
     flex-direction: row;
     justify-content: center;
-    gap: 46px;
+    gap: 50px;
     overflow-x: scroll;
+    overflow-y: visible;
+    overflow: visible;
     flex: 1;
     min-height: 0;
     align-items: center;

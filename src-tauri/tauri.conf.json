@@ -31,14 +31,25 @@
     }
   },
   "bundle": {
-  "active": true,
-  "targets": "all",
-  "icon": [
-    "icons/white/32x32.png",
-    "icons/white/128x128.png",
-    "icons/white/128x128@2x.png",
-    "icons/white/icon.icns",
-    "icons/white/icon.ico"
-  ]
-}
+    "active": true,
+    "targets": ["nsis"],
+    "icon": [
+      "icons/white/32x32.png",
+      "icons/white/128x128.png",
+      "icons/white/128x128@2x.png",
+      "icons/white/icon.icns",
+      "icons/white/icon.ico"
+    ],
+    "windows": {
+      "certificateThumbprint": null,
+      "digestAlgorithm": "sha256",
+      "timestampUrl": "",
+      "webviewInstallMode": {
+        "type": "embedBootstrapper"
+      },
+      "wix": {
+        "language": "en-US"
+      }
+    }
+  }
 }

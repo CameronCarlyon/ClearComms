@@ -77,3 +77,32 @@ export interface AnimationSignal {
   resolve?: (completed: boolean) => void;
   frameId?: number;
 }
+
+/** Display and work area information returned from the Rust backend.
+ *  All spatial values are in physical pixels unless noted otherwise. */
+export interface DisplayInfo {
+  /** Full monitor width in physical pixels */
+  monitorWidth: number;
+  /** Full monitor height in physical pixels */
+  monitorHeight: number;
+  /** Work area left edge (non-zero if taskbar is on the left) */
+  workAreaLeft: number;
+  /** Work area top edge (non-zero if taskbar is on the top) */
+  workAreaTop: number;
+  /** Work area right edge */
+  workAreaRight: number;
+  /** Work area bottom edge */
+  workAreaBottom: number;
+  /** Usable work area width */
+  workAreaWidth: number;
+  /** Usable work area height */
+  workAreaHeight: number;
+  /** DPI scale factor (e.g. 1.0, 1.25, 1.5, 2.0) */
+  scaleFactor: number;
+  /** Edge padding in physical pixels */
+  edgePadding: number;
+  /** Maximum permissible window width in physical pixels */
+  maxWindowWidth: number;
+  /** Maximum permissible window height in physical pixels */
+  maxWindowHeight: number;
+}

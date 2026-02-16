@@ -100,8 +100,8 @@
   }
 
   .btn-expandable.expanded {
-    width: 166px;
-    max-width: 166px;
+    width: 150px;
+    max-width: 150px;
     height: 100%;
     max-height: 100%;
     align-items: stretch;
@@ -177,10 +177,11 @@
   .btn-expandable__list {
     display: flex;
     flex-direction: column;
-    overflow-y: visible;
+    overflow-y: scroll;
     min-height: 0;
     gap: 6px;
     z-index: 1;
+    border-radius: 23px;
   }
 
   .btn-expandable__list::-webkit-scrollbar {

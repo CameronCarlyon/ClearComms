@@ -35,30 +35,30 @@ mod lvar_input;
 mod native_menu;
 mod window_utils;
 
-use window_utils::position_window_bottom_right;
+use window_utils::{position_window_bottom_right, get_display_info_for_window, set_window_pos_and_size};
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Layout Measurement System
 // ─────────────────────────────────────────────────────────────────────────────
 
-/// Stores measured layout dimensions from the frontend
-/// This allows window sizing to adapt to any DPI scaling or CSS changes
+/// Stores measured layout dimensions from the frontend.
+/// This allows window sizing to adapt to any DPI scaling or CSS changes.
 #[derive(Debug, Clone)]
 struct LayoutMeasurements {
     /// Actual rendered width of one ApplicationChannel component (logical pixels)
     channel_width: u32,
     /// Actual rendered gap between channels (logical pixels)
     channel_gap: u32,
-    /// Base window width for single channel (logical pixels)
-    base_width: u32,
+    /// Horizontal padding between the window edge and the mixer content (one side, logical pixels)
+    padding: u32,
 }
 
 impl Default for LayoutMeasurements {
     fn default() -> Self {
         LayoutMeasurements {
-            channel_width: 48,   // CSS: max-width: 3rem = 48px at 100% scale
-            channel_gap: 48,     // CSS: gap: 3rem = 48px at 100% scale
-            base_width: 250,     // Standard base width for single channel
+            channel_width: 50,   // CSS: max-width on .application-channel
+            channel_gap: 50,     // CSS: gap on .mixer-container
+            padding: 50,         // CSS: padding on main container (one side) = 100px total
         }
     }
 }
@@ -171,10 +171,13 @@ fn load_theme_appropriate_icon() -> Image<'static> {
 /// Uses dynamically measured layout dimensions from the frontend to adapt to any DPI scaling
 /// or CSS changes. Falls back to sensible defaults if measurements haven't been set.
 ///
-/// Formula: base_width + ((channel_width + channel_gap) × (session_count - 1))
+/// Formula: (n × channel_width) + ((n − 1) × channel_gap) + (2 × padding)
 ///
-/// Returns logical pixel width. This value is converted to physical pixels in resize_window_to_content()
-/// using the display's DPI scale factor (e.g., 1.5 for 150% scaling on 4K displays).
+/// Example for 2 channels in edit mode (displayCount=4) with 50px channels, 50px gaps, 50px padding:
+///   (4 × 50) + (3 × 50) + (2 × 50) = 200 + 150 + 100 = 450px
+///
+/// Returns logical pixel width. This value is converted to physical pixels in
+/// `resize_window_to_content()` using the display's DPI scale factor.
 ///
 /// # Arguments
 /// * `session_count` - Number of audio sessions to display
@@ -182,19 +185,14 @@ fn load_theme_appropriate_icon() -> Image<'static> {
 /// # Returns
 /// Window width in logical pixels (before DPI scaling)
 fn calculate_window_width(session_count: usize) -> u32 {
-    if session_count == 0 {
-        let measurements = LAYOUT_MEASUREMENTS.lock().unwrap();
-        return measurements.base_width;
-    }
-    
     let measurements = LAYOUT_MEASUREMENTS.lock().unwrap();
-    let increment = measurements.channel_width + measurements.channel_gap;
-    
-    if session_count == 1 {
-        measurements.base_width
-    } else {
-        measurements.base_width + (increment * (session_count - 1) as u32)
-    }
+    let n = session_count as u32;
+
+    let channels_width = n * measurements.channel_width;
+    let gaps_width = n.saturating_sub(1) * measurements.channel_gap;
+    let total_padding = measurements.padding * 2;
+
+    channels_width + gaps_width + total_padding
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -209,7 +207,7 @@ fn calculate_window_width(session_count: usize) -> u32 {
 /// # Arguments
 /// * `channel_width` - Measured width of one ApplicationChannel component (logical pixels)
 /// * `channel_gap` - Measured gap between channels (logical pixels)
-/// * `base_width` - Measured base width for single channel (logical pixels)
+/// * `padding` - Horizontal padding between the window edge and mixer content, one side (logical pixels)
 ///
 /// # Returns
 /// Confirmation message with the stored measurements
@@ -217,18 +215,18 @@ fn calculate_window_width(session_count: usize) -> u32 {
 fn update_layout_measurements(
     channel_width: u32,
     channel_gap: u32,
-    base_width: u32,
+    padding: u32,
 ) -> Result<String, String> {
     let mut measurements = LAYOUT_MEASUREMENTS.lock().map_err(|e| format!("Failed to lock measurements: {}", e))?;
     measurements.channel_width = channel_width;
     measurements.channel_gap = channel_gap;
-    measurements.base_width = base_width;
+    measurements.padding = padding;
     
-    tracing::debug!("[Layout] Updated measurements: channel={}px, gap={}px, base={}px",
-             channel_width, channel_gap, base_width);
+    tracing::debug!("[Layout] Updated measurements: channel={}px, gap={}px, padding={}px",
+             channel_width, channel_gap, padding);
     
-    Ok(format!("Layout measurements updated: channel={}px, gap={}px, base={}px", 
-               channel_width, channel_gap, base_width))
+    Ok(format!("Layout measurements updated: channel={}px, gap={}px, padding={}px", 
+               channel_width, channel_gap, padding))
 }
 
 /// Resize the main window to accommodate the number of audio channels.
@@ -252,8 +250,15 @@ fn resize_window_to_content(app: tauri::AppHandle, session_count: usize) -> Resu
         let scale_factor = window.scale_factor().map_err(|e| e.to_string())?;
         
         // Convert logical pixels to physical pixels
-        let physical_target_width = (logical_target_width as f64 * scale_factor) as u32;
-        let physical_window_height = (WINDOW_HEIGHT as f64 * scale_factor) as u32;
+        let mut physical_target_width = (logical_target_width as f64 * scale_factor) as u32;
+        let mut physical_window_height = (WINDOW_HEIGHT as f64 * scale_factor) as u32;
+        
+        // Cap dimensions to stay within the usable work area (screen minus taskbar)
+        // This prevents the window from going off-screen on any display configuration
+        if let Some(display) = get_display_info_for_window(&window) {
+            physical_target_width = physical_target_width.min(display.max_window_width as u32);
+            physical_window_height = physical_window_height.min(display.max_window_height as u32);
+        }
         
         // Get current window size (already in physical pixels)
         let current_size = window.outer_size().map_err(|e| e.to_string())?;
@@ -267,7 +272,7 @@ fn resize_window_to_content(app: tauri::AppHandle, session_count: usize) -> Resu
         // Spawn animation thread to avoid blocking
         let window_clone = window.clone();
         std::thread::spawn(move || {
-            animate_window_resize(window_clone, current_width, physical_target_width, scale_factor);
+            animate_window_resize(window_clone, current_width, physical_target_width, physical_window_height);
         });
         
         return Ok(format!("Animating to {:?}x{:?} for {} session(s) (scale: {})", physical_target_width, physical_window_height, session_count, scale_factor));
@@ -276,50 +281,79 @@ fn resize_window_to_content(app: tauri::AppHandle, session_count: usize) -> Resu
     Err("Main window not found".to_string())
 }
 
-/// Animate window width change with easing
-fn animate_window_resize(window: tauri::WebviewWindow, start_width: u32, target_width: u32, scale_factor: f64) {
+/// Animate window width change with easing, anchored to the bottom-right corner.
+///
+/// Pre-computes the bottom-right anchor point from the display work area, then
+/// derives the window position directly from the interpolated width each frame.
+/// This eliminates the visual stutter caused by separate size/position updates —
+/// the right edge and bottom edge of the window remain perfectly fixed throughout
+/// the entire animation.
+///
+/// The `target_height` is pre-computed in physical pixels by the caller,
+/// already capped to fit within the display's work area.
+fn animate_window_resize(window: tauri::WebviewWindow, start_width: u32, target_width: u32, target_height: u32) {
     let start_time = Instant::now();
     let duration = Duration::from_millis(RESIZE_ANIMATION_DURATION_MS);
     let frame_duration = Duration::from_millis(RESIZE_ANIMATION_FRAME_MS);
-    
-    // Calculate physical height from logical height
-    let physical_window_height = (WINDOW_HEIGHT as f64 * scale_factor) as u32;
-    
+
+    let physical_window_height = target_height;
+
+    // Pre-compute the fixed anchor point (bottom-right corner including padding).
+    // The right edge and bottom edge of the window stay pinned here for the whole
+    // animation, so only the left edge moves as the width changes.
+    let display = get_display_info_for_window(&window);
+    let (anchor_right, anchor_bottom, clamp_left, clamp_top) = match &display {
+        Some(d) => (
+            d.work_area_right - d.edge_padding,   // right anchor
+            d.work_area_bottom - d.edge_padding,   // bottom anchor
+            d.work_area_left + d.edge_padding,     // left clamp
+            d.work_area_top + d.edge_padding,      // top clamp
+        ),
+        None => {
+            // Fallback: use current position + size as anchor
+            if let (Ok(pos), Ok(size)) = (window.outer_position(), window.outer_size()) {
+                (
+                    pos.x + size.width as i32,
+                    pos.y + size.height as i32,
+                    0,
+                    0,
+                )
+            } else {
+                (0, 0, 0, 0)
+            }
+        }
+    };
+
     loop {
         let elapsed = start_time.elapsed();
-        
-        // Calculate progress (0.0 to 1.0)
+
         let progress = if elapsed >= duration {
             1.0
         } else {
             elapsed.as_secs_f64() / duration.as_secs_f64()
         };
-        
-        // Apply ease-out cubic easing: 1 - (1 - t)^3
+
+        // Ease-out cubic: 1 - (1 - t)^3
         let eased_progress = 1.0 - (1.0 - progress).powi(3);
-        
+
         // Interpolate width
         let current_width = if start_width < target_width {
             start_width + ((target_width - start_width) as f64 * eased_progress) as u32
         } else {
             start_width - ((start_width - target_width) as f64 * eased_progress) as u32
         };
-        
-        // Set window size using physical pixels
-        let _ = window.set_size(tauri::Size::Physical(tauri::PhysicalSize {
-            width: current_width,
-            height: physical_window_height,
-        }));
-        
-        // Reposition window to stay anchored to bottom-right
-        position_window_bottom_right(&window);
-        
-        // Check if animation is complete
+
+        // Derive position from the fixed anchor so the right/bottom edges never move
+        let x = (anchor_right - current_width as i32).max(clamp_left);
+        let y = (anchor_bottom - physical_window_height as i32).max(clamp_top);
+
+        // Atomic move + resize in a single Win32 call — no in-between frame flicker
+        set_window_pos_and_size(&window, x, y, current_width, physical_window_height);
+
         if progress >= 1.0 {
             break;
         }
-        
-        // Wait for next frame
+
         std::thread::sleep(frame_duration);
     }
 }
@@ -377,6 +411,21 @@ fn toggle_pin_window(app: tauri::AppHandle) -> Result<bool, String> {
 fn is_window_pinned(app: tauri::AppHandle) -> Result<bool, String> {
     if let Some(window) = app.get_webview_window("main") {
         Ok(window.is_always_on_top().unwrap_or(false))
+    } else {
+        Err("Main window not found".to_string())
+    }
+}
+
+/// Get display and work area information for the window's monitor.
+///
+/// Returns complete display metrics including the usable work area (screen minus
+/// taskbar), scale factor, edge padding, and maximum window dimensions. This
+/// information can be used by the frontend to adapt layout decisions.
+#[tauri::command]
+fn get_display_info(app: tauri::AppHandle) -> Result<window_utils::DisplayInfo, String> {
+    if let Some(window) = app.get_webview_window("main") {
+        get_display_info_for_window(&window)
+            .ok_or_else(|| "Failed to retrieve display information".to_string())
     } else {
         Err("Main window not found".to_string())
     }
@@ -665,6 +714,7 @@ fn main() {
             hide_main_window,
             toggle_pin_window,
             is_window_pinned,
+            get_display_info,
             restart_application,
             quit_application,
             open_url,
