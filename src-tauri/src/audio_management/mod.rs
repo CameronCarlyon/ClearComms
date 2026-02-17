@@ -10,7 +10,13 @@ use windows::{
     Win32::Media::Audio::Endpoints::*,
     Win32::Foundation::*,
     Win32::System::Threading::*,
+    Win32::UI::WindowsAndMessaging::*,
 };
+
+#[cfg(windows)]
+use std::ffi::OsStr;
+#[cfg(windows)]
+use std::os::windows::ffi::OsStrExt;
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Constants
@@ -77,10 +83,10 @@ impl Drop for ProcessHandle {
 }
 
 #[cfg(windows)]
-/// Get the executable name from a process ID with proper resource cleanup
-fn get_process_name(process_id: u32) -> String {
+/// Get the executable name and full path from a process ID with proper resource cleanup
+fn get_process_name(process_id: u32) -> (String, String) {
     if process_id == 0 {
-        return "System".to_string();
+        return ("System".to_string(), String::new());
     }
 
     if let Ok(process_handle) = ProcessHandle::open(process_id) {
@@ -99,21 +105,232 @@ fn get_process_name(process_id: u32) -> String {
 
             if result.is_ok() && size > 0 {
                 // Convert to String
-                let path = String::from_utf16_lossy(&buffer[0..size as usize]);
+                let path = String::from_utf16_lossy(&buffer[0..size as usize]).to_string();
 
                 // Extract just the filename from the full path
-                if let Some(filename) = path.split('\\').next_back() {
-                    return filename.to_string();
-                }
+                let filename = path.split('\\')
+                    .next_back()
+                    .unwrap_or("Unknown")
+                    .to_string();
 
-                return path;
+                return (filename, path);
             }
             // ProcessHandle automatically closes on drop
         }
     }
 
     // Fallback if we can't get the process name
-    format!("Process {}", process_id)
+    (format!("Process {}", process_id), String::new())
+}
+
+#[cfg(windows)]
+/// Query a single string value from a pre-loaded version info buffer.
+/// Returns the string if found and non-empty.
+unsafe fn query_version_string(
+    buffer: &[u8],
+    lang: u32,
+    cp: u32,
+    field: &str,
+) -> Option<String> {
+    extern "system" {
+        fn VerQueryValueW(
+            pblock: *const std::ffi::c_void,
+            lpsubblock: *const u16,
+            lplpbuffer: *mut *mut std::ffi::c_void,
+            pulen: *mut u32,
+        ) -> windows::Win32::Foundation::BOOL;
+    }
+
+    let query = format!("\\StringFileInfo\\{:04x}{:04x}\\{}\0", lang, cp, field);
+    let query_wide: Vec<u16> = query.encode_utf16().collect();
+
+    let mut value_ptr: *mut std::ffi::c_void = std::ptr::null_mut();
+    let mut value_len = 0u32;
+
+    if VerQueryValueW(
+        buffer.as_ptr() as *const std::ffi::c_void,
+        query_wide.as_ptr(),
+        &mut value_ptr,
+        &mut value_len,
+    )
+    .as_bool()
+        && !value_ptr.is_null()
+        && value_len > 0
+    {
+        let text = String::from_utf16_lossy(std::slice::from_raw_parts(
+            value_ptr as *const u16,
+            value_len as usize - 1, // exclude null terminator
+        ));
+        let trimmed = text.trim();
+        if !trimmed.is_empty() {
+            return Some(trimmed.to_string());
+        }
+    }
+    None
+}
+
+#[cfg(windows)]
+/// Get the friendly application name from the executable's version resource.
+/// Tries FileDescription then ProductName, across the embedded translation
+/// and several common language/codepage fallbacks.
+fn get_friendly_name(executable_path: &str) -> Option<String> {
+    use std::ptr;
+
+    // Fields to try, in order of preference
+    const FIELDS: &[&str] = &["FileDescription", "ProductName"];
+
+    // Common language + codepage pairs to try when the Translation block is
+    // absent or its entries don't contain the fields we want.
+    const FALLBACK_LANGS: &[(u32, u32)] = &[
+        (0x0409, 0x04B0), // English US, Unicode
+        (0x0409, 0x04E4), // English US, Windows-1252
+        (0x0000, 0x04B0), // Language-neutral, Unicode
+        (0x0809, 0x04B0), // English UK, Unicode
+    ];
+
+    unsafe {
+        // Convert path to null-terminated UTF-16 string
+        let wide_path: Vec<u16> = OsStr::new(executable_path)
+            .encode_wide()
+            .chain(Some(0))
+            .collect();
+
+        extern "system" {
+            fn GetFileVersionInfoSizeW(lptstrfilename: *const u16, lpdwhandle: *mut u32) -> u32;
+            fn GetFileVersionInfoW(
+                lptstrfilename: *const u16,
+                dwhandle: u32,
+                dwlen: u32,
+                lpdata: *mut std::ffi::c_void,
+            ) -> windows::Win32::Foundation::BOOL;
+            fn VerQueryValueW(
+                pblock: *const std::ffi::c_void,
+                lpsubblock: *const u16,
+                lplpbuffer: *mut *mut std::ffi::c_void,
+                pulen: *mut u32,
+            ) -> windows::Win32::Foundation::BOOL;
+        }
+
+        let size = GetFileVersionInfoSizeW(wide_path.as_ptr(), ptr::null_mut());
+        if size == 0 {
+            return None;
+        }
+
+        let mut buffer = vec![0u8; size as usize];
+        if !GetFileVersionInfoW(
+            wide_path.as_ptr(),
+            0,
+            size,
+            buffer.as_mut_ptr() as *mut std::ffi::c_void,
+        )
+        .as_bool()
+        {
+            return None;
+        }
+
+        // Collect language/codepage pairs to try: embedded translations first,
+        // then common fallbacks
+        let mut lang_pairs: Vec<(u32, u32)> = Vec::new();
+
+        let mut translation_ptr: *mut std::ffi::c_void = ptr::null_mut();
+        let mut translation_size = 0u32;
+
+        if VerQueryValueW(
+            buffer.as_ptr() as *const std::ffi::c_void,
+            "\\VarFileInfo\\Translation\0"
+                .encode_utf16()
+                .collect::<Vec<_>>()
+                .as_ptr(),
+            &mut translation_ptr,
+            &mut translation_size,
+        )
+        .as_bool()
+            && !translation_ptr.is_null()
+            && translation_size >= 4
+        {
+            let pair_count = (translation_size as usize) / 4;
+            let data = translation_ptr as *const u16;
+            for idx in 0..pair_count {
+                let lang = *data.add(idx * 2) as u32;
+                let cp = *data.add(idx * 2 + 1) as u32;
+                lang_pairs.push((lang, cp));
+            }
+        }
+
+        // Append fallback codes (duplicates are harmless; we stop on first hit)
+        for &pair in FALLBACK_LANGS {
+            if !lang_pairs.contains(&pair) {
+                lang_pairs.push(pair);
+            }
+        }
+
+        // Try each field with each language pair
+        for field in FIELDS {
+            for &(lang, cp) in &lang_pairs {
+                if let Some(name) = query_version_string(&buffer, lang, cp, field) {
+                    return Some(name);
+                }
+            }
+        }
+    }
+
+    None
+}
+
+#[cfg(windows)]
+/// Get the main window title for a process. This is the fallback the Windows
+/// Volume Mixer uses when neither version resources nor COM display names are set.
+fn get_window_title(process_id: u32) -> Option<String> {
+    // Struct to carry data in/out of the EnumWindows callback
+    struct EnumData {
+        target_pid: u32,
+        best_title: String,
+    }
+
+    unsafe extern "system" fn enum_callback(hwnd: HWND, lparam: LPARAM) -> BOOL {
+        let data = &mut *(lparam.0 as *mut EnumData);
+
+        let mut window_pid = 0u32;
+        GetWindowThreadProcessId(hwnd, Some(&mut window_pid));
+
+        if window_pid != data.target_pid {
+            return BOOL(1); // continue
+        }
+
+        if !IsWindowVisible(hwnd).as_bool() {
+            return BOOL(1); // skip invisible windows
+        }
+
+        let mut buffer = [0u16; 512];
+        let len = GetWindowTextW(hwnd, &mut buffer);
+        if len > 0 {
+            let title = String::from_utf16_lossy(&buffer[..len as usize]);
+            // Keep the longest visible window title (main window typically has the longest)
+            if title.len() > data.best_title.len() {
+                data.best_title = title;
+            }
+        }
+
+        BOOL(1) // continue enumeration
+    }
+
+    unsafe {
+        let mut data = EnumData {
+            target_pid: process_id,
+            best_title: String::new(),
+        };
+
+        let _ = EnumWindows(
+            Some(enum_callback),
+            LPARAM(&mut data as *mut EnumData as isize),
+        );
+
+        if data.best_title.is_empty() {
+            None
+        } else {
+            Some(data.best_title)
+        }
+    }
 }
 
 #[cfg(windows)]
@@ -320,8 +537,35 @@ impl AudioManager {
                                 Err(_) => format!("Process {}", process_id),
                             };
 
-                            // Get the actual process executable name
-                            let process_name = get_process_name(process_id);
+                            // Get the actual process executable name and path
+                            let (process_name, executable_path) = get_process_name(process_id);
+
+                            // Determine the best display name from multiple sources:
+                            // 1. Version resource (FileDescription → ProductName)
+                            // 2. COM session display name (set at runtime via SetDisplayName)
+                            // 3. Process window title (what the Windows Volume Mixer uses as fallback)
+                            // 4. Empty string → frontend formats the process name
+                            let friendly_display_name = {
+                                let version_name = if !executable_path.is_empty() {
+                                    get_friendly_name(&executable_path)
+                                } else {
+                                    None
+                                };
+
+                                let com_name_is_useful = !display_name.is_empty()
+                                    && !display_name.starts_with('@')
+                                    && !display_name.starts_with("Process ");
+
+                                if let Some(name) = version_name {
+                                    name
+                                } else if com_name_is_useful {
+                                    display_name.clone()
+                                } else if let Some(title) = get_window_title(process_id) {
+                                    title
+                                } else {
+                                    String::new()
+                                }
+                            };
 
                             // Get volume control
                             if let Ok(simple_volume) = session_control.cast::<ISimpleAudioVolume>() {
@@ -330,7 +574,7 @@ impl AudioManager {
 
                                 let session = AudioSession {
                                     session_id: session_id.clone(),
-                                    display_name,
+                                    display_name: friendly_display_name,
                                     process_id,
                                     process_name: process_name.clone(),
                                     volume,
@@ -345,6 +589,32 @@ impl AudioManager {
                     }
                 }
             } // End device loop
+
+            // Post-process: propagate the best display name across all sessions
+            // of the same process. Games like MSFS2024 create multiple audio sessions
+            // but only set SetDisplayName() on one of them, so others appear nameless.
+            let mut best_names: HashMap<String, String> = HashMap::new();
+            for session in &sessions {
+                if !session.display_name.is_empty() {
+                    let existing = best_names.get(&session.process_name);
+                    // Keep the longer/more descriptive name if multiple sessions have names
+                    if existing.is_none() || session.display_name.len() > existing.unwrap().len() {
+                        best_names.insert(session.process_name.clone(), session.display_name.clone());
+                    }
+                }
+            }
+            // Apply best names to all sessions that are missing one
+            for session in &mut sessions {
+                if session.display_name.is_empty() {
+                    if let Some(name) = best_names.get(&session.process_name) {
+                        session.display_name = name.clone();
+                        // Also update the cache entry
+                        if let Some(cached) = self.sessions.get_mut(&session.session_id) {
+                            cached.display_name = name.clone();
+                        }
+                    }
+                }
+            }
 
             // Remove sessions that are no longer active to prevent cache growth
             self.sessions.retain(|id, _| live_session_ids.contains(id));
@@ -381,16 +651,14 @@ impl AudioManager {
         }
     }
 
-    /// Set volume for a specific session and all sessions of the same process (searches all devices)
+    /// Set volume for all audio sessions belonging to the same process as the target session.
+    /// Games like MSFS2024 create multiple sessions; controlling only one leaves others unaffected.
     pub fn set_session_volume(&mut self, session_id: &str, volume: f32) -> std::result::Result<(), String> {
         let volume = volume.clamp(0.0, 1.0);
-        
-        // First, find the process_id for this session
-        let target_process_id = self.sessions.get(session_id)
-            .map(|s| s.process_id)
-            .ok_or_else(|| format!("Session not found: {}", session_id))?;
-        
-        let mut updated_count = 0;
+
+        // Look up the target process ID from the session cache so we can update
+        // every session belonging to the same application (not just one instance)
+        let target_process_id = self.sessions.get(session_id).map(|s| s.process_id);
         
         unsafe {
             let enumerator: IMMDeviceEnumerator = CoCreateInstance(
@@ -399,14 +667,13 @@ impl AudioManager {
                 CLSCTX_ALL,
             ).map_err(|e: Error| format!("Failed to create device enumerator: {}", e))?;
 
-            // Get all audio render devices
             let device_collection = enumerator
                 .EnumAudioEndpoints(eRender, DEVICE_STATE_ACTIVE)
                 .map_err(|e: Error| format!("Failed to enumerate audio endpoints: {}", e))?;
 
             let device_count = device_collection.GetCount().unwrap_or(0);
+            let mut updated_count: u32 = 0;
 
-            // Search through all devices for sessions with matching process_id
             for device_index in 0..device_count {
                 let device = match device_collection.Item(device_index) {
                     Ok(dev) => dev,
@@ -428,15 +695,33 @@ impl AudioManager {
                 for i in 0..count {
                     if let Ok(session_control) = session_enum.GetSession(i) {
                         if let Ok(session_control2) = session_control.cast::<IAudioSessionControl2>() {
-                            let process_id = session_control2
-                                .GetProcessId()
-                                .unwrap_or(0);
+                            // Determine whether this session belongs to the target application
+                            let should_update = if let Some(target_pid) = target_process_id {
+                                // Match by process ID to capture ALL sessions of the app
+                                let pid = session_control2.GetProcessId().unwrap_or(0);
+                                pid == target_pid
+                            } else {
+                                // Fallback: match by exact session ID if not in cache
+                                let current_session_id = match session_control2.GetSessionInstanceIdentifier() {
+                                    Ok(pwstr) => {
+                                        let s = pwstr.to_string()
+                                            .unwrap_or_else(|_| format!("session_{}", i));
+                                        CoTaskMemFree(Some(pwstr.0 as *const core::ffi::c_void));
+                                        s
+                                    }
+                                    Err(_) => format!("session_{}", i),
+                                };
+                                current_session_id == session_id
+                            };
 
-                            // Apply volume to ALL sessions with matching process_id
-                            if process_id == target_process_id {
+                            if should_update {
                                 if let Ok(simple_volume) = session_control.cast::<ISimpleAudioVolume>() {
-                                    let _ = simple_volume.SetMasterVolume(volume, std::ptr::null());
-                                    updated_count += 1;
+                                    match simple_volume.SetMasterVolume(volume, std::ptr::null()) {
+                                        Ok(()) => { updated_count += 1; }
+                                        Err(e) => {
+                                            tracing::warn!("[Audio] SetMasterVolume failed: {}", e);
+                                        }
+                                    }
                                 }
                             }
                         }
@@ -444,28 +729,29 @@ impl AudioManager {
                 }
             } // End device loop
 
-            // Update cache for the requested session
-            if let Some(session) = self.sessions.get_mut(session_id) {
-                session.volume = volume;
-            }
-
             if updated_count > 0 {
+                // Update all cached sessions for this process
+                if let Some(target_pid) = target_process_id {
+                    for session in self.sessions.values_mut() {
+                        if session.process_id == target_pid {
+                            session.volume = volume;
+                        }
+                    }
+                } else if let Some(session) = self.sessions.get_mut(session_id) {
+                    session.volume = volume;
+                }
                 Ok(())
             } else {
-                Err(format!("No sessions found for process_id: {}", target_process_id))
+                Err(format!("No sessions updated for: {}", session_id))
             }
         }
     }
 
-    /// Mute or unmute all sessions of the same process (searches all devices)
+    /// Mute or unmute all audio sessions belonging to the same process as the target session.
     pub fn set_session_mute(&mut self, session_id: &str, muted: bool) -> std::result::Result<(), String> {
-        // First, find the process_id for this session
-        let target_process_id = self.sessions.get(session_id)
-            .map(|s| s.process_id)
-            .ok_or_else(|| format!("Session not found: {}", session_id))?;
-        
-        let mut updated_count = 0;
-        
+        // Look up the target process ID from the session cache
+        let target_process_id = self.sessions.get(session_id).map(|s| s.process_id);
+
         unsafe {
             let enumerator: IMMDeviceEnumerator = CoCreateInstance(
                 &MMDeviceEnumerator,
@@ -473,14 +759,13 @@ impl AudioManager {
                 CLSCTX_ALL,
             ).map_err(|e: Error| format!("Failed to create device enumerator: {}", e))?;
 
-            // Get all audio render devices
             let device_collection = enumerator
                 .EnumAudioEndpoints(eRender, DEVICE_STATE_ACTIVE)
                 .map_err(|e: Error| format!("Failed to enumerate audio endpoints: {}", e))?;
 
             let device_count = device_collection.GetCount().unwrap_or(0);
+            let mut updated_count: u32 = 0;
 
-            // Search through all devices for sessions with matching process_id
             for device_index in 0..device_count {
                 let device = match device_collection.Item(device_index) {
                     Ok(dev) => dev,
@@ -502,15 +787,31 @@ impl AudioManager {
                 for i in 0..count {
                     if let Ok(session_control) = session_enum.GetSession(i) {
                         if let Ok(session_control2) = session_control.cast::<IAudioSessionControl2>() {
-                            let process_id = session_control2
-                                .GetProcessId()
-                                .unwrap_or(0);
+                            // Determine whether this session belongs to the target application
+                            let should_update = if let Some(target_pid) = target_process_id {
+                                let pid = session_control2.GetProcessId().unwrap_or(0);
+                                pid == target_pid
+                            } else {
+                                let current_session_id = match session_control2.GetSessionInstanceIdentifier() {
+                                    Ok(pwstr) => {
+                                        let s = pwstr.to_string()
+                                            .unwrap_or_else(|_| format!("session_{}", i));
+                                        CoTaskMemFree(Some(pwstr.0 as *const core::ffi::c_void));
+                                        s
+                                    }
+                                    Err(_) => format!("session_{}", i),
+                                };
+                                current_session_id == session_id
+                            };
 
-                            // Apply mute to ALL sessions with matching process_id
-                            if process_id == target_process_id {
+                            if should_update {
                                 if let Ok(simple_volume) = session_control.cast::<ISimpleAudioVolume>() {
-                                    let _ = simple_volume.SetMute(BOOL(muted as i32), std::ptr::null());
-                                    updated_count += 1;
+                                    match simple_volume.SetMute(BOOL(muted as i32), std::ptr::null()) {
+                                        Ok(()) => { updated_count += 1; }
+                                        Err(e) => {
+                                            tracing::warn!("[Audio] SetMute failed: {}", e);
+                                        }
+                                    }
                                 }
                             }
                         }
@@ -518,15 +819,20 @@ impl AudioManager {
                 }
             } // End device loop
 
-            // Update cache for the requested session
-            if let Some(session) = self.sessions.get_mut(session_id) {
-                session.is_muted = muted;
-            }
-
             if updated_count > 0 {
+                // Update all cached sessions for this process
+                if let Some(target_pid) = target_process_id {
+                    for session in self.sessions.values_mut() {
+                        if session.process_id == target_pid {
+                            session.is_muted = muted;
+                        }
+                    }
+                } else if let Some(session) = self.sessions.get_mut(session_id) {
+                    session.is_muted = muted;
+                }
                 Ok(())
             } else {
-                Err(format!("No sessions found for process_id: {}", target_process_id))
+                Err(format!("No sessions updated for: {}", session_id))
             }
         }
     }

@@ -61,7 +61,7 @@
     isBindingMode && pendingBinding !== null && !boundSessions.some(s => s.process_name === pendingBinding?.processName)
   );
 
-  let mixerContainer: HTMLDivElement;
+  let mixerContainer = $state<HTMLDivElement | undefined>();
 
   function handleWheel(event: WheelEvent) {
     const container = mixerContainer;
@@ -117,7 +117,7 @@
       {#if isBindingNewApp && pendingBinding}
         <!-- Binding in Progress for NEW App -->
         <div class="application-channel add-app-column" role="group" aria-label="Binding in progress for {pendingBinding.sessionName}">
-          <span class="app-name inactive">{formatProcessName(pendingBinding.processName)}</span>
+          <span class="app-name inactive">{pendingBinding.sessionName}</span>
           <div class="volume-bar-container">
             <input type="range" class="volume-slider" min="0" max="1" step="0.01" value={0.5} style="--volume-percent: 50%" disabled />
           </div>

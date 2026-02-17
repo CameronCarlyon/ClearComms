@@ -7,7 +7,7 @@
   import type { AudioSession } from '$lib/types';
   import ButtonExpandable from './ButtonExpandable.svelte';
   import ListOption from './ListOption.svelte';
-  import { formatProcessName } from '$lib/stores/audioStore';
+  import { formatProcessName, applyDisplayNameOverride } from '$lib/stores/audioStore';
 
   interface Props {
     expanded: boolean;
@@ -43,7 +43,7 @@
     {#each availableSessions as session, index}
       <ListOption
         processName={session.process_name}
-        displayName={formatProcessName(session.process_name)}
+        displayName={applyDisplayNameOverride(session.display_name || formatProcessName(session.process_name), session.process_name)}
         animationIndex={index}
         on:select={handleSelect}
       />

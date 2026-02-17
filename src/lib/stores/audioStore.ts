@@ -25,8 +25,7 @@ export function formatProcessName(processName: string): string {
   }
 
   const customNames: Record<string, string> = {
-    'vpilot.exe': 'vPilot',
-    'couatl.exe': 'GSX'
+    'couatl64_msfs2024': 'GSX',
   };
 
   const lowerProcessName = processName.toLowerCase();
@@ -40,6 +39,24 @@ export function formatProcessName(processName: string): string {
   ).join(' ');
 
   return name;
+}
+
+/** Apply display name overrides for friendly names returned from the backend */
+export function applyDisplayNameOverride(displayName: string, processName: string = ''): string {
+  const lowerProcessName = processName.toLowerCase();
+  const lowerDisplayName = displayName.toLowerCase();
+
+  // Check process name first (more reliable than dynamic window titles)
+  if (lowerProcessName.includes('flightsimulator2024')) {
+    return 'MSFS24';
+  }
+
+  // Check display name for other overrides
+  if (lowerDisplayName.includes('couatl')) {
+    return 'GSX';
+  }
+
+  return displayName;
 }
 
 /** Check if session is system volume */

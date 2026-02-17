@@ -7,7 +7,7 @@
   import type { AudioSession, AxisMapping, ButtonMapping } from '$lib/types';
   import VolumeSlider from './VolumeSlider.svelte';
   import ButtonRound from './ButtonRound.svelte';
-  import { formatProcessName } from '$lib/stores/audioStore';
+  import { formatProcessName, applyDisplayNameOverride } from '$lib/stores/audioStore';
   
   interface Props {
     session: AudioSession;
@@ -45,7 +45,7 @@
   }>();
   
   const isInactive = $derived(session.session_id.startsWith('inactive_'));
-  const displayName = $derived(formatProcessName(session.process_name));
+  const displayName = $derived(applyDisplayNameOverride(session.display_name || formatProcessName(session.process_name), session.process_name));
   
   let flipAnimation = $state(false);
   
@@ -297,9 +297,9 @@
     color: var(--text-primary);
     display: block;
     white-space: nowrap;
-    overflow: hidden;
+    overflow: clip;
     text-overflow: ellipsis;
-    max-width: 3rem;
+    max-width: 50px;
   }
   
   /* Flip animation for reverse axis button */

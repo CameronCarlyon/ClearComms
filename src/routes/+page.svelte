@@ -18,7 +18,7 @@
     BootScreen, 
     Footer
   } from "$lib/components";
-  import { formatProcessName, SYSTEM_VOLUME_ID, SYSTEM_VOLUME_PROCESS_NAME, SYSTEM_VOLUME_DISPLAY_NAME, isSystemVolume } from "$lib/stores/audioStore";
+  import { formatProcessName, applyDisplayNameOverride, SYSTEM_VOLUME_ID, SYSTEM_VOLUME_PROCESS_NAME, SYSTEM_VOLUME_DISPLAY_NAME, isSystemVolume } from "$lib/stores/audioStore";
 
 
   // ─────────────────────────────────────────────────────────────────────────────
@@ -100,6 +100,7 @@
   let axisMappings = $state<AxisMapping[]>([]);
   let buttonMappings = $state<ButtonMapping[]>([]);
   let pinnedApps = $state<Set<string>>(new Set());
+  let appFriendlyNames = $state<Map<string, string>>(new Map()); // processName -> friendlyName
   let windowPinned = $state(false);
   let pollingInterval: number | null = null;
   let audioMonitorInterval: number | null = null;
@@ -366,12 +367,19 @@
         if (activeSession) {
           sessions.push(activeSession);
         } else {
+          // For inactive apps, use cached friendly name if available; otherwise format the process name
+          const cachedFriendlyName = appFriendlyNames.get(processName);
+          const displayName = cachedFriendlyName || processName.replace(/\.exe$/i, '');
+          // For inactive muted apps, preserve the actual volume value instead of defaulting to 0.
+          // An inactive muted app should still show what its unmute volume would be.
+          const inactiveSessionId = `inactive_${processName}`;
+          const restoreVolume = preMuteVolumes.get(inactiveSessionId) ?? 0;
           sessions.push({
-            session_id: `inactive_${processName}`,
-            display_name: processName,
+            session_id: inactiveSessionId,
+            display_name: displayName,
             process_id: 0,
             process_name: processName,
-            volume: 0,
+            volume: restoreVolume,
             is_muted: true
           });
         }
@@ -389,7 +397,20 @@
       ...pinnedApps
     ]);
     
-    const sessions = audioSessions.filter(s => !boundProcessNames.has(s.process_name));
+    // Filter out bound processes and deduplicate by process_name
+    // (keep only the first session for each process to avoid duplicate app entries)
+    const seenProcesses = new Set<string>();
+    const sessions = audioSessions
+      .filter(s => {
+        if (boundProcessNames.has(s.process_name)) {
+          return false; // Skip bound processes
+        }
+        if (seenProcesses.has(s.process_name)) {
+          return false; // Skip duplicate process entries
+        }
+        seenProcesses.add(s.process_name);
+        return true;
+      });
     
     // Add system volume option if not already bound
     if (!boundProcessNames.has(SYSTEM_VOLUME_PROCESS_NAME)) {
@@ -480,6 +501,7 @@
     loadMappings();
     loadButtonMappings();
     loadPinnedApps();
+    loadAppFriendlyNames();
     fetchWindowPinnedState();
     autoInitialise();
     
@@ -785,14 +807,25 @@
               newSession.volume = existing.volume;
             }
             
-            if (newSession.is_muted && existing.volume === 0) {
-              newSession.volume = 0;
+            // When a session is reported as muted by Windows with a volume > 0,
+            // that volume is the unmute target, not a "muted at 0" state.
+            // Store it for unmute restoration and preserve it for display.
+            if (newSession.is_muted && newSession.volume > 0 && !preMuteVolumes.has(newSession.session_id)) {
+              preMuteVolumes.set(newSession.session_id, newSession.volume);
             }
           }
         }
       }
       
       audioSessions = sessions;
+      
+      // Capture friendly names from active sessions for persistence
+      for (const session of sessions) {
+        if (session.display_name && session.display_name !== formatProcessName(session.process_name)) {
+          appFriendlyNames.set(session.process_name, session.display_name);
+        }
+      }
+      saveAppFriendlyNames();
       
       // Trigger smooth animations for external changes using requestAnimationFrame
       for (const [sessionId, change] of volumeChanges) {
@@ -1614,6 +1647,30 @@
     }
   }
 
+  function saveAppFriendlyNames() {
+    try {
+      const obj: Record<string, string> = {};
+      appFriendlyNames.forEach((value, key) => {
+        obj[key] = value;
+      });
+      localStorage.setItem('clearcomms_app_friendly_names', JSON.stringify(obj));
+    } catch (error) {
+      console.error("Error saving app friendly names:", error);
+    }
+  }
+
+  function loadAppFriendlyNames() {
+    try {
+      const saved = localStorage.getItem('clearcomms_app_friendly_names');
+      if (saved) {
+        const obj = JSON.parse(saved);
+        appFriendlyNames = new Map(Object.entries(obj));
+      }
+    } catch (error) {
+      console.error("Error loading app friendly names:", error);
+    }
+  }
+
   async function fetchWindowPinnedState() {
     try {
       windowPinned = await invoke<boolean>('is_window_pinned');
@@ -1681,12 +1738,12 @@
 
   function handleStartAxisBinding(e: CustomEvent<{ session: AudioSession }>) {
     const { session } = e.detail;
-    startAxisBinding(session.session_id, session.display_name, session.process_id, session.process_name);
+    startAxisBinding(session.session_id, applyDisplayNameOverride(session.display_name, session.process_name), session.process_id, session.process_name);
   }
 
   function handleStartButtonBinding(e: CustomEvent<{ session: AudioSession }>) {
     const { session } = e.detail;
-    startButtonBinding(session.session_id, session.display_name, session.process_id, session.process_name);
+    startButtonBinding(session.session_id, applyDisplayNameOverride(session.display_name, session.process_name), session.process_id, session.process_name);
   }
 
   function handleRemoveAxisMapping(e: CustomEvent<{ processName: string }>) {

@@ -4,13 +4,24 @@ Optimised for performance, **ClearComms** is a lightweight companion application
 
 The goal is to keep you in the flightdeck environment and not fiddling with volume mixer menus, allowing you to stay focused on that final approach and not on the ongoing podcast of a departure clearance on the Tower frequency.
 
-> [!NOTE]
-> In order to enable simulator integration, the [MobiFlight Event Module](https://docs.mobiflight.com/guides/wasm-module/) must be installed, though this is not a requirement for the application to function.
+## Features
 
-## Requirements
+- **Hardware-Based Volume Control**  
+  Utilise dedicated flight simulator hardware to adjust application volume levels, using axes for volume control and buttons for mute.
 
-- **Operating System:** Windows 10 or later (x64)
-- **MobiFlight WASM Event Module** Required only for simulator integration.
+- **Microsoft Flight Simulator Integration**  *(In Development)*
+  Map flightdeck controls (e.g. VHF1/INT/CAB volume) directly to application audio levels such as **vPilot** or **GSX Pro**.
+
+- **Performance that Flies**  
+  Zero drag. Built with Tauri, Svelte, and Rust for negligible memory usage and performance impact.
+
+- **Intuitive Design in Motion**  
+  Marrying a clean user interface with purposeful animations to craft a seamless, intuitive user experience.
+
+- **Stretch Goals**
+  - ACARS integration for aircraft without native support.
+  - Automated in-flight announcements on PA channel.
+  - Custom-built WASM bridge.
 
 ## Installation
 
@@ -19,7 +30,10 @@ The goal is to keep you in the flightdeck environment and not fiddling with volu
 3. Follow the on-screen prompts to complete installation.
 4. *(Optional)* Install the [MobiFlight WASM Event Module](https://docs.mobiflight.com/guides/wasm-module/) for simulator integration, if not already installed.
 
-> [!WARNING]
+> [!NOTE]
+> In order to enable simulator integration, the [MobiFlight Event Module](https://docs.mobiflight.com/guides/wasm-module/) must be installed, though this is not a requirement for the application to function.
+
+> [!NOTE]
 > A portable version of ClearComms is available, however for some older Windows 10 installations, the [Microsoft WebView2 runtime](https://developer.microsoft.com/en-us/microsoft-edge/webview2) may need to be installed separately.
 
 ## Usage
@@ -42,25 +56,6 @@ The goal is to keep you in the flightdeck environment and not fiddling with volu
     - Return (Exit the close menu).
     - Minimise (Return the application to the system tray).
     - Quit (Completely exit the application).
-
-## Features
-
-- **Hardware-Based Volume Control**  
-  Utilise dedicated flight simulator hardware to adjust application volume levels, using axes for volume control and buttons for mute.
-
-- **Microsoft Flight Simulator Integration**  *(In Development)*
-  Map flightdeck controls (e.g. VHF1/INT/CAB volume) directly to application audio levels such as **vPilot** or **GSX Pro**.
-
-- **Performance that Flies**  
-  Zero drag. Built with Tauri, Svelte, and Rust for negligible memory usage and performance impact.
-
-- **Intuitive Design in Motion**  
-  Marrying a clean user interface with purposeful animations to craft a seamless, intuitive user experience.
-
-- **Stretch Goals**
-  - ACARS integration for aircraft without native support.
-  - Automated in-flight announcements on PA channel.
-  - Custom-built WASM bridge.
 
 ## Tech Stack
 
@@ -107,6 +102,6 @@ This stack balances **performance, portability, and extensibility**, allowing Cl
 
 # Documentation
 
-For a comprehensive technical breakdown of the application's architecture, please refer to the [documentation file](DOCUMENTATION.md).
+For a comprehensive technical breakdown of the application's architecture, please refer to the [documentation](DOCUMENTATION.md).
 
 © 2026 [Cameron Carlyon](https://cameroncarlyon.com/) • [MIT Licence](LICENSE.md)
