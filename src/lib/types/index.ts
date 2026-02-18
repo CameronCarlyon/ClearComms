@@ -11,6 +11,8 @@ export interface AudioSession {
   process_name: string;
   volume: number;
   is_muted: boolean;
+  /** Temporary override for the displayed volume during mute/unmute animations */
+  displayVolumeOverride?: number;
 }
 
 /** Axis-to-audio mapping configuration */

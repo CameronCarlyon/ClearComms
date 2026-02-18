@@ -47,6 +47,13 @@
   const isInactive = $derived(session.session_id.startsWith('inactive_'));
   const displayName = $derived(applyDisplayNameOverride(session.display_name || formatProcessName(session.process_name), session.process_name));
   
+  // Compute display volume: use override during mute/unmute animation, otherwise derive from real volume and mute state
+  const displayVolume = $derived(
+    session.displayVolumeOverride !== undefined
+      ? session.displayVolumeOverride
+      : (session.is_muted ? 0 : session.volume)
+  );
+  
   let flipAnimation = $state(false);
   
   function handleToggleInversion() {
@@ -66,7 +73,7 @@
 >
   <!-- Volume Slider -->
   <VolumeSlider
-    volume={session.volume}
+    volume={displayVolume}
     sessionId={session.session_id}
     displayName={session.display_name}
     disabled={isInactive}

@@ -50,6 +50,9 @@ export function applyDisplayNameOverride(displayName: string, processName: strin
   if (lowerProcessName.includes('flightsimulator2024')) {
     return 'MSFS24';
   }
+  if (lowerProcessName.includes('flightsimulator')) {
+    return 'MSFS20';
+  }
 
   // Check display name for other overrides
   if (lowerDisplayName.includes('couatl')) {

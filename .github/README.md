@@ -39,20 +39,23 @@ The goal is to keep you in the flightdeck environment and not fiddling with volu
 ## Usage
 
 1. Launch **ClearComms**. The application runs in the system tray and a window will not appear until you click on the tray icon.
+
 2. With the ClearComms window open, you will be first presented with the onboarding view. Click on the **+** button to reveal a list of available audio sessions and add your first audio application (e.g. vPilot, GSX Pro) to the mixer.
+
 3. Once an application has been added, a column of controls will appear in the following order:
   - The **volume slider** represents the application volume level. The user may use the mouse buttons or scrollwheel to make manual adjustments.
   - The **gamepad button** may be used to invoke axis binding mode. Once active, move a hardware axis to assign it to the application. (An axis may be reused for multiple applications.)
   - The **mute button** may be used to invoke mute button binding mode to assign a hardware button for the mute toggle. (A button may be reused for multiple applications.)
   - The **vertical arrow button** is used to swap axis travel direction.
   - The **red litter bin icon** may be used to remove the pinned application completely.
+
 4. Hover the mouse over the handle at the bottom of the window to open the dock. You will find the following buttons:
   - The **settings button** which may be used to open the settings menu. Inside you will find the following options:
     - A link to the user guide (you're reading it!).
     - A link to the GitHub repo.
     - A toggle to pin the application above other windows. Losing window focus will not minimise the application.
   - The **edit button** is used to toggle edit mode. Exiting edit mode will hide the axis bind button, mute bind button, reverse axis button and delete button.
-  - Click the **close button** to open the close menu with the following options inside:
+  - The **close button**, used to open the close menu with the following options inside:
     - Return (Exit the close menu).
     - Minimise (Return the application to the system tray).
     - Quit (Completely exit the application).

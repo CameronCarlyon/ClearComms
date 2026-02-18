@@ -118,7 +118,6 @@
   let errorMsg = $state("");
   let isEditMode = $state(false);
   let previousDisplayCount = $state(-1);
-  let preMuteVolumes = $state<Map<string, number>>(new Map());
   let animatingSliders = $state<Set<string>>(new Set());
   let animationSignals = $state<Map<string, AnimationSignal>>(new Map());
   let manuallyControlledSessions = $state<Set<string>>(new Set());
@@ -370,16 +369,12 @@
           // For inactive apps, use cached friendly name if available; otherwise format the process name
           const cachedFriendlyName = appFriendlyNames.get(processName);
           const displayName = cachedFriendlyName || processName.replace(/\.exe$/i, '');
-          // For inactive muted apps, preserve the actual volume value instead of defaulting to 0.
-          // An inactive muted app should still show what its unmute volume would be.
-          const inactiveSessionId = `inactive_${processName}`;
-          const restoreVolume = preMuteVolumes.get(inactiveSessionId) ?? 0;
           sessions.push({
-            session_id: inactiveSessionId,
+            session_id: `inactive_${processName}`,
             display_name: displayName,
             process_id: 0,
             process_name: processName,
-            volume: restoreVolume,
+            volume: 0,
             is_muted: true
           });
         }
@@ -768,16 +763,20 @@
               systemSession.volume = existing.volume;
               systemSession.is_muted = existing.is_muted;
             } else {
-              // Detect external changes and queue animation
-              const volumeDiff = Math.abs(systemSession.volume - existing.volume);
-              if (volumeDiff > 0.01) {
-                volumeChanges.set(SYSTEM_VOLUME_ID, { from: existing.volume, to: systemSession.volume });
-                systemSession.volume = existing.volume;
+              // Handle mute state transitions
+              if (systemSession.is_muted && !existing.is_muted) {
+                // Just muted externally — no volume animation needed, display derives to 0
+              } else if (!systemSession.is_muted && existing.is_muted) {
+                // Just unmuted externally — no volume animation needed, display derives from real volume
+              } else if (!systemSession.is_muted) {
+                // Not muted: detect external volume changes and queue animation
+                const volumeDiff = Math.abs(systemSession.volume - existing.volume);
+                if (volumeDiff > 0.01) {
+                  volumeChanges.set(SYSTEM_VOLUME_ID, { from: existing.volume, to: systemSession.volume });
+                  systemSession.volume = existing.volume;
+                }
               }
-              
-              if (systemSession.is_muted && existing.volume === 0) {
-                systemSession.volume = 0;
-              }
+              // When muted, always accept the real Windows volume (display is derived as 0)
             }
           }
           
@@ -796,23 +795,26 @@
           if (manuallyControlledSessions.has(newSession.session_id)) {
             newSession.volume = existing.volume;
             newSession.is_muted = existing.is_muted;
+            newSession.displayVolumeOverride = existing.displayVolumeOverride;
           } else if (animatingSliders.has(newSession.session_id)) {
             newSession.volume = existing.volume;
             newSession.is_muted = existing.is_muted;
+            newSession.displayVolumeOverride = existing.displayVolumeOverride;
           } else {
-            // Detect external changes and queue animation
-            const volumeDiff = Math.abs(newSession.volume - existing.volume);
-            if (volumeDiff > 0.01) {
-              volumeChanges.set(newSession.session_id, { from: existing.volume, to: newSession.volume });
-              newSession.volume = existing.volume;
+            // Handle mute state transitions
+            if (newSession.is_muted && !existing.is_muted) {
+              // Just muted externally — no volume animation needed, display derives to 0
+            } else if (!newSession.is_muted && existing.is_muted) {
+              // Just unmuted externally — no volume animation needed, display derives from real volume
+            } else if (!newSession.is_muted) {
+              // Not muted: detect external volume changes and queue animation
+              const volumeDiff = Math.abs(newSession.volume - existing.volume);
+              if (volumeDiff > 0.01) {
+                volumeChanges.set(newSession.session_id, { from: existing.volume, to: newSession.volume });
+                newSession.volume = existing.volume;
+              }
             }
-            
-            // When a session is reported as muted by Windows with a volume > 0,
-            // that volume is the unmute target, not a "muted at 0" state.
-            // Store it for unmute restoration and preserve it for display.
-            if (newSession.is_muted && newSession.volume > 0 && !preMuteVolumes.has(newSession.session_id)) {
-              preMuteVolumes.set(newSession.session_id, newSession.volume);
-            }
+            // When muted, always accept the real Windows volume (display is derived as 0)
           }
         }
       }
@@ -924,7 +926,11 @@
     const sessionIndex = audioSessions.findIndex(s => s.session_id === sessionId);
     if (sessionIndex !== -1) {
       audioSessions[sessionIndex].volume = volume;
-      audioSessions[sessionIndex].is_muted = volume === 0;
+      // Auto-unmute when volume is adjusted above 0 (e.g. user drags a muted slider)
+      if (volume > 0 && audioSessions[sessionIndex].is_muted) {
+        audioSessions[sessionIndex].is_muted = false;
+        invokeSetMute(sessionId, false).catch(e => console.error("Error auto-unmuting:", e));
+      }
     }
   }
 
@@ -1164,9 +1170,10 @@
       }
     }
     
-    for (const [sessionId] of preMuteVolumes) {
+    for (const [sessionId, frameId] of muteAnimationFrames) {
       if (!activeSessionIds.has(sessionId)) {
-        preMuteVolumes.delete(sessionId);
+        cancelAnimationFrame(frameId);
+        muteAnimationFrames.delete(sessionId);
       }
     }
     
@@ -1202,7 +1209,6 @@
     
     try {
       await invokeSetVolume(sessionId, volume);
-      await invokeSetMute(sessionId, volume === 0);
       await refreshAudioSessions();
     } catch (error) {
       console.error("Error setting volume:", error);
@@ -1217,46 +1223,108 @@
     if (sessionIndex === -1) return;
     const session = audioSessions[sessionIndex];
 
-    // Cancel any ongoing animation before starting mute/unmute
+    // Cancel any ongoing volume animation (e.g. hardware input) before toggling mute
     cancelVolumeAnimation(sessionId);
+    cancelMuteAnimation(sessionId);
 
     try {
-      if (muted && session.volume > 0) {
-        // Preserve original pre-mute volume (don't overwrite if mid-toggle)
-        if (!preMuteVolumes.has(sessionId)) {
-          preMuteVolumes.set(sessionId, session.volume);
+      if (muted) {
+        // Muting: visually animate slider from current volume to 0, then set mute flag
+        const startVolume = session.is_muted ? 0 : session.volume;
+
+        // Call Windows to mute immediately (audio silences now, volume preserved natively)
+        await invokeSetMute(sessionId, true);
+
+        // Animate the slider visually from current position to 0
+        await animateMuteVisual(sessionId, startVolume, 0, 200);
+
+        // After animation completes, apply final state
+        const idx = audioSessions.findIndex(s => s.session_id === sessionId);
+        if (idx !== -1) {
+          audioSessions[idx].is_muted = true;
+          audioSessions[idx].displayVolumeOverride = undefined;
         }
+      } else {
+        // Unmuting: call Windows first (restores audio), then animate slider from 0 to real volume
+        await invokeSetMute(sessionId, false);
 
-        // Set muted state immediately for instant UI feedback
-        audioSessions[sessionIndex].is_muted = true;
+        // Briefly refresh to get the real Windows volume after unmute
+        let targetVolume = session.volume;
+        try {
+          const freshSessions: AudioSession[] = await invoke('get_audio_sessions');
+          const fresh = freshSessions.find(s => s.session_id === sessionId);
+          if (fresh) targetVolume = fresh.volume;
+        } catch { /* use existing volume as fallback */ }
+        if (targetVolume <= 0) targetVolume = 0.5; // Safety fallback
 
-        // Fire-and-forget backend calls so animation starts without delay
-        invokeSetVolume(sessionId, 0).catch(e => console.error("Error setting mute volume:", e));
-        invokeSetMute(sessionId, true).catch(e => console.error("Error setting mute state:", e));
-
-        // Animate visual slider to 0; if cancelled (superseded), return early
-        const completed = await animateVolumeTo(sessionId, 0);
-        if (!completed) return;
-        audioSessions[sessionIndex].volume = 0;
-      } else if (!muted) {
-        const previousVolume = preMuteVolumes.get(sessionId) ?? 0.5;
-
-        // Set unmuted state immediately for instant UI feedback
+        // Set unmuted state immediately so display derives correctly after animation
         audioSessions[sessionIndex].is_muted = false;
 
-        // Fire-and-forget backend calls so animation starts without delay
-        invokeSetVolume(sessionId, previousVolume).catch(e => console.error("Error setting unmute volume:", e));
-        invokeSetMute(sessionId, false).catch(e => console.error("Error setting unmute state:", e));
+        // Animate the slider visually from 0 to the real volume
+        await animateMuteVisual(sessionId, 0, targetVolume, 200);
 
-        // Animate visual slider to previous volume; if cancelled, return early
-        const completed = await animateVolumeTo(sessionId, previousVolume, 200);
-        if (!completed) return;
-        preMuteVolumes.delete(sessionId);
+        // After animation completes, clear override and set real volume
+        const idx = audioSessions.findIndex(s => s.session_id === sessionId);
+        if (idx !== -1) {
+          audioSessions[idx].volume = targetVolume;
+          audioSessions[idx].displayVolumeOverride = undefined;
+        }
       }
     } catch (error) {
       console.error("Error setting mute:", error);
       errorMsg = `Audio error: ${error}`;
+      // Clean up override on error
+      const idx = audioSessions.findIndex(s => s.session_id === sessionId);
+      if (idx !== -1) audioSessions[idx].displayVolumeOverride = undefined;
+      muteAnimationFrames.delete(sessionId);
     }
+  }
+
+  // Tracks active mute animation frame IDs so they can be cancelled
+  const muteAnimationFrames = new Map<string, number>();
+
+  function cancelMuteAnimation(sessionId: string) {
+    const frameId = muteAnimationFrames.get(sessionId);
+    if (frameId !== undefined) {
+      cancelAnimationFrame(frameId);
+      muteAnimationFrames.delete(sessionId);
+    }
+    // Clear any lingering override
+    const idx = audioSessions.findIndex(s => s.session_id === sessionId);
+    if (idx !== -1) audioSessions[idx].displayVolumeOverride = undefined;
+  }
+
+  /** Purely visual animation for mute/unmute — only updates displayVolumeOverride, no Windows API calls */
+  function animateMuteVisual(sessionId: string, fromVolume: number, toVolume: number, durationMs: number): Promise<void> {
+    return new Promise<void>((resolve) => {
+      const startTime = Date.now();
+      // Mark as animating so the poll doesn't overwrite our values
+      animatingSliders.add(sessionId);
+
+      const animate = () => {
+        const elapsed = Date.now() - startTime;
+        const progress = Math.min(elapsed / durationMs, 1);
+        const eased = 1 - Math.pow(1 - progress, 3); // Cubic ease-out
+        const currentVolume = fromVolume + (toVolume - fromVolume) * eased;
+
+        // Update only the display override — no Windows API call
+        const idx = audioSessions.findIndex(s => s.session_id === sessionId);
+        if (idx !== -1) {
+          audioSessions[idx].displayVolumeOverride = currentVolume;
+        }
+
+        if (progress < 1) {
+          const frameId = requestAnimationFrame(animate);
+          muteAnimationFrames.set(sessionId, frameId);
+        } else {
+          muteAnimationFrames.delete(sessionId);
+          animatingSliders.delete(sessionId);
+          resolve();
+        }
+      };
+
+      animate();
+    });
   }
 
   // ─────────────────────────────────────────────────────────────────────────────
@@ -1389,10 +1457,10 @@
     
     const sessionsToClean = audioSessions.filter(s => s.process_name === processName);
     for (const session of sessionsToClean) {
-      preMuteVolumes.delete(session.session_id);
       animatingSliders.delete(session.session_id);
       manuallyControlledSessions.delete(session.session_id);
       cancelVolumeAnimation(session.session_id);
+      cancelMuteAnimation(session.session_id);
     }
     
     saveMappings();
@@ -1572,10 +1640,10 @@
     previousButtonStates.clear();
     lastHardwareAxisValues.clear();
     axisActivated.clear();
-    preMuteVolumes.clear();
     manuallyControlledSessions.clear();
     hardwareVolumeTargets.clear();
     hardwareVolumeAnimations.clear();
+    muteAnimationFrames.clear();
     memorySnapshots = [];
     axisData = [];
     audioSessions = [];
