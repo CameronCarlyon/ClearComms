@@ -67,7 +67,7 @@
   class="application-channel" 
   class:has-mapping={!!axisMapping || !!buttonMapping} 
   class:inactive={isInactive} 
-  class:inactive-edit-mode={isInactive && isEditMode} 
+  class:inactive-edit-mode={isInactive && isEditMode}
   role="group" 
   aria-label="Audio controls for {session.display_name}"
 >
