@@ -131,6 +131,7 @@
     <div class="settings-wrapper" class:expanded={settingsMenuExpanded} class:hidden={closeMenuExpanded}>
       <ButtonExpandable
         bind:expanded={settingsMenuExpanded}
+        class={settingsMenuExpanded ? 'dock-expandable-open' : ''}
         anchor="left"
         ariaLabel={settingsMenuExpanded ? "Close settings menu" : "Open settings menu"}
         title={settingsMenuExpanded ? "Close" : "Menu"}
@@ -211,6 +212,7 @@
     <div class="close-wrapper" class:expanded={closeMenuExpanded} class:hidden={settingsMenuExpanded}>
       <ButtonExpandable
         bind:expanded={closeMenuExpanded}
+        class={closeMenuExpanded ? 'dock-expandable-open' : ''}
         anchor="right"
         ariaLabel={closeMenuExpanded ? "Cancel" : "Close application"}
         title={closeMenuExpanded ? "Cancel" : "Quit"}
@@ -297,13 +299,13 @@
     display: flex;
     flex-direction: row;
     justify-content: center;
-    gap: 1rem;
+    gap: 25px;
     align-items: flex-end;
     height: 0;
     max-height: 0;
     transition: height 0.3s ease, max-height 0.3s ease, padding 0.3s ease, gap 0.3s ease;
     position: relative;
-    width: 180px;
+    width: 162px;
   }
 
   .dock.open {

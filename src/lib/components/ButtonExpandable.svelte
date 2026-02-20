@@ -44,7 +44,7 @@
   class:onboarding
 >
   {#if expanded && children}
-    <div class="btn-expandable__list" role="listbox">
+    <div class="btn-expandable__list {className}" role="listbox">
       {@render children()}
     </div>
   {/if}
@@ -110,6 +110,11 @@
     justify-content: space-between;
     overflow: visible;
     padding: 6px;
+  }
+
+  .btn-expandable.dock-expandable-open {
+    width: 162px;
+    max-width: 162px;
   }
 
   /* Button styles */
@@ -182,6 +187,10 @@
     gap: 6px;
     z-index: 1;
     border-radius: 23px;
+  }
+
+  .btn-expandable__list.dock-expandable-open {
+    overflow: visible;
   }
 
   .btn-expandable__list::-webkit-scrollbar {
