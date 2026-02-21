@@ -32,8 +32,13 @@
     expandedIcon,
     children
   }: Props = $props();
+
+  let openRenderCycle = $state(0);
   
   function handleClick() {
+    if (!expanded) {
+      openRenderCycle += 1;
+    }
     expanded = !expanded;
   }
 </script>
@@ -44,9 +49,11 @@
   class:onboarding
 >
   {#if expanded && children}
-    <div class="btn-expandable__list {className}" role="listbox">
-      {@render children()}
-    </div>
+    {#key openRenderCycle}
+      <div class="btn-expandable__list {className}" role="listbox">
+        {@render children()}
+      </div>
+    {/key}
   {/if}
   
   <button 

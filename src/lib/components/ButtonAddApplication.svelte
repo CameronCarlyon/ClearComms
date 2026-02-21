@@ -44,7 +44,8 @@
       <ListOption
         processName={session.process_name}
         displayName={applyDisplayNameOverride(session.display_name || formatProcessName(session.process_name), session.process_name)}
-        animationIndex={index}
+        animationIndex={index + 3}
+        animationType="fadeIn"
         on:select={handleSelect}
       />
     {/each}
