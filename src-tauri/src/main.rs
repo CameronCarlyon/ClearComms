@@ -80,11 +80,10 @@ const WINDOW_HEIGHT: u32 = 700;
 /// Duration of window resize animation in milliseconds
 const RESIZE_ANIMATION_DURATION_MS: u64 = 500;
 
-/// Frame interval for resize animation in milliseconds
-/// Set to 8ms (~125fps) to provide smooth animations on high refresh rate monitors.
-/// The actual display refresh rate is handled by the OS, so this oversamples safely
-/// and provides butter-smooth animations on 60Hz, 120Hz, 144Hz, and 240Hz+ displays.
-const RESIZE_ANIMATION_FRAME_MS: u64 = 8;
+/// Frame interval for resize animation in microseconds.
+/// Set to 4,167µs (~240fps) for smoother interpolation on high refresh rate monitors.
+/// The actual display refresh rate is handled by the OS, so this oversamples safely.
+const RESIZE_ANIMATION_FRAME_US: u64 = 4_167;
 
 /// Tray icon identifier
 const TRAY_ICON_ID: &str = "clearcomms-tray";
@@ -172,6 +171,7 @@ fn load_theme_appropriate_icon() -> Image<'static> {
 /// or CSS changes. Falls back to sensible defaults if measurements haven't been set.
 ///
 /// Formula: (n × channel_width) + ((n − 1) × channel_gap) + (2 × padding)
+/// where n is clamped to a minimum of 2 to maintain a suitable base window width.
 ///
 /// Example for 2 channels in edit mode (displayCount=4) with 50px channels, 50px gaps, 50px padding:
 ///   (4 × 50) + (3 × 50) + (2 × 50) = 200 + 150 + 100 = 450px
@@ -186,7 +186,7 @@ fn load_theme_appropriate_icon() -> Image<'static> {
 /// Window width in logical pixels (before DPI scaling)
 fn calculate_window_width(session_count: usize) -> u32 {
     let measurements = LAYOUT_MEASUREMENTS.lock().unwrap();
-    let n = session_count as u32;
+    let n = session_count.max(2) as u32; // Clamp to minimum of 2 channels for base width
 
     let channels_width = n * measurements.channel_width;
     let gaps_width = n.saturating_sub(1) * measurements.channel_gap;
@@ -294,7 +294,7 @@ fn resize_window_to_content(app: tauri::AppHandle, session_count: usize) -> Resu
 fn animate_window_resize(window: tauri::WebviewWindow, start_width: u32, target_width: u32, target_height: u32) {
     let start_time = Instant::now();
     let duration = Duration::from_millis(RESIZE_ANIMATION_DURATION_MS);
-    let frame_duration = Duration::from_millis(RESIZE_ANIMATION_FRAME_MS);
+    let frame_duration = Duration::from_micros(RESIZE_ANIMATION_FRAME_US);
 
     let physical_window_height = target_height;
 
