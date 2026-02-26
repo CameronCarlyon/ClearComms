@@ -7,7 +7,6 @@
   import type { AudioSession, AxisMapping, ButtonMapping } from '$lib/types';
   import ApplicationChannel from './ApplicationChannel.svelte';
   import ButtonAddApplication from './ButtonAddApplication.svelte';
-  import { formatProcessName } from '$lib/stores/audioStore';
 
   interface Props {
     boundSessions: AudioSession[];
@@ -62,6 +61,8 @@
   );
 
   let mixerContainer = $state<HTMLDivElement | undefined>();
+  let modeRetriggerOffsetMs = $derived(isEditMode ? 0 : 1);
+  let totalAnimatedColumns = $derived(boundSessions.length + (isEditMode ? 1 : 0));
 
   function handleWheel(event: WheelEvent) {
     const container = mixerContainer;
@@ -83,36 +84,36 @@
 
 {#if boundSessions.length > 0 || isEditMode}
   <!-- Mixer View -->
-  <div class="mixer-container" class:edit-mode={isEditMode} class:standard-mode={!isEditMode} bind:this={mixerContainer} onwheel={handleWheel}>
+  <div class="mixer-container" bind:this={mixerContainer} onwheel={handleWheel}>
     {#each boundSessions as session, index (session.session_id)}
       {@const mapping = axisMappings.find(m => m.processName === session.process_name)}
       {@const buttonMapping = buttonMappings.find(m => m.processName === session.process_name)}
+      {@const entranceDelayMs = ((totalAnimatedColumns - 1 - index) * 45) + modeRetriggerOffsetMs}
 
       {#key `${session.session_id}-${isEditMode ? 'edit' : 'standard'}`}
-        <div class="mixer-item" style={`--stagger-index: ${index}`}>
-          <ApplicationChannel
-            {session}
-            axisMapping={mapping}
-            {buttonMapping}
-            {isEditMode}
-            isBindingAxis={isBindingMode && pendingBinding?.sessionId === session.session_id}
-            isBindingButton={isButtonBindingMode && pendingButtonBinding?.sessionId === session.session_id}
-            on:volumedragstart
-            on:volumedragmove
-            on:volumedragend
-            on:volumetrackclick
-            on:volumewheel
-            on:mutetoggle
-            on:startaxisbinding
-            on:startbuttonbinding
-            on:cancelaxisbinding
-            on:cancelbuttonbinding
-            on:removeaxismapping
-            on:removebuttonmapping
-            on:toggleinversion
-            on:removeapplication
-          />
-        </div>
+        <ApplicationChannel
+          {session}
+          axisMapping={mapping}
+          {buttonMapping}
+          {isEditMode}
+          isBindingAxis={isBindingMode && pendingBinding?.sessionId === session.session_id}
+          isBindingButton={isButtonBindingMode && pendingButtonBinding?.sessionId === session.session_id}
+          entranceDelayMs={entranceDelayMs}
+          on:volumedragstart
+          on:volumedragmove
+          on:volumedragend
+          on:volumetrackclick
+          on:volumewheel
+          on:mutetoggle
+          on:startaxisbinding
+          on:startbuttonbinding
+          on:cancelaxisbinding
+          on:cancelbuttonbinding
+          on:removeaxismapping
+          on:removebuttonmapping
+          on:toggleinversion
+          on:removeapplication
+        />
       {/key}
     {/each}
 
@@ -120,28 +121,27 @@
     {#if isEditMode}
       {#if isBindingNewApp && pendingBinding}
         <!-- Binding in Progress for NEW App -->
-        <div class="mixer-item" style={`--stagger-index: ${boundSessions.length}`}>
-          <div
-            class="application-channel add-app-column"
-            role="group"
-            aria-label="Binding in progress for {pendingBinding.sessionName}"
-          >
-            <span class="app-name inactive">{pendingBinding.sessionName}</span>
-            <div class="volume-bar-container">
-              <input type="range" class="volume-slider" min="0" max="1" step="0.01" value={0.5} style="--volume-percent: 50%" disabled />
-            </div>
-            <button class="btn btn-channel btn-disabled" onclick={() => dispatch('cancelbuttonbinding')} aria-label="Cancel mute binding" title="Cancel Mute Binding" type="button">
-              <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 640 640" width="20" height="20" fill="currentColor"><path d="M183.1 137.4C170.6 124.9 150.3 124.9 137.8 137.4C125.3 149.9 125.3 170.2 137.8 182.7L275.2 320L137.9 457.4C125.4 469.9 125.4 490.2 137.9 502.7C150.4 515.2 170.7 515.2 183.2 502.7L320.5 365.3L457.9 502.6C470.4 515.1 490.7 515.1 503.2 502.6C515.7 490.1 515.7 469.8 503.2 457.3L365.8 320L503.1 182.6C515.6 170.1 515.6 149.8 503.1 137.3C490.6 124.8 470.3 124.8 457.8 137.3L320.5 274.7L183.1 137.4z"/></svg>
-            </button>
-            <button class="btn btn-channel btn-disabled" onclick={() => dispatch('cancelaxisbinding')} aria-label="Cancel axis binding" title="Cancel Axis Binding" type="button">
-              <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 640 640" width="20" height="20" fill="currentColor"><path d="M183.1 137.4C170.6 124.9 150.3 124.9 137.8 137.4C125.3 149.9 125.3 170.2 137.8 182.7L275.2 320L137.9 457.4C125.4 469.9 125.4 490.2 137.9 502.7C150.4 515.2 170.7 515.2 183.2 502.7L320.5 365.3L457.9 502.6C470.4 515.1 490.7 515.1 503.2 502.6C515.7 490.1 515.7 469.8 503.2 457.3L365.8 320L503.1 182.6C515.6 170.1 515.6 149.8 503.1 137.3C490.6 124.8 470.3 124.8 457.8 137.3L320.5 274.7L183.1 137.4z"/></svg>
-            </button>
+        <div
+          class="application-channel add-app-column"
+          role="group"
+          aria-label="Binding in progress for {pendingBinding.sessionName}"
+          style={`--channel-entrance-delay: ${((totalAnimatedColumns - 1 - boundSessions.length) * 45) + modeRetriggerOffsetMs}ms`}
+        >
+          <span class="app-name inactive">{pendingBinding.sessionName}</span>
+          <div class="volume-bar-container">
+            <input type="range" class="volume-slider" min="0" max="1" step="0.01" value={0.5} style="--volume-percent: 50%" disabled />
           </div>
+          <button class="btn btn-channel btn-disabled" onclick={() => dispatch('cancelbuttonbinding')} aria-label="Cancel mute binding" title="Cancel Mute Binding" type="button">
+            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 640 640" width="20" height="20" fill="currentColor"><path d="M183.1 137.4C170.6 124.9 150.3 124.9 137.8 137.4C125.3 149.9 125.3 170.2 137.8 182.7L275.2 320L137.9 457.4C125.4 469.9 125.4 490.2 137.9 502.7C150.4 515.2 170.7 515.2 183.2 502.7L320.5 365.3L457.9 502.6C470.4 515.1 490.7 515.1 503.2 502.6C515.7 490.1 515.7 469.8 503.2 457.3L365.8 320L503.1 182.6C515.6 170.1 515.6 149.8 503.1 137.3C490.6 124.8 470.3 124.8 457.8 137.3L320.5 274.7L183.1 137.4z"/></svg>
+          </button>
+          <button class="btn btn-channel btn-disabled" onclick={() => dispatch('cancelaxisbinding')} aria-label="Cancel axis binding" title="Cancel Axis Binding" type="button">
+            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 640 640" width="20" height="20" fill="currentColor"><path d="M183.1 137.4C170.6 124.9 150.3 124.9 137.8 137.4C125.3 149.9 125.3 170.2 137.8 182.7L275.2 320L137.9 457.4C125.4 469.9 125.4 490.2 137.9 502.7C150.4 515.2 170.7 515.2 183.2 502.7L320.5 365.3L457.9 502.6C470.4 515.1 490.7 515.1 503.2 502.6C515.7 490.1 515.7 469.8 503.2 457.3L365.8 320L503.1 182.6C515.6 170.1 515.6 149.8 503.1 137.3C490.6 124.8 470.3 124.8 457.8 137.3L320.5 274.7L183.1 137.4z"/></svg>
+          </button>
         </div>
       {:else}
         <!-- Add Application Button -->
         {#key addAppComponentKey}
-          <div class="mixer-item" style={`--stagger-index: ${boundSessions.length}`}>
+          <div class="application-channel" style={`--channel-entrance-delay: ${((totalAnimatedColumns - 1 - boundSessions.length) * 45) + modeRetriggerOffsetMs}ms`}>
             <ButtonAddApplication
               bind:expanded={addAppListExpanded}
               {availableSessions}
@@ -157,8 +157,6 @@
 
 <style>
   .mixer-container {
-    --mode-stagger-delay: 45ms;
-    --mode-retrigger-offset: 0ms;
     display: flex;
     flex-direction: row;
     justify-content: center;
@@ -174,26 +172,12 @@
     padding: 0rem 2.5rem;
   }
 
-  .mixer-container.edit-mode {
-    --mode-retrigger-offset: 0ms;
+  .mixer-container > .application-channel {
+    animation: channel-entrance 0.28s ease-out both;
+    animation-delay: var(--channel-entrance-delay, 0ms);
   }
 
-  .mixer-container.standard-mode {
-    --mode-retrigger-offset: 1ms;
-  }
-
-  .mixer-container.edit-mode > .mixer-item,
-  .mixer-container.standard-mode > .mixer-item {
-    animation: mixer-item-entrance 0.28s ease-out both;
-    animation-delay: calc((var(--stagger-index, 0) * var(--mode-stagger-delay)) + var(--mode-retrigger-offset));
-  }
-
-  .mixer-item {
-    display: flex;
-    height: 100%;
-  }
-
-  @keyframes mixer-item-entrance {
+  @keyframes channel-entrance {
     from {
       opacity: 0;
       transform: translateY(-8px);
@@ -209,6 +193,7 @@
     height: 100%;
     flex-direction: column;
     align-items: center;
+    justify-content: center;
     gap: 1rem;
     transition: all 0.2s ease;
   }
