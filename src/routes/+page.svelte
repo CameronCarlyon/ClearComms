@@ -1843,8 +1843,37 @@
     removeApplication(e.detail.processName);
   }
 
-  function handleSelectApp(e: CustomEvent<{ processName: string }>) {
+  async function handleSelectApp(e: CustomEvent<{ processName: string }>) {
     const { processName } = e.detail;
+
+    // For system volume, fetch the real volume/mute state before pinning
+    // so the UI never flashes a 100% placeholder
+    if (processName === SYSTEM_VOLUME_PROCESS_NAME) {
+      try {
+        const [systemVolume, systemMuted] = await Promise.all([
+          invoke<number>("get_system_volume"),
+          invoke<boolean>("get_system_mute")
+        ]);
+        const systemSession: AudioSession = {
+          session_id: SYSTEM_VOLUME_ID,
+          display_name: SYSTEM_VOLUME_DISPLAY_NAME,
+          process_id: 0,
+          process_name: SYSTEM_VOLUME_PROCESS_NAME,
+          volume: systemVolume,
+          is_muted: systemMuted
+        };
+        // Inject (or replace) the system session so getBoundSessions() uses the real values
+        const existingIndex = audioSessions.findIndex(s => s.session_id === SYSTEM_VOLUME_ID);
+        if (existingIndex !== -1) {
+          audioSessions[existingIndex] = systemSession;
+        } else {
+          audioSessions = [...audioSessions, systemSession];
+        }
+      } catch (err) {
+        console.error("Failed to pre-fetch system volume:", err);
+      }
+    }
+
     pinnedApps = new Set([...pinnedApps, processName]);
     savePinnedApps();
     addAppListExpanded = false;
