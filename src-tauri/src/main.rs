@@ -24,6 +24,8 @@
 
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
+use std::path::PathBuf;
+use std::fs;
 
 use tauri::image::Image;
 use tauri::Manager;
@@ -460,10 +462,83 @@ async fn restart_application(app: tauri::AppHandle) -> Result<(), String> {
     Ok(())
 }
 
-/// Quit the application
+/// Persistent UI config filename stored in the app config directory.
+const UI_CONFIG_FILE_NAME: &str = "ui-state.json";
+
+fn get_ui_config_path(app: &tauri::AppHandle) -> Result<PathBuf, String> {
+    let config_dir = app
+        .path()
+        .app_config_dir()
+        .map_err(|e| format!("Failed to resolve app config directory: {}", e))?;
+
+    fs::create_dir_all(&config_dir)
+        .map_err(|e| format!("Failed to create app config directory: {}", e))?;
+
+    Ok(config_dir.join(UI_CONFIG_FILE_NAME))
+}
+
+fn read_ui_config_map(app: &tauri::AppHandle) -> Result<serde_json::Map<String, serde_json::Value>, String> {
+    let path = get_ui_config_path(app)?;
+
+    if !path.exists() {
+        return Ok(serde_json::Map::new());
+    }
+
+    let content = fs::read_to_string(&path)
+        .map_err(|e| format!("Failed to read UI config file: {}", e))?;
+
+    if content.trim().is_empty() {
+        return Ok(serde_json::Map::new());
+    }
+
+    let parsed: serde_json::Value = serde_json::from_str(&content)
+        .map_err(|e| format!("Failed to parse UI config JSON: {}", e))?;
+
+    match parsed {
+        serde_json::Value::Object(map) => Ok(map),
+        _ => Err("UI config file is not a JSON object".to_string()),
+    }
+}
+
+fn write_ui_config_map(
+    app: &tauri::AppHandle,
+    map: &serde_json::Map<String, serde_json::Value>,
+) -> Result<(), String> {
+    let path = get_ui_config_path(app)?;
+    let json = serde_json::to_string_pretty(&serde_json::Value::Object(map.clone()))
+        .map_err(|e| format!("Failed to serialise UI config JSON: {}", e))?;
+
+    fs::write(path, json).map_err(|e| format!("Failed to write UI config file: {}", e))
+}
+
+/// Save one UI config value by key.
 #[tauri::command]
-fn quit_application() {
-    std::process::exit(0);
+fn save_config_value(
+    app: tauri::AppHandle,
+    key: String,
+    value: serde_json::Value,
+) -> Result<(), String> {
+    let mut map = read_ui_config_map(&app)?;
+    map.insert(key, value);
+    write_ui_config_map(&app, &map)
+}
+
+/// Load one UI config value by key.
+#[tauri::command]
+fn load_config_value(
+    app: tauri::AppHandle,
+    key: String,
+) -> Result<Option<serde_json::Value>, String> {
+    let map = read_ui_config_map(&app)?;
+    Ok(map.get(&key).cloned())
+}
+
+/// Quit the application gracefully.
+/// Uses Tauri's exit mechanism instead of std::process::exit() to allow
+/// WebView2 to flush buffered localStorage writes to disk before terminating.
+#[tauri::command]
+fn quit_application(app: tauri::AppHandle) {
+    app.exit(0);
 }
 
 /// Open a URL in the default browser and bring it to the foreground
@@ -716,6 +791,8 @@ fn main() {
             is_window_pinned,
             get_display_info,
             restart_application,
+            save_config_value,
+            load_config_value,
             quit_application,
             open_url,
         ])

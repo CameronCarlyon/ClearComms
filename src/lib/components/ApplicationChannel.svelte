@@ -16,6 +16,7 @@
     isEditMode: boolean;
     isBindingAxis: boolean;
     isBindingButton: boolean;
+    entranceDelayMs?: number;
   }
 
   let {
@@ -24,7 +25,8 @@
     buttonMapping,
     isEditMode,
     isBindingAxis,
-    isBindingButton
+    isBindingButton,
+    entranceDelayMs = 0
   }: Props = $props();
   
   const dispatch = createEventDispatcher<{
@@ -68,6 +70,7 @@
   class:has-mapping={!!axisMapping || !!buttonMapping} 
   class:inactive={isInactive} 
   class:inactive-edit-mode={isInactive && isEditMode}
+  style={`--channel-entrance-delay: ${entranceDelayMs}ms`}
   role="group" 
   aria-label="Audio controls for {session.display_name}"
 >
@@ -282,11 +285,25 @@
 <style>
   .application-channel {
     display: flex;
-    height: 100%;
     flex-direction: column;
+    height: 100%;
     align-items: center;
     gap: 1rem;
+    animation: channel-entrance 0.28s ease-out both;
+    animation-delay: var(--channel-entrance-delay, 0ms);
     transition: all 0.3s ease;
+    justify-content: center;
+  }
+
+  @keyframes channel-entrance {
+    from {
+      opacity: 0;
+      transform: translateY(-8px);
+    }
+    to {
+      opacity: 1;
+      transform: translateY(0);
+    }
   }
 
   .application-channel.inactive {

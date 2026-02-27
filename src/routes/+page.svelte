@@ -492,17 +492,22 @@
       applyDebugOverrides();
       return;
     }
-    
-    loadMappings();
-    loadButtonMappings();
-    loadPinnedApps();
-    loadAppFriendlyNames();
-    fetchWindowPinnedState();
-    autoInitialise();
-    
-    // Measure layout dimensions once on mount
-    // This ensures the backend knows the actual rendered widths for all DPI scales
-    measureLayoutDimensions();
+
+    void (async () => {
+      await Promise.all([
+        loadMappings(),
+        loadButtonMappings(),
+        loadPinnedApps(),
+        loadAppFriendlyNames()
+      ]);
+
+      await fetchWindowPinnedState();
+      await autoInitialise();
+
+      // Measure layout dimensions once on mount
+      // This ensures the backend knows the actual rendered widths for all DPI scales
+      measureLayoutDimensions();
+    })();
 
     // Listen for pin state changes from the backend (e.g., from context menu)
     // Store the promise so cleanup can unlisten even if it hasn't resolved yet
@@ -1656,19 +1661,33 @@
   // PERSISTENCE
   // ─────────────────────────────────────────────────────────────────────────────
 
-  function saveMappings() {
-    try {
-      localStorage.setItem('clearcomms_axis_mappings', JSON.stringify(axisMappings));
-    } catch (error) {
-      console.error("Error saving mappings:", error);
-    }
+  const PERSIST_KEYS = {
+    axisMappings: 'clearcomms_axis_mappings',
+    buttonMappings: 'clearcomms_button_mappings',
+    pinnedApps: 'clearcomms_pinned_apps',
+    appFriendlyNames: 'clearcomms_app_friendly_names'
+  } as const;
+
+  async function saveConfigValue(key: string, value: unknown) {
+    await invoke('save_config_value', { key, value });
   }
 
-  function loadMappings() {
+  async function loadConfigValue<T>(key: string): Promise<T | null> {
+    const value = await invoke<T | null>('load_config_value', { key });
+    return value;
+  }
+
+  function saveMappings() {
+    void saveConfigValue(PERSIST_KEYS.axisMappings, axisMappings).catch((error) => {
+      console.error("Error saving mappings:", error);
+    });
+  }
+
+  async function loadMappings() {
     try {
-      const saved = localStorage.getItem('clearcomms_axis_mappings');
+      const saved = await loadConfigValue<AxisMapping[]>(PERSIST_KEYS.axisMappings);
       if (saved) {
-        axisMappings = JSON.parse(saved);
+        axisMappings = saved;
       }
     } catch (error) {
       console.error("Error loading mappings:", error);
@@ -1676,18 +1695,16 @@
   }
 
   function saveButtonMappings() {
-    try {
-      localStorage.setItem('clearcomms_button_mappings', JSON.stringify(buttonMappings));
-    } catch (error) {
+    void saveConfigValue(PERSIST_KEYS.buttonMappings, buttonMappings).catch((error) => {
       console.error("Error saving button mappings:", error);
-    }
+    });
   }
 
-  function loadButtonMappings() {
+  async function loadButtonMappings() {
     try {
-      const saved = localStorage.getItem('clearcomms_button_mappings');
+      const saved = await loadConfigValue<ButtonMapping[]>(PERSIST_KEYS.buttonMappings);
       if (saved) {
-        buttonMappings = JSON.parse(saved);
+        buttonMappings = saved;
       }
     } catch (error) {
       console.error("Error loading button mappings:", error);
@@ -1695,18 +1712,16 @@
   }
 
   function savePinnedApps() {
-    try {
-      localStorage.setItem('clearcomms_pinned_apps', JSON.stringify([...pinnedApps]));
-    } catch (error) {
+    void saveConfigValue(PERSIST_KEYS.pinnedApps, [...pinnedApps]).catch((error) => {
       console.error("Error saving pinned apps:", error);
-    }
+    });
   }
 
-  function loadPinnedApps() {
+  async function loadPinnedApps() {
     try {
-      const saved = localStorage.getItem('clearcomms_pinned_apps');
+      const saved = await loadConfigValue<string[]>(PERSIST_KEYS.pinnedApps);
       if (saved) {
-        pinnedApps = new Set(JSON.parse(saved));
+        pinnedApps = new Set(saved);
       }
     } catch (error) {
       console.error("Error loading pinned apps:", error);
@@ -1716,23 +1731,21 @@
   }
 
   function saveAppFriendlyNames() {
-    try {
-      const obj: Record<string, string> = {};
-      appFriendlyNames.forEach((value, key) => {
-        obj[key] = value;
-      });
-      localStorage.setItem('clearcomms_app_friendly_names', JSON.stringify(obj));
-    } catch (error) {
+    const obj: Record<string, string> = {};
+    appFriendlyNames.forEach((value, key) => {
+      obj[key] = value;
+    });
+
+    void saveConfigValue(PERSIST_KEYS.appFriendlyNames, obj).catch((error) => {
       console.error("Error saving app friendly names:", error);
-    }
+    });
   }
 
-  function loadAppFriendlyNames() {
+  async function loadAppFriendlyNames() {
     try {
-      const saved = localStorage.getItem('clearcomms_app_friendly_names');
+      const saved = await loadConfigValue<Record<string, string>>(PERSIST_KEYS.appFriendlyNames);
       if (saved) {
-        const obj = JSON.parse(saved);
-        appFriendlyNames = new Map(Object.entries(obj));
+        appFriendlyNames = new Map(Object.entries(saved));
       }
     } catch (error) {
       console.error("Error loading app friendly names:", error);
