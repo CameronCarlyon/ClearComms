@@ -299,7 +299,7 @@
     display: flex;
     flex-direction: row;
     justify-content: center;
-    gap: 25px;
+    gap: 15px;
     align-items: flex-end;
     height: 0;
     max-height: 0;
