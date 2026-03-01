@@ -39,9 +39,7 @@ The goal is to keep you in the flightdeck environment and not fiddling with volu
 ## Usage
 
 <div align="center">
-  <video autoplay loop muted playsinline width="66%">
-    <source src="ClearCommsShowcaseVideo.mp4" type="video/mp4">
-  </video>
+  <img src="ClearCommsShowcase.gif" alt="ClearComms demonstration" width="500" style="max-width: 100%; height: auto;">
 </div>
 
 1. Launch **ClearComms**. The application runs in the system tray and a window will not appear until you click on the tray icon.
