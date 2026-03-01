@@ -38,6 +38,12 @@ The goal is to keep you in the flightdeck environment and not fiddling with volu
 
 ## Usage
 
+<div align="center">
+  <video autoplay loop muted playsinline width="66%">
+    <source src="ClearCommsShowcaseVideo.mp4" type="video/mp4">
+  </video>
+</div>
+
 1. Launch **ClearComms**. The application runs in the system tray and a window will not appear until you click on the tray icon.
 
 2. With the ClearComms window open, you will be first presented with the onboarding view. Click on the **+** button to reveal a list of available audio sessions and add your first audio application (e.g. vPilot, GSX Pro) to the mixer.
