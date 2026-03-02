@@ -1,6 +1,11 @@
-# ClearComms
+<p align="center">
+  <img src="ClearCommsLogoDropShadow.png" width="200" alt="ClearComms Logo" style="margin-bottom: -10px;"/><br>
+  <font size="7">ClearComms</font><br><font size="3">Crafted by Cameron Carlyon</font>
+</p>
 
-Optimised for performance, **ClearComms** is a lightweight companion application for **Microsoft Flight Simulator**, built with **Tauri** and **Svelte**, and powered by **Rust**. The application allows you to control the volume of audio applications (such as vPilot or GSX Pro) using dedicated hardware and flightdeck controls, syncronised through ClearComms.
+
+## What’s this all about?
+Optimised for performance, **ClearComms** is a lightweight companion application for **Microsoft Flight Simulator**, built with **Tauri** and **Svelte**, and powered by **Rust**. The application allows you to control the volume of audio applications (such as vPilot or GSX Pro) using dedicated hardware and in-simulator flightdeck controls, syncronised through ClearComms.
 
 The goal is to keep you in the flightdeck environment and not fiddling with volume mixer menus, allowing you to stay focused on that final approach and not on the ongoing podcast of a departure clearance on the Tower frequency.
 
@@ -66,6 +71,8 @@ The goal is to keep you in the flightdeck environment and not fiddling with volu
 
 ## Tech Stack
 
+The following tech stack balances **performance, functionality, and user experience**, allowing ClearComms to integrate appropriately with both the Windows operating system and Microsoft Flight Simulator whilst maintaining a negligible footprint and a scalable framework to enable future enhancements.
+
 - **Frontend:** Svelte + TypeScript  
 - **Shell:** Tauri 2.x  
 - **Backend:** Rust  
@@ -103,9 +110,6 @@ The Windows Joystick API is used to read axis and button values from connected c
 
 #### **MobiFlight WASM Event Module**
 The MobiFlight Event Module is used as an in-sim WASM bridge to access aircraft-specific **LVars and HVars**, enabling reliable interaction with complex third-party aircraft systems. This approach avoids aircraft-specific DLLs or reverse-engineered interfaces while remaining compatible with a wide range of aircraft.
-
-## Summary
-This stack balances **performance, portability, and extensibility**, allowing ClearComms to integrate appropriately with both the Windows operating system and Microsoft Flight Simulator whilst maintaining a small footprint and a scalable framework to enable future enhancements.
 
 # Documentation
 
