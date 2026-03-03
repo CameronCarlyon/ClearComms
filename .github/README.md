@@ -1,8 +1,9 @@
-<p align="center">
-  <img src="ClearCommsLogoDropShadow.png" width="200" alt="ClearComms Logo" style="margin-bottom: -10px;"/><br>
-  <font size="7">ClearComms</font><br><font size="3">Crafted by Cameron Carlyon</font>
-</p>
+<h1>ClearComms</h1>
 
+<p align="center">
+  <img src="ClearCommsLogoDropShadow.png" width="200" alt="ClearComms Logo" style="margin-bottom: -30px;"/><br>
+  <!-- <h3 align="center">ClearComms<br>Crafted by Cameron Carlyon</h3> -->
+</p>
 
 ## What’s this all about?
 Optimised for performance, **ClearComms** is a lightweight companion application for **Microsoft Flight Simulator**, built with **Tauri** and **Svelte**, and powered by **Rust**. The application allows you to control the volume of audio applications (such as vPilot or GSX Pro) using dedicated hardware and in-simulator flightdeck controls, syncronised through ClearComms.
