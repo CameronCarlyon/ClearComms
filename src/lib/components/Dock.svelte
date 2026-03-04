@@ -4,7 +4,6 @@
 -->
 <script lang="ts">
   import { invoke } from '@tauri-apps/api/core';
-  import { Window } from '@tauri-apps/api/window';
   import { createEventDispatcher } from 'svelte';
   import { ButtonExpandable, ButtonRound, ListOption, SettingsOption } from '$lib/components';
   
@@ -100,9 +99,8 @@
     closeMenuExpanded = false;
     settingsMenuExpanded = false;
     dockOpen = false;
-    
-    const window = Window.getCurrent();
-    await window.hide();
+
+    await invoke('hide_main_window');
   }
 </script>
 

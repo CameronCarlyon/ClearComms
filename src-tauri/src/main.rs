@@ -373,15 +373,32 @@ fn show_main_window(app: tauri::AppHandle) -> Result<(), String> {
     }
 }
 
+fn hide_main_window_internal(
+    app: &tauri::AppHandle,
+    last_hidden: Option<&Arc<Mutex<Instant>>>,
+) -> Result<(), String> {
+    let Some(window) = app.get_webview_window("main") else {
+        return Err("Main window not found".to_string());
+    };
+
+    if let Some(last_hidden) = last_hidden {
+        if let Ok(is_visible) = window.is_visible() {
+            if is_visible {
+                if let Ok(mut last) = last_hidden.lock() {
+                    *last = Instant::now();
+                }
+            }
+        }
+    }
+    let _ = window.hide();
+
+    Ok(())
+}
+
 /// Hide the main application window
 #[tauri::command]
 fn hide_main_window(app: tauri::AppHandle) -> Result<(), String> {
-    if let Some(window) = app.get_webview_window("main") {
-        let _ = window.hide();
-        Ok(())
-    } else {
-        Err("Main window not found".to_string())
-    }
+    hide_main_window_internal(&app, None)
 }
 
 /// Helper function: Perform the actual pin toggle operation
@@ -753,15 +770,7 @@ fn main() {
                     } else if !focused {
                         // Window not pinned and lost focus - hide it and record timestamp
                         tracing::debug!("[Window] Lost focus, hiding");
-                        // Only update last_hidden if the window was actually visible
-                        if let Ok(is_visible) = window.is_visible() {
-                            if is_visible {
-                                if let Ok(mut last) = last_hidden_for_events.lock() {
-                                    *last = Instant::now();
-                                }
-                            }
-                        }
-                        let _ = window.hide();
+                        let _ = hide_main_window_internal(&window.app_handle(), Some(&last_hidden_for_events));
                     }
                 }
                 _ => {}
