@@ -1,8 +1,6 @@
-<h1>ClearComms</h1>
-
 <p align="center">
   <img src="ClearCommsLogoDropShadow.png" width="200" alt="ClearComms Logo" style="margin-bottom: -30px;"/><br>
-  <!-- <h3 align="center">ClearComms<br>Crafted by Cameron Carlyon</h3> -->
+  <h3 align="center">ClearComms<br><i>Crafted by Cameron Carlyon</i></h3>
 </p>
 
 ## What’s this all about?
