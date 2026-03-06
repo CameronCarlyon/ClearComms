@@ -619,7 +619,7 @@
   async function autoInitialise() {
     try {
       initStatus = "Initialising input system...";
-      await invoke<string>("init_direct_input");
+      await invoke<string>("init_input");
 
       initStatus = "Enumerating devices...";
       await invoke<string[]>("enumerate_input_devices");
@@ -1371,7 +1371,12 @@
   function detectAxisMovement(): { deviceHandle: string; deviceName: string; axisName: string } | null {
     for (const device of axisData) {
       const previousValues = previousAxisValues.get(device.device_handle);
-      if (!previousValues) continue;
+      if (!previousValues) {
+        // Device appeared after binding started (hot-plugged); seed a baseline
+        // so movement can be detected on the next poll tick.
+        previousAxisValues.set(device.device_handle, { ...device.axes });
+        continue;
+      }
 
       for (const [axisName, currentValue] of Object.entries(device.axes)) {
         const previousValue = previousValues[axisName];
@@ -1389,7 +1394,12 @@
   function detectButtonPress(): { deviceHandle: string; deviceName: string; buttonName: string } | null {
     for (const device of axisData) {
       const previousStates = previousButtonStates.get(device.device_handle);
-      if (!previousStates) continue;
+      if (!previousStates) {
+        // Device appeared after binding started (hot-plugged); seed a baseline
+        // so button presses can be detected on the next poll tick.
+        previousButtonStates.set(device.device_handle, { ...device.buttons });
+        continue;
+      }
 
       for (const [buttonName, currentState] of Object.entries(device.buttons)) {
         const previousState = previousStates[buttonName];

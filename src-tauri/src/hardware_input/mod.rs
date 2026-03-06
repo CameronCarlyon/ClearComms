@@ -1,5 +1,6 @@
 use std::sync::Mutex;
 use std::collections::HashMap;
+use std::time::{Duration, Instant};
 use serde::{Serialize, Deserialize};
 use hidapi::HidApi;
 
@@ -27,6 +28,9 @@ const INITIAL_DEVICE_CAPACITY: usize = 16;
 
 /// Initial capacity for HID device map
 const INITIAL_HID_DEVICE_CAPACITY: usize = 32;
+
+/// How often to refresh the device list to detect hot-plugged controllers
+const DEVICE_REENUMERATION_INTERVAL: Duration = Duration::from_secs(2);
 
 /// Axis and button data from a hardware device
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -72,6 +76,10 @@ pub struct HidInputManager {
     axis_cache: HashMap<u32, HashMap<String, f32>>,
     button_cache: HashMap<u32, HashMap<String, bool>>,
     hid_api: HidApi,
+    /// Snapshot of connected joystick IDs from the last enumeration, used to
+    /// detect hot-plug changes cheaply without a full HID bus scan.
+    known_joy_ids: Vec<u32>,
+    last_hotplug_check: Option<Instant>,
 }
 
 #[cfg(windows)]
@@ -86,6 +94,8 @@ impl HidInputManager {
             axis_cache: HashMap::with_capacity(INITIAL_DEVICE_CAPACITY),
             button_cache: HashMap::with_capacity(INITIAL_DEVICE_CAPACITY),
             hid_api,
+            known_joy_ids: Vec::with_capacity(INITIAL_DEVICE_CAPACITY),
+            last_hotplug_check: None,
         })
     }
     
@@ -171,9 +181,59 @@ impl HidInputManager {
             }
         }
 
-        // Clear old cache entries to prevent unbounded growth
-        self.axis_cache.clear();
-        self.button_cache.clear();
+        // Clear stale cache entries for devices that are no longer present
+        let active_ids: std::collections::HashSet<u32> = self.devices.iter().map(|d| d.id).collect();
+        self.axis_cache.retain(|id, _| active_ids.contains(id));
+        self.button_cache.retain(|id, _| active_ids.contains(id));
+
+        // Update the known-device snapshot for future lightweight hot-plug checks
+        self.known_joy_ids = self.devices.iter().map(|d| d.id).collect();
+        self.last_hotplug_check = Some(Instant::now());
+
+        Ok(())
+    }
+
+    /// Lightweight check for device changes without a full HID bus scan.
+    /// Only performs the 16 cheap joyGetDevCapsW calls to detect whether the
+    /// set of connected joystick IDs has changed. Triggers a full
+    /// re-enumeration (including HID name resolution) only when it has.
+    fn maybe_refresh_devices_for_hotplug(&mut self) -> Result<(), String> {
+        let should_check = self
+            .last_hotplug_check
+            .map(|last| last.elapsed() >= DEVICE_REENUMERATION_INTERVAL)
+            .unwrap_or(true);
+
+        if !should_check {
+            return Ok(());
+        }
+
+        self.last_hotplug_check = Some(Instant::now());
+
+        // Collect the set of currently-present joystick IDs (very cheap — 16 Win32 calls)
+        let mut current_ids: Vec<u32> = Vec::with_capacity(MAX_JOYSTICK_DEVICES as usize);
+        for joy_id in 0..MAX_JOYSTICK_DEVICES {
+            unsafe {
+                let mut caps: JOYCAPSW = std::mem::zeroed();
+                let result = joyGetDevCapsW(
+                    joy_id as usize,
+                    &mut caps as *mut JOYCAPSW,
+                    std::mem::size_of::<JOYCAPSW>() as u32,
+                );
+                if result == JOYERR_NOERROR {
+                    current_ids.push(joy_id);
+                }
+            }
+        }
+
+        // Only run the expensive full enumeration when the device set has changed
+        if current_ids != self.known_joy_ids {
+            tracing::info!(
+                "[Input] Device set changed (was {:?}, now {:?}) — re-enumerating",
+                self.known_joy_ids,
+                current_ids
+            );
+            self.enumerate_devices()?;
+        }
 
         Ok(())
     }
@@ -310,7 +370,7 @@ static INPUT_MANAGER: Mutex<Option<HidInputManager>> = Mutex::new(None);
 
 /// Initialise input system and enumerate devices
 #[tauri::command]
-pub fn init_direct_input() -> Result<String, String> {
+pub fn init_input() -> Result<String, String> {
     tracing::info!("[Input] Initialising HID input manager...");
     let mut manager = HidInputManager::new()?;
 
@@ -338,7 +398,7 @@ pub fn init_direct_input() -> Result<String, String> {
 
 /// Get the current status of input system
 #[tauri::command]
-pub fn get_direct_input_status() -> Result<String, String> {
+pub fn get_input_status() -> Result<String, String> {
     let lock = INPUT_MANAGER
         .lock()
         .map_err(|e| format!("Failed to lock input mutex: {}", e))?;
@@ -364,7 +424,7 @@ pub fn enumerate_input_devices() -> Result<Vec<String>, String> {
     
     let manager = lock
         .as_mut()
-        .ok_or("Input not initialised. Call init_direct_input first.")?;
+        .ok_or("Input not initialised. Call init_input first.")?;
     
     // Re-enumerate devices
     manager.enumerate_devices()?;
@@ -388,7 +448,13 @@ pub fn get_all_axis_values() -> Result<Vec<AxisData>, String> {
     
     let manager = lock
         .as_mut()
-        .ok_or("Input not initialised. Call init_direct_input first.")?;
+        .ok_or("Input not initialised. Call init_input first.")?;
+
+    #[cfg(windows)]
+    if let Err(error) = manager.maybe_refresh_devices_for_hotplug() {
+        // Preserve live polling even if a periodic refresh fails once.
+        tracing::warn!("[Input] Device hot-plug refresh failed: {}", error);
+    }
     
     manager.read_all_axes()
 }
