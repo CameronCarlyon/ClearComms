@@ -739,18 +739,18 @@ Sets the system master mute state via `IAudioEndpointVolume::SetMute`.
 
 ### 10.2 Hardware Input Commands
 
-#### `init_direct_input`
+#### `init_input`
 
 ```rust
-fn init_direct_input() -> Result<String, String>
+fn init_input() -> Result<String, String>
 ```
 
 Initialises the HID API, enumerates all connected joystick devices (up to 16), correlates Joystick API devices with HID device names, and stores the manager in the global `INPUT_MANAGER` mutex. Returns a status message with the number of devices found.
 
-#### `get_direct_input_status`
+#### `get_input_status`
 
 ```rust
-fn get_direct_input_status() -> Result<String, String>
+fn get_input_status() -> Result<String, String>
 ```
 
 Returns a human-readable status string indicating whether the input system is initialised and the number of connected devices.
