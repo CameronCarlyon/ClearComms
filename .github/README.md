@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="ClearCommsLogoDropShadow.png" width="200" alt="ClearComms Logo" style="margin-bottom: -30px;"/><br>
+  <img src="ClearCommsLogoDropShadow.png" width="200" alt="ClearComms Logo" style="margin-bottom: -30px;"/>
   <h3 align="center">ClearComms<br><i>Crafted by Cameron Carlyon</i></h3>
 </p>
 
