@@ -23,6 +23,7 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 use std::sync::{Arc, Mutex};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant};
 use std::path::PathBuf;
 use std::fs;
@@ -38,6 +39,27 @@ mod native_menu;
 mod window_utils;
 
 use window_utils::{position_window_bottom_right, get_display_info_for_window, set_window_pos_and_size};
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Pin State
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// Logical pin-on-top state, tracked independently of the Win32 window style
+/// which can be cleared by Tauri's internal `SetWindowPos` calls during
+/// resize/redraw. This is the single source of truth for pin state, read by
+/// the native context menu, the frontend `is_window_pinned` command, and the
+/// focus-change handler.
+static PIN_STATE: AtomicBool = AtomicBool::new(false);
+
+/// Update the tracked pin state. Call this whenever the pin state changes.
+pub fn set_pin_state(pinned: bool) {
+    PIN_STATE.store(pinned, Ordering::Relaxed);
+}
+
+/// Read the tracked pin state.
+pub fn get_pin_state() -> bool {
+    PIN_STATE.load(Ordering::Relaxed)
+}
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Layout Measurement System
@@ -408,9 +430,10 @@ pub fn perform_pin_toggle(window: &tauri::WebviewWindow) -> Result<bool, String>
     let _ = window.show();
     let _ = window.set_focus();
     
-    let current_state = window.is_always_on_top().unwrap_or(false);
+    let current_state = get_pin_state();
     let new_state = !current_state;
     let _ = window.set_always_on_top(new_state);
+    set_pin_state(new_state);
     Ok(new_state)
 }
 
@@ -428,8 +451,8 @@ fn toggle_pin_window(app: tauri::AppHandle) -> Result<bool, String> {
 /// Check if window is pinned on top
 #[tauri::command]
 fn is_window_pinned(app: tauri::AppHandle) -> Result<bool, String> {
-    if let Some(window) = app.get_webview_window("main") {
-        Ok(window.is_always_on_top().unwrap_or(false))
+    if let Some(_window) = app.get_webview_window("main") {
+        Ok(get_pin_state())
     } else {
         Err("Main window not found".to_string())
     }
@@ -679,6 +702,7 @@ fn main() {
                                     // Window is visible - hide it
                                     tracing::debug!("[Tray] Hiding window");
                                     let _ = window.set_always_on_top(false);
+                                    set_pin_state(false);
                                     let _ = window.hide();
                                 } else if just_hidden {
                                     // Window was just hidden by this click's focus loss - do nothing
@@ -754,7 +778,7 @@ fn main() {
                     api.prevent_close();
                 }
                 tauri::WindowEvent::Focused(focused) => {
-                    let is_pinned = window.is_always_on_top().unwrap_or(false);
+                    let is_pinned = get_pin_state();
                     tracing::debug!("[Window] Focused: {}, Pinned: {}", focused, is_pinned);
                     
                     // Force redraw on any focus change when pinned to clear title bar artifacts
