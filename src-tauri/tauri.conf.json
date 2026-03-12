@@ -1,7 +1,7 @@
 {
   "productName": "ClearComms",
   "version": "1.0.0",
-  "identifier": "com.cameroncarlyon.clearcomms",
+  "identifier": "ClearComms",
   "build": {
     "beforeDevCommand": "npm run dev",
     "devUrl": "http://localhost:1420",
@@ -31,6 +31,7 @@
     }
   },
   "bundle": {
+    "publisher": "Cameron Carlyon",
     "active": true,
     "targets": ["nsis"],
     "icon": [

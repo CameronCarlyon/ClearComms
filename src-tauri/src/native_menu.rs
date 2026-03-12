@@ -136,8 +136,8 @@ pub fn show_native_context_menu(app: &tauri::AppHandle, x: i32, y: i32) -> Resul
                 }
             }
             MENU_QUIT => {
-                // Use Tauri's graceful exit to allow WebView2 to flush
-                // buffered localStorage writes before the process terminates
+                // Use Tauri's graceful exit for a clean shutdown of
+                // WebView2 and backend resources
                 app.exit(0);
             }
             _ => {}

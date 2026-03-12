@@ -91,6 +91,10 @@ impl Default for LayoutMeasurements {
 lazy_static::lazy_static! {
     static ref LAYOUT_MEASUREMENTS: Arc<Mutex<LayoutMeasurements>> = 
         Arc::new(Mutex::new(LayoutMeasurements::default()));
+
+    /// Serialises all reads and writes to the UI config file to prevent
+    /// concurrent save_config_value calls from losing each other's updates.
+    static ref UI_CONFIG_LOCK: Mutex<()> = Mutex::new(());
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -558,6 +562,7 @@ fn save_config_value(
     key: String,
     value: serde_json::Value,
 ) -> Result<(), String> {
+    let _guard = UI_CONFIG_LOCK.lock().map_err(|e| format!("Config lock poisoned: {}", e))?;
     let mut map = read_ui_config_map(&app)?;
     map.insert(key, value);
     write_ui_config_map(&app, &map)
@@ -569,13 +574,14 @@ fn load_config_value(
     app: tauri::AppHandle,
     key: String,
 ) -> Result<Option<serde_json::Value>, String> {
+    let _guard = UI_CONFIG_LOCK.lock().map_err(|e| format!("Config lock poisoned: {}", e))?;
     let map = read_ui_config_map(&app)?;
     Ok(map.get(&key).cloned())
 }
 
 /// Quit the application gracefully.
-/// Uses Tauri's exit mechanism instead of std::process::exit() to allow
-/// WebView2 to flush buffered localStorage writes to disk before terminating.
+/// Uses Tauri's exit mechanism instead of std::process::exit() for a
+/// graceful shutdown of WebView2 and backend resources.
 #[tauri::command]
 fn quit_application(app: tauri::AppHandle) {
     app.exit(0);
