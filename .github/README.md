@@ -37,9 +37,6 @@ The goal is to keep you in the flightdeck environment and not fiddling with volu
 > [!NOTE]
 > In order to enable simulator integration, the [MobiFlight Event Module](https://docs.mobiflight.com/guides/wasm-module/) must be installed, though this is not a requirement for the application to function.
 
-> [!NOTE]
-> A portable version of ClearComms is available, however for some older Windows 10 installations, the [Microsoft WebView2 runtime](https://developer.microsoft.com/en-us/microsoft-edge/webview2) may need to be installed separately.
-
 ## Usage
 
 <div align="center">
