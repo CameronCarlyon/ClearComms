@@ -624,9 +624,6 @@
       initStatus = "Enumerating devices...";
       await invoke<string[]>("enumerate_input_devices");
 
-      initStatus = "Reading axis values...";
-      await getAxisValues();
-
       initStatus = "Initialising audio manager...";
       try {
         await invoke<string>("init_audio_manager");
@@ -649,14 +646,18 @@
     }
   }
 
-  async function getAxisValues() {
-    try {
-      const data = await invoke<AxisData[]>("get_all_axis_values");
-      axisData = data;
-    } catch (error) {
-      console.error("Error getting axis values:", error);
-      errorMsg = `Error: ${error}`;
-      axisData = [];
+  /** Unlisten handle for the input-axis-data Tauri event */
+  let unlistenInputAxis: (() => void) | null = null;
+
+  /** Process incoming axis data from the dedicated input polling thread */
+  function handleAxisData(data: AxisData[]) {
+    axisData = data;
+    // Apply mappings synchronously since data arrives at the polling thread's cadence
+    applyAxisMappings();
+    applyButtonMappings();
+    pollIterations += 1;
+    if (pollIterations > 1000000) {
+      pollIterations = 0;
     }
   }
   
@@ -664,34 +665,13 @@
     if (pollingInterval) return;
     
     isPolling = true;
-    pollingInterval = setInterval(async () => {
-      if (pollInFlight) {
-        skippedPolls += 1;
-        if (skippedPolls % POLL_LOG_INTERVAL === 0) {
-          console.debug(`[ClearComms] Polling skipped ${skippedPolls} times due to in-flight iteration`);
-        }
-        return;
-      }
 
-      pollInFlight = true;
-      try {
-        await getAxisValues();
-        await applyAxisMappings();
-        await applyButtonMappings();
-        pollIterations += 1;
-        if (pollIterations > 1000000) {
-          pollIterations = 0;
-          skippedPolls = 0;
-        }
-        if (pollIterations % POLL_LOG_INTERVAL === 0) {
-          console.debug(`[ClearComms] Polling iteration ${pollIterations}; cached sessions ${audioSessions.length}; button cache size ${previousButtonStates.size}`);
-        }
-      } catch (error) {
-        console.error("Polling error:", error);
-      } finally {
-        pollInFlight = false;
-      }
-    }, 50);
+    // Listen for axis data events emitted by the dedicated Rust input thread
+    listen<AxisData[]>('input-axis-data', (event) => {
+      handleAxisData(event.payload);
+    }).then((unlisten) => {
+      unlistenInputAxis = unlisten;
+    });
     
     startAudioMonitoring();
     startMemoryMonitoring();
@@ -702,6 +682,11 @@
     if (pollingInterval) {
       clearInterval(pollingInterval);
       pollingInterval = null;
+    }
+    // Clean up the input axis event listener
+    if (unlistenInputAxis) {
+      unlistenInputAxis();
+      unlistenInputAxis = null;
     }
     isPolling = false;
     pollInFlight = false;
@@ -826,13 +811,21 @@
       
       audioSessions = sessions;
       
-      // Capture friendly names from active sessions for persistence
+      // Capture friendly names from active sessions for persistence.
+      // Only write to disk if a name actually changed (dirty-flag pattern).
+      let friendlyNamesDirty = false;
       for (const session of sessions) {
         if (session.display_name && session.display_name !== formatProcessName(session.process_name)) {
-          appFriendlyNames.set(session.process_name, session.display_name);
+          const existing = appFriendlyNames.get(session.process_name);
+          if (existing !== session.display_name) {
+            appFriendlyNames.set(session.process_name, session.display_name);
+            friendlyNamesDirty = true;
+          }
         }
       }
-      saveAppFriendlyNames();
+      if (friendlyNamesDirty) {
+        saveAppFriendlyNames();
+      }
       
       // Trigger smooth animations for external changes using requestAnimationFrame
       for (const [sessionId, change] of volumeChanges) {

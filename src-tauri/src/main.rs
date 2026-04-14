@@ -51,6 +51,10 @@ use window_utils::{position_window_bottom_right, get_display_info_for_window, se
 /// focus-change handler.
 static PIN_STATE: AtomicBool = AtomicBool::new(false);
 
+/// Shutdown signal for the theme monitor thread.
+/// Set to `true` during app shutdown so the thread exits cleanly.
+static THEME_MONITOR_SHUTDOWN: AtomicBool = AtomicBool::new(false);
+
 /// Update the tracked pin state. Call this whenever the pin state changes.
 pub fn set_pin_state(pinned: bool) {
     PIN_STATE.store(pinned, Ordering::Relaxed);
@@ -95,6 +99,64 @@ lazy_static::lazy_static! {
     /// Serialises all reads and writes to the UI config file to prevent
     /// concurrent save_config_value calls from losing each other's updates.
     static ref UI_CONFIG_LOCK: Mutex<()> = Mutex::new(());
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Singleton Animation Thread (Fix 4)
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// Message sent to the animation thread with the target resize parameters.
+struct AnimationTarget {
+    window: tauri::WebviewWindow,
+    start_width: u32,
+    target_width: u32,
+    target_height: u32,
+}
+
+/// Global sender for the singleton animation thread.
+/// Lazily initialised on first use by `ensure_animation_thread()`.
+static ANIMATION_SENDER: Mutex<Option<std::sync::mpsc::Sender<AnimationTarget>>> = Mutex::new(None);
+
+/// Ensure the singleton animation thread is running and return a clone of the sender.
+fn ensure_animation_thread() -> std::result::Result<std::sync::mpsc::Sender<AnimationTarget>, String> {
+    let mut lock = ANIMATION_SENDER.lock().map_err(|e| format!("Animation lock poisoned: {}", e))?;
+    
+    if let Some(ref sender) = *lock {
+        // Thread already running — return a clone of the sender
+        return Ok(sender.clone());
+    }
+    
+    // First call: spawn the animation thread
+    let (tx, rx) = std::sync::mpsc::channel::<AnimationTarget>();
+    
+    std::thread::Builder::new()
+        .name("window-anim".to_string())
+        .spawn(move || {
+            tracing::debug!("[Anim] Singleton animation thread started");
+            
+            while let Ok(target) = rx.recv() {
+                // Drain any queued messages and use the latest target
+                // (cancels in-progress animations in favour of the newest request)
+                let mut latest = target;
+                while let Ok(newer) = rx.try_recv() {
+                    latest = newer;
+                }
+                
+                animate_window_resize(
+                    latest.window,
+                    latest.start_width,
+                    latest.target_width,
+                    latest.target_height,
+                    &rx,
+                );
+            }
+            
+            tracing::debug!("[Anim] Singleton animation thread exited");
+        })
+        .map_err(|e| format!("Failed to spawn animation thread: {}", e))?;
+    
+    *lock = Some(tx.clone());
+    Ok(tx)
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -297,11 +359,14 @@ fn resize_window_to_content(app: tauri::AppHandle, session_count: usize) -> Resu
             return Ok(format!("Already at {:?}x{:?} (scale: {})", physical_target_width, physical_window_height, scale_factor));
         }
         
-        // Spawn animation thread to avoid blocking
-        let window_clone = window.clone();
-        std::thread::spawn(move || {
-            animate_window_resize(window_clone, current_width, physical_target_width, physical_window_height);
-        });
+        // Send to the singleton animation thread (cancels any in-progress animation)
+        let sender = ensure_animation_thread()?;
+        sender.send(AnimationTarget {
+            window: window.clone(),
+            start_width: current_width,
+            target_width: physical_target_width,
+            target_height: physical_window_height,
+        }).map_err(|_| "Animation thread has exited".to_string())?;
         
         return Ok(format!("Animating to {:?}x{:?} for {} session(s) (scale: {})", physical_target_width, physical_window_height, session_count, scale_factor));
     }
@@ -319,7 +384,16 @@ fn resize_window_to_content(app: tauri::AppHandle, session_count: usize) -> Resu
 ///
 /// The `target_height` is pre-computed in physical pixels by the caller,
 /// already capped to fit within the display's work area.
-fn animate_window_resize(window: tauri::WebviewWindow, start_width: u32, target_width: u32, target_height: u32) {
+///
+/// Accepts a reference to the channel receiver so it can check for a newer
+/// animation target mid-animation (cancellation signal).
+fn animate_window_resize(
+    window: tauri::WebviewWindow,
+    start_width: u32,
+    target_width: u32,
+    target_height: u32,
+    rx: &std::sync::mpsc::Receiver<AnimationTarget>,
+) {
     let start_time = Instant::now();
     let duration = Duration::from_millis(RESIZE_ANIMATION_DURATION_MS);
     let frame_duration = Duration::from_micros(RESIZE_ANIMATION_FRAME_US);
@@ -379,6 +453,13 @@ fn animate_window_resize(window: tauri::WebviewWindow, start_width: u32, target_
         set_window_pos_and_size(&window, x, y, current_width, physical_window_height);
 
         if progress >= 1.0 {
+            break;
+        }
+
+        // Check if a newer animation target has arrived — if so, abort this animation
+        // so the caller loop can pick up the new target
+        if rx.try_recv().is_ok() {
+            tracing::debug!("[Anim] Cancelled in-progress animation for newer target");
             break;
         }
 
@@ -480,6 +561,11 @@ fn get_display_info(app: tauri::AppHandle) -> Result<window_utils::DisplayInfo, 
 /// Restart the application
 #[tauri::command]
 async fn restart_application(app: tauri::AppHandle) -> Result<(), String> {
+    // Signal all background threads to shut down cleanly
+    THEME_MONITOR_SHUTDOWN.store(true, Ordering::Relaxed);
+    audio_management::shutdown_audio_thread();
+    hardware_input::shutdown_input_thread();
+
     // Close the current app gracefully
     app.exit(0);
     
@@ -584,6 +670,10 @@ fn load_config_value(
 /// graceful shutdown of WebView2 and backend resources.
 #[tauri::command]
 fn quit_application(app: tauri::AppHandle) {
+    // Signal all background threads to shut down cleanly
+    THEME_MONITOR_SHUTDOWN.store(true, Ordering::Relaxed);
+    audio_management::shutdown_audio_thread();
+    hardware_input::shutdown_input_thread();
     app.exit(0);
 }
 
@@ -745,11 +835,20 @@ fn main() {
             // Spawn a background thread to monitor Windows theme changes
             // and update the tray icon accordingly
             let app_handle = app.handle().clone();
-            std::thread::spawn(move || {
+            std::thread::Builder::new()
+                .name("theme-monitor".to_string())
+                .spawn(move || {
                 let mut last_light_mode = is_windows_light_mode();
                 
                 loop {
                     std::thread::sleep(Duration::from_secs(2));
+
+                    // Check shutdown flag each iteration so the thread exits
+                    // cleanly when the app is closed
+                    if THEME_MONITOR_SHUTDOWN.load(Ordering::Relaxed) {
+                        tracing::info!("[Theme] Shutdown signal received, exiting theme monitor");
+                        break;
+                    }
                     
                     let current_light_mode = is_windows_light_mode();
                     if current_light_mode != last_light_mode {
@@ -772,7 +871,7 @@ fn main() {
                         });
                     }
                 }
-            });
+            }).expect("Failed to spawn theme monitor thread");
             
             Ok(())
         })
@@ -810,7 +909,6 @@ fn main() {
             hardware_input::init_input,
             hardware_input::get_input_status,
             hardware_input::enumerate_input_devices,
-            hardware_input::get_all_axis_values,
             hardware_input::cleanup_input_manager,
             audio_management::init_audio_manager,
             audio_management::get_audio_sessions,
