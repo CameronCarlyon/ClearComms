@@ -3,7 +3,7 @@
 **Version:** 1.0.0
 **Platform:** Windows 10/11
 **Architecture:** Tauri 2.x | Rust | Svelte 5 | TypeScript
-**Last Updated:** February 2026
+**Last Updated:** April 2026
 
 ---
 
@@ -75,7 +75,7 @@ ClearComms employs a three-tier architecture optimised for low-latency native sy
 │  │  ├── $state runes for reactive UI state (~30 variables)        │  │
 │  │  ├── $effect blocks for derived behaviour (3 effects)          │  │
 │  │  ├── Map/Set caches for non-reactive performance state         │  │
-│  │  ├── setInterval polling (50ms hardware, 200ms audio)          │  │
+│  │  ├── Tauri event listener (hardware), setInterval (200ms audio)│  │
 │  │  ├── requestAnimationFrame volume animations                   │  │
 │  │  └── localStorage persistence (3 keys)                         │  │
 │  │                                                                │  │
@@ -87,7 +87,7 @@ ClearComms employs a three-tier architecture optimised for low-latency native sy
 │                                                                      │
 │  Tauri 2.x IPC                                                       │
 │  ┌────────────────────────────────────────────────────────────────┐  │
-│  │  24 registered commands via invoke_handler                     │  │
+│  │  26 registered commands via invoke_handler                     │  │
 │  │  ├── invoke() — Frontend → Backend (JSON serialisation)        │  │
 │  │  ├── emit()   — Backend → Frontend (event bus)                 │  │
 │  │  └── Result<T, String> — Typed error propagation               │  │
@@ -105,7 +105,7 @@ ClearComms employs a three-tier architecture optimised for low-latency native sy
 │  │  window_utils        DPI-aware positioning                     │  │
 │  │  main                Tray, theming, layout, resize animation   │  │
 │  │                                                                │  │
-│  │  Concurrency: Mutex<Option<T>> singletons, Arc for sharing     │  │
+│  │  Concurrency: Dedicated threads, mpsc channels, AtomicBool     │  │
 │  │  Resource Management: RAII via Drop (COM, HANDLE, caches)      │  │
 │  └────────────────────────────────────────────────────────────────┘  │
 └──────────────────────────────────────────────────────────────────────┘
@@ -116,9 +116,9 @@ ClearComms employs a three-tier architecture optimised for low-latency native sy
 | Pattern | Implementation | Purpose |
 |---------|---------------|---------|
 | **RAII / Drop** | `ProcessHandle`, `AudioManager`, `HidInputManager` | Deterministic resource cleanup for COM objects, Windows handles, and caches |
-| **Global Singleton** | `Mutex<Option<AudioManager>>`, `Mutex<Option<HidInputManager>>` | Thread-safe manager access across Tauri command invocations |
-| **Observer / Event Bus** | `tauri::Emitter` for `window-pin-changed` | Backend-to-frontend state synchronisation |
-| **Command** | 24 `#[tauri::command]` functions | Decoupled IPC interface with typed parameters and returns |
+| **Dedicated Thread + Channel** | `AudioThreadHandle` (mpsc), `input-poll` thread | Confines COM and joystick calls to their own threads; Tauri commands forward via channels |
+| **Observer / Event Bus** | `tauri::Emitter` for `window-pin-changed`, `input-axis-data` | Backend-to-frontend state synchronisation and push-based input data |
+| **Command** | 26 `#[tauri::command]` functions | Decoupled IPC interface with typed parameters and returns |
 | **Throttle** | `scheduleLiveVolumeUpdate` (40ms minimum interval) | Rate-limited backend calls during slider interaction |
 | **Bounded Cache** | `MAX_SESSION_CACHE_SIZE: 1000`, `MAX_CACHE_SIZE: 1000` | Memory leak prevention with automatic eviction |
 | **Adapter** | `HidInputManager` combining Joystick API + HID API | Unified device abstraction merging data from two distinct APIs |
@@ -133,7 +133,7 @@ ClearComms employs a three-tier architecture optimised for low-latency native sy
 Hardware Device (physical axis movement)
        │
        ▼
-[1] setInterval (50ms) triggers get_all_axis_values
+[1] Dedicated input-poll thread (50ms sleep loop) reads all devices
        │
        ▼
 [2] Rust: joyGetPosEx reads raw axis value (0–65535)
@@ -142,29 +142,33 @@ Hardware Device (physical axis movement)
 [3] Rust: Normalise to 0.0–1.0, merge with HID device names
        │
        ▼
-[4] Frontend: applyAxisMappings() compares against lastHardwareAxisValues
+[4] Rust: app.emit("input-axis-data", &data) → Tauri event bus
+       │
+       ▼
+[5] Frontend: listen("input-axis-data") callback receives AxisData[]
+    → applyAxisMappings() compares against lastHardwareAxisValues
     ├── Change < 1%  →  Skip (dead-zone filtering)
     └── Change ≥ 1%  →  Check activation guard
         ├── Not activated (cumulative < 5%)  →  Skip
         └── Activated  →  Apply volume
             │
             ▼
-[5] invoke("set_session_volume") → Tauri IPC → JSON serialisation
+[6] invoke("set_session_volume") → Tauri IPC → JSON serialisation
        │
        ▼
-[6] Rust: Lock AUDIO_MANAGER mutex
+[7] Rust: Forward to audio-com thread via mpsc channel
        │
        ▼
-[7] Rust: Find process_id from session cache
+[8] Audio thread: Find process_id from session cache
        │
        ▼
-[8] Rust: Enumerate ALL audio devices, find ALL sessions for process
+[9] Audio thread: Enumerate ALL audio devices, find ALL sessions for process
        │
        ▼
-[9] Rust: ISimpleAudioVolume::SetMasterVolume(volume) on each session
+[10] Audio thread: ISimpleAudioVolume::SetMasterVolume(volume) on each session
        │
        ▼
-[10] Frontend: startHardwareVolumeInterpolation()
+[11] Frontend: startHardwareVolumeInterpolation()
      → requestAnimationFrame with exponential smoothing (factor: 0.3)
      → Visual slider converges to target
 ```
@@ -209,7 +213,29 @@ Hardware Device (physical axis movement)
 
 **Module:** `src-tauri/src/audio_management/mod.rs`
 
-The audio management system provides per-application and system-level volume control through the Windows Core Audio API. The implementation manages the full COM lifecycle, from apartment initialisation through interface acquisition, volume manipulation, and deterministic cleanup.
+The audio management system provides per-application and system-level volume control through the Windows Core Audio API. All COM operations run on a single dedicated thread (`audio-com`) that owns the COM apartment, eliminating cross-thread COM access violations. Tauri commands forward requests to this thread via an `mpsc` channel and block on the reply.
+
+**Thread Architecture:**
+
+```
+Tauri Command (any thread pool thread)
+       │
+       ▼
+AudioThreadHandle::send_and_recv()
+  → mpsc::Sender<AudioCommand>  ──→  audio-com thread
+  ← mpsc::Receiver<Result<T>>   ←──  (processes command, sends reply)
+```
+
+The `AudioCommand` enum carries a reply channel per variant, enabling typed request/response pairs without shared mutable state.
+
+**Cached COM Objects:**
+
+The `AudioManager` caches three frequently used COM objects as struct fields:
+- `IMMDeviceEnumerator` — created once on initialisation
+- `IMMDevice` — the default audio endpoint
+- `IAudioEndpointVolume` — the system volume interface
+
+These are rebuilt only when `check_device_changed()` detects that the default endpoint has changed (e.g., headphones plugged/unplugged). This eliminates millions of redundant COM allocations over extended uptime.
 
 **COM Interface Chain:**
 
@@ -234,27 +260,25 @@ CoCreateInstance<IMMDeviceEnumerator>
            IMMDevice::Activate<IAudioEndpointVolume> (system volume)
 ```
 
-**Endpoint Volume Helper:**
+**Cached Endpoint Volume:**
 
-System-level volume operations (master volume, system mute) share a common COM initialisation sequence, extracted into a reusable helper to eliminate duplication across four command implementations:
+System-level volume operations (master volume, system mute) use the cached `IAudioEndpointVolume` stored on the `AudioManager` struct. The cache is populated by `rebuild_com_cache()` which creates the full COM chain once:
 
 ```rust
-fn get_endpoint_volume() -> std::result::Result<IAudioEndpointVolume, String> {
-    unsafe {
-        let enumerator: IMMDeviceEnumerator = CoCreateInstance(
-            &MMDeviceEnumerator, None, CLSCTX_ALL,
-        ).map_err(|e: Error| format!("Failed to create device enumerator: {}", e))?;
+fn rebuild_com_cache(&mut self) -> std::result::Result<(), String> {
+    // Build the full chain: Enumerator → Device → EndpointVolume
+    let enumerator = CoCreateInstance(&MMDeviceEnumerator, None, CLSCTX_ALL)?;
+    let device = enumerator.GetDefaultAudioEndpoint(eRender, eConsole)?;
+    let endpoint_volume = device.Activate(CLSCTX_ALL, None)?;
 
-        let device = enumerator
-            .GetDefaultAudioEndpoint(eRender, eConsole)
-            .map_err(|e: Error| format!("Failed to get default audio endpoint: {}", e))?;
-
-        device
-            .Activate(CLSCTX_ALL, None)
-            .map_err(|e: Error| format!("Failed to activate endpoint volume: {}", e))
-    }
+    self.cached_enumerator = Some(enumerator);
+    self.cached_device = Some(device);
+    self.cached_endpoint_volume = Some(endpoint_volume);
+    Ok(())
 }
 ```
+
+The helper `get_endpoint_volume()` returns a reference to the cached interface rather than creating a new one per call. Similarly, `get_enumerator()` provides cached access for session enumeration.
 
 **Process-Based Volume Targeting:**
 
@@ -274,26 +298,17 @@ impl Drop for ProcessHandle {
 }
 ```
 
-The `AudioManager` itself implements `Drop` to clear internal caches and release the COM library:
-
-```rust
-impl Drop for AudioManager {
-    fn drop(&mut self) {
-        self.cleanup();
-        unsafe { CoUninitialize(); }
-    }
-}
-```
+The `AudioManager` itself implements `Drop` to clear internal caches and release cached COM objects. The COM library (`CoUninitialize`) is called by the `audio-com` thread after the manager is dropped, ensuring proper cleanup on the same thread that called `CoInitializeEx`.
 
 **Session Cache:** Active sessions are maintained in a `HashMap<String, AudioSession>` bounded at `MAX_SESSION_CACHE_SIZE` (1,000 entries). When the cache exceeds this limit, it is pruned to 500 entries. Initial capacity is pre-allocated at 64 entries (`INITIAL_SESSION_CAPACITY`) to avoid early reallocations.
 
-**Device Change Detection:** The `check_device_changed` method compares the current default audio endpoint's device ID against the stored ID, allowing the frontend to detect headphone plug/unplug events and refresh the session list accordingly.
+**Device Change Detection:** The `check_device_changed` method compares the current default audio endpoint's device ID against the stored ID, allowing the frontend to detect headphone plug/unplug events and refresh the session list accordingly. When a device change is detected, the cached COM objects are invalidated and rebuilt via `rebuild_com_cache()`.
 
 ### 4.2 Hardware Input
 
 **Module:** `src-tauri/src/hardware_input/mod.rs`
 
-The hardware input system reads axis positions and button states from game controllers using a dual-API approach that combines the Windows Joystick API for data acquisition with the HID API for device identification.
+The hardware input system reads axis positions and button states from game controllers using a dual-API approach that combines the Windows Joystick API for data acquisition with the HID API for device identification. All joystick and HID calls run on a dedicated `input-poll` thread, which pushes axis/button data to the frontend via `input-axis-data` Tauri events at ~50ms intervals. This eliminates cross-thread calls into `winmm.dll` that previously caused access violations.
 
 **Dual-API Strategy:**
 
@@ -402,12 +417,12 @@ The interpolation converges when the absolute difference falls below 0.001. Targ
 
 **3. Window Resize Animation (Rust: `animate_window_resize`)**
 
-Animates window width changes when the number of bound sessions changes. Runs on a dedicated Rust thread to avoid blocking the Tauri event loop:
+Animates window width changes when the number of bound sessions changes. Runs on a singleton `window-anim` thread (lazily spawned on first resize) to avoid blocking the Tauri event loop. New resize requests cancel in-progress animations via channel drain and `try_recv()` mid-animation checks:
 
 | Parameter | Value |
 |-----------|-------|
 | Duration | 500ms |
-| Frame interval | 8ms (~125fps) |
+| Frame interval | ~4.2ms (~240fps) |
 | Easing | Cubic ease-out: `1 - (1-t)³` |
 | Anchor | Bottom-right (repositioned every frame) |
 
@@ -454,21 +469,23 @@ This configuration produces smaller binaries at the cost of longer compile times
 | Thread | Responsibility |
 |--------|---------------|
 | Main (Tauri) | Event loop, window management, IPC dispatch |
-| Window resize | Spawned per animation: 500ms cubic ease-out at 8ms frames |
-| Theme monitor | Background: polls Windows registry every 2 seconds for theme changes |
-| Frontend (JS) | Single-threaded event loop with `setInterval` polling |
+| `audio-com` | Dedicated COM apartment thread; processes all audio commands via mpsc channel |
+| `input-poll` | Dedicated joystick/HID polling thread; emits `input-axis-data` events at 50ms intervals |
+| `window-anim` | Singleton animation thread (lazily spawned); 500ms cubic ease-out at ~240fps frames |
+| `theme-monitor` | Background: polls Windows registry every 2 seconds; exits via `AtomicBool` shutdown flag |
+| Frontend (JS) | Single-threaded event loop with `listen()` for hardware input and `setInterval` for audio polling |
 
-The frontend uses a `pollInFlight` boolean guard to prevent overlapping polling iterations if a backend IPC call exceeds the 50ms interval.
+The `audio-com` and `input-poll` threads are spawned during initialisation and run for the lifetime of the application. Tauri commands for audio operations are thin wrappers that forward to the audio thread via channel and block on the reply. Hardware input data is pushed to the frontend via Tauri events rather than pulled via `invoke()`.
 
 ### 5.4 Latency Budget
 
 | Operation | Interval / Latency | Notes |
 |-----------|-------------------|-------|
-| Hardware axis polling | 50ms (20 Hz) | `setInterval` with overlap guard |
+| Hardware axis polling | 50ms (20 Hz) | Dedicated `input-poll` thread with sleep loop |
 | Audio session refresh | 200ms (5 Hz) | Session enumeration + device change detection |
 | Live volume update throttle | 40ms minimum | Prevents IPC saturation during slider drag |
 | Volume animation frame | ~16ms | `requestAnimationFrame` (monitor refresh rate) |
-| Window resize frame | 8ms (~125fps) | Rust thread, oversamples for smooth animation |
+| Window resize frame | ~4.2ms (~240fps) | Singleton Rust thread, oversamples for smooth animation |
 | Periodic cache cleanup | 300,000ms (5 min) | Removes stale session entries from all caches |
 | Memory monitor | 30,000ms (30s) | Checks cache bounds, enforces MAX_CACHE_SIZE |
 | Theme detection | 2,000ms | Windows registry poll for `AppsUseLightTheme` |
@@ -477,7 +494,7 @@ The frontend uses a `pollInFlight` boolean guard to prevent overlapping polling 
 
 ## 6. Security and Reliability
 
-**Capability Model:** The application uses Tauri's capability-based permission system. The default capability grants `core:default` and `opener:default`. All 24 backend commands are exposed through the `invoke_handler` and accessed via Tauri's IPC channel rather than through web-accessible endpoints.
+**Capability Model:** The application uses Tauri's capability-based permission system. The default capability grants `core:default` and `opener:default`. All 26 backend commands are exposed through the `invoke_handler` and accessed via Tauri's IPC channel rather than through web-accessible endpoints.
 
 **Window Configuration:** The main window is configured with `decorations: false`, `transparent: true`, `shadow: false`, and `skipTaskbar: true`, operating as a utility overlay rather than a standard application window. Close requests are intercepted (`api.prevent_close()`) — the window hides rather than terminates, ensuring persistent background operation.
 
@@ -487,25 +504,21 @@ The frontend uses a `pollInFlight` boolean guard to prevent overlapping polling 
 
 ```rust
 #[tauri::command]
-fn get_audio_sessions() -> Result<Vec<AudioSession>, String> {
-    let mut lock = AUDIO_MANAGER.lock()
-        .map_err(|e| format!("Failed to lock audio manager: {}", e))?;
-    let manager = lock.as_mut()
-        .ok_or("Audio manager not initialised")?;
-    manager.enumerate_sessions()
+pub fn get_audio_sessions() -> Result<Vec<AudioSession>, String> {
+    with_handle(|h| h.send_and_recv(|reply| AudioCommand::EnumerateSessions { reply }))
 }
 ```
 
-Every fallible operation uses the `?` operator with `map_err` to convert system errors into descriptive strings. The `Option<AudioManager>` singleton pattern makes it impossible to invoke methods on an uninitialised manager — the `None` case returns a clear error message.
+Tauri commands are thin wrappers that forward to the dedicated audio thread via `with_handle()`. The helper acquires the `AUDIO_THREAD_HANDLE` mutex, verifies the handle exists (returning a clear error if not initialised), then calls `send_and_recv()` which sends an `AudioCommand` variant with a oneshot reply channel and blocks until the audio thread responds. Every fallible operation uses the `?` operator with `map_err` to convert system errors into descriptive strings.
 
 **Resource Cleanup Guarantees:**
 
 | Layer | Mechanism | Scope |
 |-------|-----------|-------|
-| Rust COM | `AudioManager::Drop` calls `CoUninitialize()` | Process lifetime |
+| Rust COM | `audio-com` thread calls `CoUninitialize()` on exit | Process lifetime |
 | Rust Handles | `ProcessHandle::Drop` calls `CloseHandle()` | Per-operation |
 | Rust Caches | `cleanup()` with `shrink_to_fit()` | On demand / on drop |
-| Frontend Intervals | `clearInterval()` in `stopPolling()` | `onDestroy` lifecycle |
+| Frontend Events | `unlisten()` for Tauri event listeners in `stopPolling()` | `onDestroy` lifecycle |
 | Frontend Animations | `cancelAnimationFrame()` in `cleanupAllAnimations()` | `onDestroy` lifecycle |
 | Frontend Timers | Timer ID clearing in `cleanupAllLiveVolumeStates()` | `onDestroy` lifecycle |
 | Frontend Caches | `.clear()` on all Maps/Sets in `cleanupAllCaches()` | `onDestroy` lifecycle |
@@ -661,7 +674,7 @@ Width values are in logical pixels, converted to physical pixels using the displ
 fn init_audio_manager() -> Result<String, String>
 ```
 
-Initialises the COM library with `COINIT_APARTMENTTHREADED`, creates an `AudioManager` instance, detects the default audio endpoint, and stores the manager in the global `AUDIO_MANAGER` mutex. Returns a status message including detected device count. Errors if COM initialisation fails or no audio devices are found.
+Spawns a dedicated `audio-com` thread that initialises the COM library with `COINIT_APARTMENTTHREADED`, creates an `AudioManager` instance with cached COM objects, and processes all subsequent audio commands via an `mpsc` channel. Stores the `AudioThreadHandle` (channel sender) in a global mutex. Returns a status message. Errors if the thread fails to start or COM initialisation fails.
 
 #### `get_audio_sessions`
 
@@ -703,7 +716,7 @@ Compares the current default audio endpoint device ID against the stored ID. Ret
 fn cleanup_audio_manager() -> Result<String, String>
 ```
 
-Clears the session cache, releases excess memory via `shrink_to_fit()`, and returns a status message. Does not destroy the manager or uninitialise COM — those operations occur via the `Drop` implementation.
+Sends a cleanup command to the audio thread, which clears the session cache, releases excess memory via `shrink_to_fit()`, and returns a status message. Does not destroy the thread or uninitialise COM — those operations occur during application shutdown.
 
 #### `get_system_volume`
 
@@ -742,10 +755,10 @@ Sets the system master mute state via `IAudioEndpointVolume::SetMute`.
 #### `init_input`
 
 ```rust
-fn init_input() -> Result<String, String>
+fn init_input(app: tauri::AppHandle) -> Result<String, String>
 ```
 
-Initialises the HID API, enumerates all connected joystick devices (up to 16), correlates Joystick API devices with HID device names, and stores the manager in the global `INPUT_MANAGER` mutex. Returns a status message with the number of devices found.
+Initialises the HID API, enumerates all connected joystick devices (up to 16), correlates Joystick API devices with HID device names, and spawns a dedicated `input-poll` thread that reads all axes and buttons at 50ms intervals. The thread emits `input-axis-data` Tauri events via the supplied `AppHandle`. An `AtomicBool` shutdown flag is stored globally for clean exit. Returns a status message including detected device count.
 
 #### `get_input_status`
 
@@ -753,7 +766,7 @@ Initialises the HID API, enumerates all connected joystick devices (up to 16), c
 fn get_input_status() -> Result<String, String>
 ```
 
-Returns a human-readable status string indicating whether the input system is initialised and the number of connected devices.
+Returns a human-readable status string indicating whether the input polling thread is running, shut down, or not yet initialised.
 
 #### `enumerate_input_devices`
 
@@ -761,15 +774,11 @@ Returns a human-readable status string indicating whether the input system is in
 fn enumerate_input_devices() -> Result<Vec<String>, String>
 ```
 
-Re-enumerates all connected devices and returns a vector of display-formatted device strings (e.g., `"Honeycomb Bravo Throttle Quadrant [6 axes, 32 buttons]"`).
+Returns an empty vector. Retained for frontend compatibility during initialisation. The polling thread handles device discovery and hot-plug detection autonomously; device data (including names) is delivered via the `input-axis-data` event.
 
-#### `get_all_axis_values`
+#### Tauri Event: `input-axis-data`
 
-```rust
-fn get_all_axis_values() -> Result<Vec<AxisData>, String>
-```
-
-Reads the current axis positions and button states from all connected devices. Returns a vector of `AxisData` structs with normalised axis values (0.0–1.0) and boolean button states. This command is invoked at 20Hz (every 50ms) by the frontend polling loop.
+The dedicated `input-poll` thread emits this event at ~50ms intervals via `app.emit("input-axis-data", &data)`. The payload is `Vec<AxisData>` — normalised axis values (0.0–1.0) and boolean button states for all connected devices. The frontend listens via `listen<AxisData[]>('input-axis-data', callback)` rather than invoking a command.
 
 #### `cleanup_input_manager`
 
@@ -777,7 +786,7 @@ Reads the current axis positions and button states from all connected devices. R
 fn cleanup_input_manager() -> Result<String, String>
 ```
 
-Clears axis and button caches, releases excess memory, and returns a status message.
+Signals the input polling thread to shut down via its `AtomicBool` flag. The thread performs its own cleanup (clearing caches, releasing memory) before exiting. Returns a status message.
 
 ### 10.3 Window Management Commands
 
@@ -841,15 +850,15 @@ Returns the current `always_on_top` state.
 async fn restart_application(app: AppHandle) -> Result<(), String>
 ```
 
-Exits the current process and spawns a new instance of the executable. Windows-only implementation using `std::process::Command`.
+Signals all background threads to shut down (theme monitor, audio thread, input thread), exits the current process, and spawns a new instance of the executable. Windows-only implementation using `std::process::Command`.
 
 #### `quit_application`
 
 ```rust
-fn quit_application()
+fn quit_application(app: tauri::AppHandle)
 ```
 
-Terminates the process via `std::process::exit(0)`. No return value.
+Signals all background threads to shut down (theme monitor, audio thread, input thread) via their respective `AtomicBool` flags and channel shutdown commands, then terminates via `app.exit(0)`.
 
 #### `open_url`
 
@@ -963,12 +972,16 @@ pub struct AudioSession {
     pub is_muted: bool,
 }
 
-/// Audio subsystem manager
-pub struct AudioManager {
+/// Audio subsystem manager — lives exclusively on the dedicated audio-com thread
+struct AudioManager {
     sessions: HashMap<String, AudioSession>,
     current_device_id: String,
     enumerate_calls: usize,
     last_logged_counts: Option<(usize, usize)>,
+    /// Cached COM objects — only recreated on device change
+    cached_enumerator: Option<IMMDeviceEnumerator>,
+    cached_device: Option<IMMDevice>,
+    cached_endpoint_volume: Option<IAudioEndpointVolume>,
 }
 
 /// RAII wrapper for Windows HANDLE
@@ -1006,12 +1019,14 @@ pub struct DeviceInfo {
     pub num_buttons: u32,
 }
 
-/// Hardware input subsystem manager
+/// Hardware input subsystem manager — lives exclusively on the dedicated input-poll thread
 pub struct HidInputManager {
     devices: Vec<DeviceInfo>,
     axis_cache: HashMap<u32, HashMap<String, f32>>,
     button_cache: HashMap<u32, HashMap<String, bool>>,
     hid_api: HidApi,
+    known_joy_ids: Vec<u32>,
+    last_hotplug_check: Option<Instant>,
 }
 ```
 
@@ -1026,15 +1041,16 @@ pub struct HidInputManager {
 | Backend language | Rust | Memory safety for COM interop; zero-cost abstractions; deterministic Drop |
 | State management | Local `$state` runes | Single-page app; no prop drilling; co-located with IPC calls |
 | Persistence | `localStorage` | Three small JSON keys; instant reads; no database dependency |
-| Hardware poll rate | 50ms (20 Hz) | Responsive for volume knobs; avoids excessive IPC overhead |
+| Hardware poll rate | 50ms (20 Hz) via dedicated thread | Responsive for volume knobs; push-based via Tauri events |
 | Audio monitor rate | 200ms (5 Hz) | Detects external changes without excessive COM calls |
 | Volume update throttle | 40ms | Prevents flooding Windows audio API during slider drag |
 | Window behaviour | Hide on focus loss | Widget-like UX; system tray as primary access point |
 | Close behaviour | Hide instead of exit | Persistent background operation; tray icon always available |
-| COM threading | `COINIT_APARTMENTTHREADED` | Required by `IAudioSessionManager2`; compatible with Tauri's thread model |
+| COM threading | Dedicated `audio-com` thread with `COINIT_APARTMENTTHREADED` | All COM calls confined to one thread; eliminates cross-thread access violations |
 | Tray menu | Native Win32 (`TrackPopupMenu`) | Consistent with Windows shell UX; avoids web-rendered menus |
 | Device identification | Dual API (Joystick + HID) | Joystick API provides data; HID API provides human-readable names |
 | Binary optimisation | LTO fat + `opt-level = "z"` | Minimised binary size for distribution |
+| Input data delivery | Push via Tauri events | Eliminates cross-thread `invoke()` for axis data; frontend uses `listen()` |
 
 ---
 

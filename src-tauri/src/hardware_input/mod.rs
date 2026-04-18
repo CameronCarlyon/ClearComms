@@ -3,6 +3,7 @@ use std::collections::HashMap;
 use std::time::{Duration, Instant};
 use serde::{Serialize, Deserialize};
 use hidapi::HidApi;
+use tauri::Emitter;
 
 #[cfg(windows)]
 use windows::Win32::Media::Multimedia::{
@@ -365,12 +366,23 @@ impl HidInputManager {
     }
 }
 
-// Global input manager instance
-static INPUT_MANAGER: Mutex<Option<HidInputManager>> = Mutex::new(None);
+// ─────────────────────────────────────────────────────────────────────────────
+// Dedicated Input Polling Thread
+// ─────────────────────────────────────────────────────────────────────────────
 
-/// Initialise input system and enumerate devices
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Arc;
+
+/// Interval between input polling iterations
+const POLL_INTERVAL: Duration = Duration::from_millis(50);
+
+/// Global shutdown flag for the input polling thread
+static INPUT_SHUTDOWN: Mutex<Option<Arc<AtomicBool>>> = Mutex::new(None);
+
+/// Initialise input system, enumerate devices, and start the dedicated polling thread.
+/// The polling thread emits "input-axis-data" Tauri events at ~50ms intervals.
 #[tauri::command]
-pub fn init_input() -> Result<String, String> {
+pub fn init_input(app: tauri::AppHandle) -> Result<String, String> {
     tracing::info!("[Input] Initialising HID input manager...");
     let mut manager = HidInputManager::new()?;
 
@@ -380,97 +392,107 @@ pub fn init_input() -> Result<String, String> {
     let device_count = manager.get_devices().len();
     tracing::info!("[Input] Found {} joystick device(s)", device_count);
 
-    // Log device details if any found
     if device_count > 0 {
         for device in manager.get_devices() {
             tracing::info!("[Input]   - {}", device.to_display_string());
         }
     }
-    
-    let mut lock = INPUT_MANAGER
-        .lock()
-        .map_err(|e| format!("Failed to lock input mutex: {}", e))?;
-    
-    *lock = Some(manager);
-    
+
+    // Create shutdown flag
+    let shutdown = Arc::new(AtomicBool::new(false));
+    {
+        let mut lock = INPUT_SHUTDOWN
+            .lock()
+            .map_err(|e| format!("Failed to lock shutdown flag: {}", e))?;
+        *lock = Some(shutdown.clone());
+    }
+
+    // Spawn the dedicated polling thread — all joystick/HID calls happen here
+    let shutdown_flag = shutdown.clone();
+    std::thread::Builder::new()
+        .name("input-poll".to_string())
+        .spawn(move || {
+            tracing::info!("[Input] Dedicated input polling thread running");
+
+            loop {
+                if shutdown_flag.load(Ordering::Relaxed) {
+                    break;
+                }
+
+                // Check for hot-plugged devices
+                #[cfg(windows)]
+                if let Err(error) = manager.maybe_refresh_devices_for_hotplug() {
+                    tracing::warn!("[Input] Device hot-plug refresh failed: {}", error);
+                }
+
+                // Read all axis/button values
+                match manager.read_all_axes() {
+                    Ok(data) => {
+                        // Emit to the frontend via Tauri event
+                        if let Err(e) = app.emit("input-axis-data", &data) {
+                            tracing::warn!("[Input] Failed to emit axis data: {}", e);
+                        }
+                    }
+                    Err(e) => {
+                        tracing::warn!("[Input] read_all_axes failed: {}", e);
+                    }
+                }
+
+                std::thread::sleep(POLL_INTERVAL);
+            }
+
+            manager.cleanup();
+            tracing::info!("[Input] Dedicated input polling thread exited");
+        })
+        .map_err(|e| format!("Failed to spawn input polling thread: {}", e))?;
+
     Ok(format!("Input initialised successfully ({} controllers found)", device_count))
 }
 
 /// Get the current status of input system
 #[tauri::command]
 pub fn get_input_status() -> Result<String, String> {
-    let lock = INPUT_MANAGER
+    let lock = INPUT_SHUTDOWN
         .lock()
-        .map_err(|e| format!("Failed to lock input mutex: {}", e))?;
+        .map_err(|e| format!("Failed to lock shutdown flag: {}", e))?;
     
     match lock.as_ref() {
-        Some(manager) => {
-            let device_count = manager.get_devices().len();
-            Ok(format!(
-                "Input active ({} controllers discovered)",
-                device_count
-            ))
-        },
+        Some(flag) => {
+            if flag.load(Ordering::Relaxed) {
+                Ok("Input shut down".to_string())
+            } else {
+                Ok("Input active (polling thread running)".to_string())
+            }
+        }
         None => Ok("Input not initialised".to_string()),
     }
 }
 
-/// Enumerate all connected game controllers
+/// Enumerate all connected game controllers.
+/// Note: This is only needed at startup; the polling thread handles hot-plug
+/// detection automatically. Kept for compatibility with the frontend init sequence.
 #[tauri::command]
 pub fn enumerate_input_devices() -> Result<Vec<String>, String> {
-    let mut lock = INPUT_MANAGER
-        .lock()
-        .map_err(|e| format!("Failed to lock input mutex: {}", e))?;
-    
-    let manager = lock
-        .as_mut()
-        .ok_or("Input not initialised. Call init_input first.")?;
-    
-    // Re-enumerate devices
-    manager.enumerate_devices()?;
-    
-    // Return device info as human-readable strings
-    let device_list: Vec<String> = manager
-        .get_devices()
-        .iter()
-        .map(|dev| dev.to_display_string())
-        .collect();
-    
-    Ok(device_list)
+    // The polling thread owns the manager now. Return a placeholder.
+    // In practice the frontend does not need this after init — device data
+    // comes via the "input-axis-data" event which includes device names.
+    Ok(vec![])
 }
 
-/// Get axis values from all game controllers
-#[tauri::command]
-pub fn get_all_axis_values() -> Result<Vec<AxisData>, String> {
-    let mut lock = INPUT_MANAGER
-        .lock()
-        .map_err(|e| format!("Failed to lock input mutex: {}", e))?;
-    
-    let manager = lock
-        .as_mut()
-        .ok_or("Input not initialised. Call init_input first.")?;
-
-    #[cfg(windows)]
-    if let Err(error) = manager.maybe_refresh_devices_for_hotplug() {
-        // Preserve live polling even if a periodic refresh fails once.
-        tracing::warn!("[Input] Device hot-plug refresh failed: {}", error);
-    }
-    
-    manager.read_all_axes()
-}
-
-/// Clean up input manager resources
+/// Clean up input manager resources and stop the polling thread
 #[tauri::command]
 pub fn cleanup_input_manager() -> Result<String, String> {
-    let mut lock = INPUT_MANAGER
-        .lock()
-        .map_err(|e| format!("Failed to lock input mutex: {}", e))?;
-    
-    match lock.as_mut() {
-        Some(manager) => {
-            manager.cleanup();
-            Ok("Input manager cleaned up successfully".to_string())
+    shutdown_input_thread();
+    Ok("Input manager cleaned up successfully".to_string())
+}
+
+/// Signal the input polling thread to shut down.
+/// Called during app shutdown.
+pub fn shutdown_input_thread() {
+    if let Ok(lock) = INPUT_SHUTDOWN.lock() {
+        if let Some(flag) = lock.as_ref() {
+            flag.store(true, Ordering::Relaxed);
+            tracing::info!("[Input] Shutdown signal sent to input polling thread");
         }
-        None => Ok("Input manager not initialised".to_string())
     }
 }

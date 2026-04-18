@@ -1,4 +1,5 @@
 use std::sync::Mutex;
+use std::sync::mpsc;
 use std::collections::{HashMap, HashSet};
 use serde::{Serialize, Deserialize};
 
@@ -45,12 +46,84 @@ pub struct AudioSession {
     pub is_muted: bool,
 }
 
-/// Manages Windows Core Audio API for application volume control
-pub struct AudioManager {
+// ─────────────────────────────────────────────────────────────────────────────
+// Channel-Based Audio Thread Infrastructure
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// Messages sent from Tauri commands to the dedicated audio thread.
+/// Each variant carries a oneshot sender for the result.
+enum AudioCommand {
+    EnumerateSessions {
+        reply: mpsc::Sender<std::result::Result<Vec<AudioSession>, String>>,
+    },
+    SetSessionVolume {
+        session_id: String,
+        volume: f32,
+        reply: mpsc::Sender<std::result::Result<(), String>>,
+    },
+    SetSessionMute {
+        session_id: String,
+        muted: bool,
+        reply: mpsc::Sender<std::result::Result<(), String>>,
+    },
+    CheckDeviceChanged {
+        reply: mpsc::Sender<std::result::Result<bool, String>>,
+    },
+    GetSystemVolume {
+        reply: mpsc::Sender<std::result::Result<f32, String>>,
+    },
+    GetSystemMute {
+        reply: mpsc::Sender<std::result::Result<bool, String>>,
+    },
+    SetSystemVolume {
+        volume: f32,
+        reply: mpsc::Sender<std::result::Result<(), String>>,
+    },
+    SetSystemMute {
+        muted: bool,
+        reply: mpsc::Sender<std::result::Result<(), String>>,
+    },
+    Cleanup {
+        reply: mpsc::Sender<std::result::Result<String, String>>,
+    },
+    Shutdown,
+}
+
+/// Handle to the dedicated audio thread, used by Tauri commands to send messages.
+pub struct AudioThreadHandle {
+    sender: mpsc::Sender<AudioCommand>,
+}
+
+impl AudioThreadHandle {
+    /// Send a command and wait for the response.
+    fn send_and_recv<T>(
+        &self,
+        build_cmd: impl FnOnce(mpsc::Sender<std::result::Result<T, String>>) -> AudioCommand,
+    ) -> std::result::Result<T, String> {
+        let (reply_tx, reply_rx) = mpsc::channel();
+        self.sender
+            .send(build_cmd(reply_tx))
+            .map_err(|_| "Audio thread is not running".to_string())?;
+        reply_rx
+            .recv()
+            .map_err(|_| "Audio thread did not respond".to_string())?
+    }
+}
+
+/// Manages Windows Core Audio API for application volume control.
+/// Lives exclusively on the dedicated audio thread.
+struct AudioManager {
     sessions: HashMap<String, AudioSession>,
     current_device_id: String,
     enumerate_calls: usize,
     last_logged_counts: Option<(usize, usize)>,
+    /// Cached COM objects — only recreated on device change (Fix 3)
+    #[cfg(windows)]
+    cached_enumerator: Option<IMMDeviceEnumerator>,
+    #[cfg(windows)]
+    cached_device: Option<IMMDevice>,
+    #[cfg(windows)]
+    cached_endpoint_volume: Option<IAudioEndpointVolume>,
 }
 
 #[cfg(windows)]
@@ -335,31 +408,59 @@ fn get_window_title(process_id: u32) -> Option<String> {
 
 #[cfg(windows)]
 impl AudioManager {
-    /// Create a new audio manager instance
-    pub fn new() -> std::result::Result<Self, String> {
-        tracing::info!("[Audio] Initialising COM library...");
-        // Initialize COM for this thread
-        unsafe {
-            CoInitializeEx(None, COINIT_APARTMENTTHREADED)
-                .ok()
-                .map_err(|e: Error| format!("Failed to initialize COM: {}", e))?;
-        }
-        
+    /// Create a new audio manager instance.
+    /// Must be called on the dedicated audio thread after CoInitializeEx.
+    fn new() -> std::result::Result<Self, String> {
         tracing::info!("[Audio] Detecting default audio device...");
-        // Get initial default device ID
-        let device_id = Self::get_default_device_id()?;
+        let device_id = Self::get_default_device_id_fresh()?;
         tracing::info!("[Audio] Default device: {}", device_id);
         
-        Ok(Self {
+        let mut mgr = Self {
             sessions: HashMap::new(),
             current_device_id: device_id,
             enumerate_calls: 0,
             last_logged_counts: None,
-        })
+            cached_enumerator: None,
+            cached_device: None,
+            cached_endpoint_volume: None,
+        };
+        
+        // Pre-populate the COM cache
+        mgr.rebuild_com_cache()?;
+        
+        Ok(mgr)
     }
     
-    /// Get the current default audio device ID
-    fn get_default_device_id() -> std::result::Result<String, String> {
+    /// Build or rebuild the cached COM object chain.
+    /// Called once at init and again whenever the default device changes.
+    fn rebuild_com_cache(&mut self) -> std::result::Result<(), String> {
+        unsafe {
+            let enumerator: IMMDeviceEnumerator = CoCreateInstance(
+                &MMDeviceEnumerator,
+                None,
+                CLSCTX_ALL,
+            ).map_err(|e: Error| format!("Failed to create device enumerator: {}", e))?;
+
+            let device = enumerator
+                .GetDefaultAudioEndpoint(eRender, eConsole)
+                .map_err(|e: Error| format!("Failed to get default audio endpoint: {}", e))?;
+
+            let endpoint_volume: IAudioEndpointVolume = device
+                .Activate(CLSCTX_ALL, None)
+                .map_err(|e: Error| format!("Failed to activate endpoint volume: {}", e))?;
+
+            self.cached_enumerator = Some(enumerator);
+            self.cached_device = Some(device);
+            self.cached_endpoint_volume = Some(endpoint_volume);
+
+            tracing::debug!("[Audio] COM cache rebuilt successfully");
+            Ok(())
+        }
+    }
+
+    /// Get a fresh default device ID without relying on cached objects.
+    /// Used for device-change detection.
+    fn get_default_device_id_fresh() -> std::result::Result<String, String> {
         unsafe {
             let enumerator: IMMDeviceEnumerator = CoCreateInstance(
                 &MMDeviceEnumerator,
@@ -377,59 +478,58 @@ impl AudioManager {
             let id_string = id.to_string()
                 .map_err(|e| format!("Failed to convert device ID: {}", e));
 
-            // Free COM-allocated PWSTR to prevent memory leak
-            // Win32 docs: "the caller is responsible for freeing the memory"
             CoTaskMemFree(Some(id.0 as *const core::ffi::c_void));
 
             id_string
         }
     }
     
-    /// Check if default device has changed, return true if changed
-    pub fn check_device_changed(&mut self) -> std::result::Result<bool, String> {
-        let new_device_id = Self::get_default_device_id()?;
+    /// Check if default device has changed, return true if changed.
+    /// Automatically rebuilds the COM cache on device change.
+    fn check_device_changed(&mut self) -> std::result::Result<bool, String> {
+        let new_device_id = Self::get_default_device_id_fresh()?;
         
         if new_device_id != self.current_device_id {
             tracing::info!("[Audio] Default device changed: {} -> {}", self.current_device_id, new_device_id);
             self.current_device_id = new_device_id;
+            // Invalidate and rebuild the COM cache for the new device
+            self.cached_enumerator = None;
+            self.cached_device = None;
+            self.cached_endpoint_volume = None;
+            self.rebuild_com_cache()?;
             Ok(true)
         } else {
             Ok(false)
         }
     }
     
-    /// Get the system audio endpoint volume interface
-    fn get_endpoint_volume() -> std::result::Result<IAudioEndpointVolume, String> {
-        unsafe {
-            let enumerator: IMMDeviceEnumerator = CoCreateInstance(
-                &MMDeviceEnumerator,
-                None,
-                CLSCTX_ALL,
-            ).map_err(|e: Error| format!("Failed to create device enumerator: {}", e))?;
+    /// Get the cached endpoint volume interface (no per-call COM allocations).
+    fn get_endpoint_volume(&self) -> std::result::Result<&IAudioEndpointVolume, String> {
+        self.cached_endpoint_volume
+            .as_ref()
+            .ok_or_else(|| "Endpoint volume not cached — device may have changed".to_string())
+    }
 
-            let device = enumerator
-                .GetDefaultAudioEndpoint(eRender, eConsole)
-                .map_err(|e: Error| format!("Failed to get default audio endpoint: {}", e))?;
-
-            device
-                .Activate(CLSCTX_ALL, None)
-                .map_err(|e: Error| format!("Failed to activate endpoint volume: {}", e))
-        }
+    /// Get the cached device enumerator.
+    fn get_enumerator(&self) -> std::result::Result<&IMMDeviceEnumerator, String> {
+        self.cached_enumerator
+            .as_ref()
+            .ok_or_else(|| "Device enumerator not cached".to_string())
     }
 
     /// Get the system (device endpoint) master volume level (0.0 to 1.0)
-    pub fn get_system_volume(&self) -> std::result::Result<f32, String> {
+    fn get_system_volume(&self) -> std::result::Result<f32, String> {
         unsafe {
-            Self::get_endpoint_volume()?
+            self.get_endpoint_volume()?
                 .GetMasterVolumeLevelScalar()
                 .map_err(|e: Error| format!("Failed to get master volume: {}", e))
         }
     }
 
     /// Get the system (device endpoint) mute state
-    pub fn get_system_mute(&self) -> std::result::Result<bool, String> {
+    fn get_system_mute(&self) -> std::result::Result<bool, String> {
         unsafe {
-            Ok(Self::get_endpoint_volume()?
+            Ok(self.get_endpoint_volume()?
                 .GetMute()
                 .map_err(|e: Error| format!("Failed to get mute state: {}", e))?
                 .as_bool())
@@ -437,33 +537,30 @@ impl AudioManager {
     }
 
     /// Set the system (device endpoint) master volume level (0.0 to 1.0)
-    pub fn set_system_volume(&self, volume: f32) -> std::result::Result<(), String> {
+    fn set_system_volume(&self, volume: f32) -> std::result::Result<(), String> {
         let volume = volume.clamp(0.0, 1.0);
         unsafe {
-            Self::get_endpoint_volume()?
+            self.get_endpoint_volume()?
                 .SetMasterVolumeLevelScalar(volume, std::ptr::null())
                 .map_err(|e: Error| format!("Failed to set master volume: {}", e))
         }
     }
 
     /// Set the system (device endpoint) mute state
-    pub fn set_system_mute(&self, muted: bool) -> std::result::Result<(), String> {
+    fn set_system_mute(&self, muted: bool) -> std::result::Result<(), String> {
         unsafe {
-            Self::get_endpoint_volume()?
+            self.get_endpoint_volume()?
                 .SetMute(BOOL(muted as i32), std::ptr::null())
                 .map_err(|e: Error| format!("Failed to set mute state: {}", e))
         }
     }
 
-    /// Enumerate all active audio sessions from all audio devices with proper resource management
-    pub fn enumerate_sessions(&mut self) -> std::result::Result<Vec<AudioSession>, String> {
+    /// Enumerate all active audio sessions from all audio devices with proper resource management.
+    /// Uses the cached IMMDeviceEnumerator to avoid per-call COM allocations.
+    fn enumerate_sessions(&mut self) -> std::result::Result<Vec<AudioSession>, String> {
         unsafe {
-            // Create device enumerator
-            let enumerator: IMMDeviceEnumerator = CoCreateInstance(
-                &MMDeviceEnumerator,
-                None,
-                CLSCTX_ALL,
-            ).map_err(|e: Error| format!("Failed to create device enumerator: {}", e))?;
+            // Use the cached enumerator instead of creating a new one each call
+            let enumerator = self.get_enumerator()?;
 
             // Get all audio render devices
             let device_collection = enumerator
@@ -653,7 +750,7 @@ impl AudioManager {
 
     /// Set volume for all audio sessions belonging to the same process as the target session.
     /// Games like MSFS2024 create multiple sessions; controlling only one leaves others unaffected.
-    pub fn set_session_volume(&mut self, session_id: &str, volume: f32) -> std::result::Result<(), String> {
+    fn set_session_volume(&mut self, session_id: &str, volume: f32) -> std::result::Result<(), String> {
         let volume = volume.clamp(0.0, 1.0);
 
         // Look up the target process ID from the session cache so we can update
@@ -661,11 +758,7 @@ impl AudioManager {
         let target_process_id = self.sessions.get(session_id).map(|s| s.process_id);
         
         unsafe {
-            let enumerator: IMMDeviceEnumerator = CoCreateInstance(
-                &MMDeviceEnumerator,
-                None,
-                CLSCTX_ALL,
-            ).map_err(|e: Error| format!("Failed to create device enumerator: {}", e))?;
+            let enumerator = self.get_enumerator()?;
 
             let device_collection = enumerator
                 .EnumAudioEndpoints(eRender, DEVICE_STATE_ACTIVE)
@@ -748,16 +841,12 @@ impl AudioManager {
     }
 
     /// Mute or unmute all audio sessions belonging to the same process as the target session.
-    pub fn set_session_mute(&mut self, session_id: &str, muted: bool) -> std::result::Result<(), String> {
+    fn set_session_mute(&mut self, session_id: &str, muted: bool) -> std::result::Result<(), String> {
         // Look up the target process ID from the session cache
         let target_process_id = self.sessions.get(session_id).map(|s| s.process_id);
 
         unsafe {
-            let enumerator: IMMDeviceEnumerator = CoCreateInstance(
-                &MMDeviceEnumerator,
-                None,
-                CLSCTX_ALL,
-            ).map_err(|e: Error| format!("Failed to create device enumerator: {}", e))?;
+            let enumerator = self.get_enumerator()?;
 
             let device_collection = enumerator
                 .EnumAudioEndpoints(eRender, DEVICE_STATE_ACTIVE)
@@ -838,205 +927,238 @@ impl AudioManager {
     }
 }
 
-#[cfg(not(windows))]
-impl AudioManager {
-    pub fn new() -> std::result::Result<Self, String> {
-        Err("Audio manager only supported on Windows".to_string())
-    }
-
-    pub fn enumerate_sessions(&mut self) -> std::result::Result<Vec<AudioSession>, String> {
-        Err("Audio manager only supported on Windows".to_string())
-    }
-
-    pub fn set_session_volume(&mut self, _session_id: &str, _volume: f32) -> std::result::Result<(), String> {
-        Err("Audio manager only supported on Windows".to_string())
-    }
-
-    pub fn set_session_mute(&mut self, _session_id: &str, _muted: bool) -> std::result::Result<(), String> {
-        Err("Audio manager only supported on Windows".to_string())
-    }
-}
-
 #[cfg(windows)]
 impl AudioManager {
     /// Explicit cleanup method for proper resource management
-    pub fn cleanup(&mut self) {
+    fn cleanup(&mut self) {
         tracing::info!("[Audio] Cleaning up audio manager resources...");
+        
+        // Drop cached COM objects
+        self.cached_endpoint_volume = None;
+        self.cached_device = None;
+        self.cached_enumerator = None;
         
         // Clear internal caches
         self.sessions.clear();
-        // Release memory back to the system
         self.sessions.shrink_to_fit();
         
-        // Reset counters
         self.enumerate_calls = 0;
         self.last_logged_counts = None;
-        
-        // Reset device ID to release string memory
         self.current_device_id = String::new();
         
         tracing::info!("[Audio] Audio manager cleanup complete");
     }
 }
 
-impl Drop for AudioManager {
-    fn drop(&mut self) {
-        #[cfg(windows)]
-        {
-            tracing::debug!("[Audio] Dropping audio manager...");
-            self.cleanup();
+// CoUninitialize is called explicitly in the audio thread's run loop on exit,
+// so Drop does not need to handle it.
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Dedicated Audio Thread
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// Global handle to the audio thread, set once by init_audio_manager.
+static AUDIO_THREAD_HANDLE: Mutex<Option<AudioThreadHandle>> = Mutex::new(None);
+
+/// Spawn the dedicated audio thread. CoInitializeEx is called at the top of
+/// the thread and CoUninitialize when it exits. The thread processes commands
+/// from the mpsc channel until it receives Shutdown (or the channel closes).
+#[cfg(windows)]
+fn spawn_audio_thread() -> std::result::Result<AudioThreadHandle, String> {
+    let (tx, rx) = mpsc::channel::<AudioCommand>();
+
+    std::thread::Builder::new()
+        .name("audio-com".to_string())
+        .spawn(move || {
+            // Initialise COM on this dedicated thread
             unsafe {
-                CoUninitialize();
+                if let Err(e) = CoInitializeEx(None, COINIT_APARTMENTTHREADED).ok() {
+                    tracing::error!("[Audio] CoInitializeEx failed on audio thread: {}", e);
+                    // Drain any waiting commands with an error
+                    while let Ok(cmd) = rx.try_recv() {
+                        reply_error(cmd, format!("COM init failed: {}", e));
+                    }
+                    return;
+                }
             }
-            tracing::debug!("[Audio] Audio manager dropped");
-        }
+
+            let manager_result = AudioManager::new();
+            let mut manager = match manager_result {
+                Ok(m) => m,
+                Err(e) => {
+                    tracing::error!("[Audio] AudioManager::new() failed: {}", e);
+                    while let Ok(cmd) = rx.try_recv() {
+                        reply_error(cmd, e.clone());
+                    }
+                    unsafe { CoUninitialize(); }
+                    return;
+                }
+            };
+
+            tracing::info!("[Audio] Dedicated audio thread running");
+
+            // Process commands until shutdown or channel disconnect
+            while let Ok(cmd) = rx.recv() {
+                match cmd {
+                    AudioCommand::EnumerateSessions { reply } => {
+                        let _ = reply.send(manager.enumerate_sessions());
+                    }
+                    AudioCommand::SetSessionVolume { session_id, volume, reply } => {
+                        let _ = reply.send(manager.set_session_volume(&session_id, volume));
+                    }
+                    AudioCommand::SetSessionMute { session_id, muted, reply } => {
+                        let _ = reply.send(manager.set_session_mute(&session_id, muted));
+                    }
+                    AudioCommand::CheckDeviceChanged { reply } => {
+                        let _ = reply.send(manager.check_device_changed());
+                    }
+                    AudioCommand::GetSystemVolume { reply } => {
+                        let _ = reply.send(manager.get_system_volume());
+                    }
+                    AudioCommand::GetSystemMute { reply } => {
+                        let _ = reply.send(manager.get_system_mute());
+                    }
+                    AudioCommand::SetSystemVolume { volume, reply } => {
+                        let _ = reply.send(manager.set_system_volume(volume));
+                    }
+                    AudioCommand::SetSystemMute { muted, reply } => {
+                        let _ = reply.send(manager.set_system_mute(muted));
+                    }
+                    AudioCommand::Cleanup { reply } => {
+                        manager.cleanup();
+                        let _ = reply.send(Ok("Audio manager cleaned up successfully".to_string()));
+                    }
+                    AudioCommand::Shutdown => {
+                        tracing::info!("[Audio] Shutdown command received");
+                        break;
+                    }
+                }
+            }
+
+            // Clean up before thread exits
+            manager.cleanup();
+            unsafe { CoUninitialize(); }
+            tracing::info!("[Audio] Dedicated audio thread exited");
+        })
+        .map_err(|e| format!("Failed to spawn audio thread: {}", e))?;
+
+    Ok(AudioThreadHandle { sender: tx })
+}
+
+/// Helper: send an error reply for any command variant when the thread cannot process it.
+#[cfg(windows)]
+fn reply_error(cmd: AudioCommand, err: String) {
+    match cmd {
+        AudioCommand::EnumerateSessions { reply } => { let _ = reply.send(Err(err)); }
+        AudioCommand::SetSessionVolume { reply, .. } => { let _ = reply.send(Err(err)); }
+        AudioCommand::SetSessionMute { reply, .. } => { let _ = reply.send(Err(err)); }
+        AudioCommand::CheckDeviceChanged { reply } => { let _ = reply.send(Err(err)); }
+        AudioCommand::GetSystemVolume { reply } => { let _ = reply.send(Err(err)); }
+        AudioCommand::GetSystemMute { reply } => { let _ = reply.send(Err(err)); }
+        AudioCommand::SetSystemVolume { reply, .. } => { let _ = reply.send(Err(err)); }
+        AudioCommand::SetSystemMute { reply, .. } => { let _ = reply.send(Err(err)); }
+        AudioCommand::Cleanup { reply } => { let _ = reply.send(Err(err)); }
+        AudioCommand::Shutdown => {}
     }
 }
 
-// Global audio manager instance
-static AUDIO_MANAGER: Mutex<Option<AudioManager>> = Mutex::new(None);
+/// Get a reference to the audio thread handle, or return an appropriate error.
+fn get_handle() -> std::result::Result<std::sync::MutexGuard<'static, Option<AudioThreadHandle>>, String> {
+    AUDIO_THREAD_HANDLE
+        .lock()
+        .map_err(|e| format!("Failed to lock audio thread handle: {}", e))
+}
 
-/// Initialize the audio manager
+fn with_handle<T>(
+    f: impl FnOnce(&AudioThreadHandle) -> std::result::Result<T, String>,
+) -> std::result::Result<T, String> {
+    let guard = get_handle()?;
+    let handle = guard
+        .as_ref()
+        .ok_or("Audio manager not initialised. Call init_audio_manager first.")?;
+    f(handle)
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Tauri Commands — thin wrappers that send/receive via the channel
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// Initialise the audio manager on a dedicated COM thread
 #[tauri::command]
 pub fn init_audio_manager() -> std::result::Result<String, String> {
-    tracing::info!("[Audio] Initialising audio manager...");
-    let manager = AudioManager::new()?;
+    tracing::info!("[Audio] Spawning dedicated audio thread...");
+    let handle = spawn_audio_thread()?;
     
-    let mut lock = AUDIO_MANAGER
+    let mut lock = AUDIO_THREAD_HANDLE
         .lock()
-        .map_err(|e| format!("Failed to lock audio manager mutex: {}", e))?;
+        .map_err(|e| format!("Failed to lock audio thread handle: {}", e))?;
+    *lock = Some(handle);
     
-    *lock = Some(manager);
-    
-    tracing::info!("[Audio] Audio manager ready");
+    tracing::info!("[Audio] Audio manager ready (dedicated thread)");
     Ok("Audio manager initialised successfully".to_string())
 }
 
 /// Get all active audio sessions
 #[tauri::command]
 pub fn get_audio_sessions() -> std::result::Result<Vec<AudioSession>, String> {
-    let mut lock = AUDIO_MANAGER
-        .lock()
-        .map_err(|e| format!("Failed to lock audio manager mutex: {}", e))?;
-    
-    let manager = lock
-        .as_mut()
-        .ok_or("Audio manager not initialised. Call init_audio_manager first.")?;
-    
-    manager.enumerate_sessions()
+    with_handle(|h| h.send_and_recv(|reply| AudioCommand::EnumerateSessions { reply }))
 }
 
 /// Set volume for a specific audio session
 #[tauri::command]
 pub fn set_session_volume(session_id: String, volume: f32) -> std::result::Result<(), String> {
-    let mut lock = AUDIO_MANAGER
-        .lock()
-        .map_err(|e| format!("Failed to lock audio manager mutex: {}", e))?;
-    
-    let manager = lock
-        .as_mut()
-        .ok_or("Audio manager not initialised. Call init_audio_manager first.")?;
-    
-    manager.set_session_volume(&session_id, volume)
+    with_handle(|h| h.send_and_recv(|reply| AudioCommand::SetSessionVolume { session_id: session_id.clone(), volume, reply }))
 }
 
 /// Mute or unmute a specific audio session
 #[tauri::command]
 pub fn set_session_mute(session_id: String, muted: bool) -> std::result::Result<(), String> {
-    let mut lock = AUDIO_MANAGER
-        .lock()
-        .map_err(|e| format!("Failed to lock audio manager mutex: {}", e))?;
-    
-    let manager = lock
-        .as_mut()
-        .ok_or("Audio manager not initialised. Call init_audio_manager first.")?;
-    
-    manager.set_session_mute(&session_id, muted)
+    with_handle(|h| h.send_and_recv(|reply| AudioCommand::SetSessionMute { session_id: session_id.clone(), muted, reply }))
 }
 
 /// Check if the default audio device has changed
-/// Returns true if changed, false otherwise
 #[tauri::command]
 pub fn check_default_device_changed() -> std::result::Result<bool, String> {
-    let mut lock = AUDIO_MANAGER
-        .lock()
-        .map_err(|e| format!("Failed to lock audio manager mutex: {}", e))?;
-    
-    let manager = lock
-        .as_mut()
-        .ok_or("Audio manager not initialised. Call init_audio_manager first.")?;
-    
-    manager.check_device_changed()
+    with_handle(|h| h.send_and_recv(|reply| AudioCommand::CheckDeviceChanged { reply }))
 }
 
 /// Clean up audio manager resources
 #[tauri::command]
 pub fn cleanup_audio_manager() -> std::result::Result<String, String> {
-    let mut lock = AUDIO_MANAGER
-        .lock()
-        .map_err(|e| format!("Failed to lock audio manager mutex: {}", e))?;
-    
-    match lock.as_mut() {
-        Some(manager) => {
-            manager.cleanup();
-            Ok("Audio manager cleaned up successfully".to_string())
-        }
-        None => Ok("Audio manager not initialised".to_string())
-    }
+    with_handle(|h| h.send_and_recv(|reply| AudioCommand::Cleanup { reply }))
 }
 
 /// Get the system (device endpoint) master volume level
 #[tauri::command]
 pub fn get_system_volume() -> std::result::Result<f32, String> {
-    let lock = AUDIO_MANAGER
-        .lock()
-        .map_err(|e| format!("Failed to lock audio manager mutex: {}", e))?;
-    
-    let manager = lock
-        .as_ref()
-        .ok_or("Audio manager not initialised. Call init_audio_manager first.")?;
-    
-    manager.get_system_volume()
+    with_handle(|h| h.send_and_recv(|reply| AudioCommand::GetSystemVolume { reply }))
 }
 
 /// Get the system (device endpoint) mute state
 #[tauri::command]
 pub fn get_system_mute() -> std::result::Result<bool, String> {
-    let lock = AUDIO_MANAGER
-        .lock()
-        .map_err(|e| format!("Failed to lock audio manager mutex: {}", e))?;
-    
-    let manager = lock
-        .as_ref()
-        .ok_or("Audio manager not initialised. Call init_audio_manager first.")?;
-    
-    manager.get_system_mute()
+    with_handle(|h| h.send_and_recv(|reply| AudioCommand::GetSystemMute { reply }))
 }
 
 /// Set the system (device endpoint) master volume level
 #[tauri::command]
 pub fn set_system_volume(volume: f32) -> std::result::Result<(), String> {
-    let lock = AUDIO_MANAGER
-        .lock()
-        .map_err(|e| format!("Failed to lock audio manager mutex: {}", e))?;
-    
-    let manager = lock
-        .as_ref()
-        .ok_or("Audio manager not initialised. Call init_audio_manager first.")?;
-    
-    manager.set_system_volume(volume)
+    with_handle(|h| h.send_and_recv(|reply| AudioCommand::SetSystemVolume { volume, reply }))
 }
 
 /// Set the system (device endpoint) mute state
 #[tauri::command]
 pub fn set_system_mute(muted: bool) -> std::result::Result<(), String> {
-    let lock = AUDIO_MANAGER
-        .lock()
-        .map_err(|e| format!("Failed to lock audio manager mutex: {}", e))?;
-    
-    let manager = lock
-        .as_ref()
-        .ok_or("Audio manager not initialised. Call init_audio_manager first.")?;
-    
-    manager.set_system_mute(muted)
+    with_handle(|h| h.send_and_recv(|reply| AudioCommand::SetSystemMute { muted, reply }))
+}
+
+/// Send a shutdown signal to the audio thread.
+/// Called during app shutdown to ensure clean COM teardown.
+pub fn shutdown_audio_thread() {
+    if let Ok(mut lock) = AUDIO_THREAD_HANDLE.lock() {
+        if let Some(handle) = lock.take() {
+            let _ = handle.sender.send(AudioCommand::Shutdown);
+            tracing::info!("[Audio] Shutdown signal sent to audio thread");
+        }
+    }
 }
