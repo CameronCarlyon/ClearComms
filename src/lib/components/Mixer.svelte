@@ -174,7 +174,7 @@
     padding: 0rem 2.5rem;
     opacity: 1;
     max-height: 100%;
-    transition: opacity 0.3s ease, max-height 0.3s ease, flex 0.3s ease, padding 0.3s ease;
+    transition: opacity 0.15s ease, max-height 0.3s ease, flex 0.3s ease, padding 0.3s ease;
   }
 
   .mixer-container.settings-open {

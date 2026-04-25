@@ -89,7 +89,6 @@
     justify-content: flex-end;
     transition:
       width 0.3s ease,
-      height var(--dock-height-transition-duration, 0.3s) ease,
       background 0.3s ease,
       border-color 0.3s ease,
       padding 0.3s ease;
@@ -143,7 +142,7 @@
     display: flex;
     align-items: center;
     justify-content: center;
-    transition: border-color 0.2s ease, box-shadow 0.2s ease, height 0.3s ease, background 0.3s ease, width 0.3s ease, margin 0.3s ease;
+    transition: border-color 0.2s ease, box-shadow 0.2s ease, background 0.3s ease, width 0.3s ease, margin 0.3s ease;
     flex-shrink: 0;
     font-size: 0.8rem;
     z-index: 2;
