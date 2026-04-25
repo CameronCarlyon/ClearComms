@@ -87,7 +87,12 @@
     flex-direction: column;
     align-items: center;
     justify-content: flex-end;
-    transition: width 0.3s ease, height 0.3s ease, background 0.3s ease, border-color 0.3s ease, padding 0.3s ease;
+    transition:
+      width 0.3s ease,
+      height var(--dock-height-transition-duration, 0.3s) ease,
+      background 0.3s ease,
+      border-color 0.3s ease,
+      padding 0.3s ease;
     background: transparent;
     border: 1px solid transparent;
     box-sizing: border-box;

@@ -275,11 +275,13 @@
     border-radius: 2px;
     background: var(--text-muted);
     opacity: 0.3;
-    transition: opacity 0.3s ease;
+    transition: opacity 0.3s ease, height 0.3s ease, margin 0.3s ease;
     margin: 4px 0;
   }
 
   .dock-hover-zone.expanded::before {
+    height: 0;
+    margin: 0;
     opacity: 0;
     pointer-events: none;
   }
@@ -294,6 +296,8 @@
 
   /* Dock container */
   .dock {
+    --dock-height-transition-duration: 0.3s;
+    --dock-height-transition-easing: cubic-bezier(0.32, 0.72, 0, 1);
     display: flex;
     flex-direction: row;
     justify-content: center;
@@ -301,7 +305,11 @@
     align-items: flex-end;
     height: 0;
     max-height: 0;
-    transition: height 0.3s ease, max-height 0.3s ease, padding 0.3s ease, gap 0.3s ease;
+    transition:
+      height var(--dock-height-transition-duration) var(--dock-height-transition-easing),
+      max-height var(--dock-height-transition-duration) var(--dock-height-transition-easing),
+      padding 0.3s ease,
+      gap 0.3s ease;
     position: relative;
     width: 162px;
   }
@@ -312,8 +320,9 @@
   }
 
   .dock.expanded-settings {
-    height: 110px;
-    max-height: 110px;
+    --dock-height-transition-duration: 0.5s;
+    height: 600.67px;
+    max-height: 600.67px;
     gap: 0rem;
   }
 
@@ -329,7 +338,12 @@
     width: 46px;
     height: 46px;
     transform: scale(0);
-    transition: transform 0.3s ease, opacity 0.3s ease, width 0.3s ease, flex 0.3s ease, height 0.3s ease;
+    transition:
+      transform 0.3s ease,
+      opacity 0.3s ease,
+      width 0.3s ease,
+      flex 0.3s ease,
+      height var(--dock-height-transition-duration) var(--dock-height-transition-easing);
   }
 
   .settings-wrapper.expanded,

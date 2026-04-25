@@ -1899,48 +1899,51 @@
     {#if audioInitialised}
       {@const boundSessions = getBoundSessions()}
       {@const availableSessions = getAvailableSessions()}
-      
-      <Mixer
-        {boundSessions}
-        {availableSessions}
-        axisMappings={axisMappings}
-        buttonMappings={buttonMappings}
-        {isEditMode}
-        isBindingMode={isBindingMode}
-        isButtonBindingMode={isButtonBindingMode}
-        pendingBinding={pendingBinding}
-        pendingButtonBinding={pendingButtonBinding}
-        bind:addAppListExpanded
-        {addAppComponentKey}
-        on:volumedragstart={handleVolumeDragStart}
-        on:volumedragmove={handleVolumeDragMove}
-        on:volumedragend={handleVolumeDragEnd}
-        on:volumetrackclick={handleVolumeTrackClick}
-        on:volumewheel={handleVolumeWheel}
-        on:mutetoggle={handleMuteToggle}
-        on:startaxisbinding={handleStartAxisBinding}
-        on:startbuttonbinding={handleStartButtonBinding}
-        on:cancelaxisbinding={cancelBinding}
-        on:cancelbuttonbinding={cancelButtonBinding}
-        on:removeaxismapping={handleRemoveAxisMapping}
-        on:removebuttonmapping={handleRemoveButtonMapping}
-        on:toggleinversion={handleToggleInversion}
-        on:removeapplication={handleRemoveApplication}
-        on:select={handleSelectApp}
-      />
 
-      {#if pinnedApps.size > 0}
-        <Dock
-          bind:dockOpen
-          bind:settingsMenuExpanded
-          bind:closeMenuExpanded
+      <div class="mixer-dock-wrapper" class:settings-open={settingsMenuExpanded}>
+        <Mixer
+          {boundSessions}
+          {availableSessions}
+          axisMappings={axisMappings}
+          buttonMappings={buttonMappings}
           {isEditMode}
-          {audioInitialised}
-          {windowPinned}
-          on:toggleeditmode={toggleEditMode}
-          on:togglewindowpinned={toggleWindowPinned}
+          isBindingMode={isBindingMode}
+          isButtonBindingMode={isButtonBindingMode}
+          pendingBinding={pendingBinding}
+          pendingButtonBinding={pendingButtonBinding}
+          bind:addAppListExpanded
+          {addAppComponentKey}
+          settingsOpen={settingsMenuExpanded}
+          on:volumedragstart={handleVolumeDragStart}
+          on:volumedragmove={handleVolumeDragMove}
+          on:volumedragend={handleVolumeDragEnd}
+          on:volumetrackclick={handleVolumeTrackClick}
+          on:volumewheel={handleVolumeWheel}
+          on:mutetoggle={handleMuteToggle}
+          on:startaxisbinding={handleStartAxisBinding}
+          on:startbuttonbinding={handleStartButtonBinding}
+          on:cancelaxisbinding={cancelBinding}
+          on:cancelbuttonbinding={cancelButtonBinding}
+          on:removeaxismapping={handleRemoveAxisMapping}
+          on:removebuttonmapping={handleRemoveButtonMapping}
+          on:toggleinversion={handleToggleInversion}
+          on:removeapplication={handleRemoveApplication}
+          on:select={handleSelectApp}
         />
-      {/if}
+
+        {#if pinnedApps.size > 0}
+          <Dock
+            bind:dockOpen
+            bind:settingsMenuExpanded
+            bind:closeMenuExpanded
+            {isEditMode}
+            {audioInitialised}
+            {windowPinned}
+            on:toggleeditmode={toggleEditMode}
+            on:togglewindowpinned={toggleWindowPinned}
+          />
+        {/if}
+      </div>
     {:else}
       <p class="status-text">Initialising...</p>
     {/if}
@@ -1974,6 +1977,20 @@
     box-sizing: border-box;
     padding: 50px 0rem 1rem 0rem;
     position: relative;
+  }
+
+  .mixer-dock-wrapper {
+    display: flex;
+    justify-content: space-between;
+    flex: 1;
+    min-height: 0;
+    flex-direction: column;
+    gap: 1rem;
+    transition: gap 0.3s ease;
+  }
+
+  .mixer-dock-wrapper.settings-open {
+    gap: 0;
   }
 
   .status-text,

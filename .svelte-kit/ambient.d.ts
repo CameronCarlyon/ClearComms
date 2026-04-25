@@ -40,12 +40,11 @@ declare module '$env/static/private' {
 	export const ComSpec: string;
 	export const DriverData: string;
 	export const EDITOR: string;
-	export const EFC_10448_1262719628: string;
-	export const EFC_10448_1592913036: string;
-	export const EFC_10448_2283032206: string;
-	export const EFC_10448_2775293581: string;
-	export const EFC_10448_344590478: string;
-	export const EFC_10448_3789132940: string;
+	export const EFC_10404_1262719628: string;
+	export const EFC_10404_1592913036: string;
+	export const EFC_10404_2283032206: string;
+	export const EFC_10404_2775293581: string;
+	export const EFC_10404_3789132940: string;
 	export const FPS_BROWSER_APP_PROFILE_STRING: string;
 	export const FPS_BROWSER_USER_PROFILE_STRING: string;
 	export const GIT_ASKPASS: string;
@@ -60,6 +59,8 @@ declare module '$env/static/private' {
 	export const MSFS_SDK: string;
 	export const NODE: string;
 	export const NODE_ENV: string;
+	export const NODE_EXE: string;
+	export const NPM_CLI_JS: string;
 	export const npm_command: string;
 	export const npm_config_cache: string;
 	export const npm_config_globalconfig: string;
@@ -79,6 +80,8 @@ declare module '$env/static/private' {
 	export const npm_package_json: string;
 	export const npm_package_name: string;
 	export const npm_package_version: string;
+	export const NPM_PREFIX_JS: string;
+	export const NPM_PREFIX_NPM_CLI_JS: string;
 	export const NUMBER_OF_PROCESSORS: string;
 	export const NVM_HOME: string;
 	export const NVM_SYMLINK: string;
@@ -126,7 +129,6 @@ declare module '$env/static/private' {
 	export const VSCODE_INJECTION: string;
 	export const VSCODE_PYTHON_AUTOACTIVATE_GUARD: string;
 	export const windir: string;
-	export const __COMPAT_LAYER: string;
 }
 
 /**
@@ -170,12 +172,11 @@ declare module '$env/dynamic/private' {
 		ComSpec: string;
 		DriverData: string;
 		EDITOR: string;
-		EFC_10448_1262719628: string;
-		EFC_10448_1592913036: string;
-		EFC_10448_2283032206: string;
-		EFC_10448_2775293581: string;
-		EFC_10448_344590478: string;
-		EFC_10448_3789132940: string;
+		EFC_10404_1262719628: string;
+		EFC_10404_1592913036: string;
+		EFC_10404_2283032206: string;
+		EFC_10404_2775293581: string;
+		EFC_10404_3789132940: string;
 		FPS_BROWSER_APP_PROFILE_STRING: string;
 		FPS_BROWSER_USER_PROFILE_STRING: string;
 		GIT_ASKPASS: string;
@@ -190,6 +191,8 @@ declare module '$env/dynamic/private' {
 		MSFS_SDK: string;
 		NODE: string;
 		NODE_ENV: string;
+		NODE_EXE: string;
+		NPM_CLI_JS: string;
 		npm_command: string;
 		npm_config_cache: string;
 		npm_config_globalconfig: string;
@@ -209,6 +212,8 @@ declare module '$env/dynamic/private' {
 		npm_package_json: string;
 		npm_package_name: string;
 		npm_package_version: string;
+		NPM_PREFIX_JS: string;
+		NPM_PREFIX_NPM_CLI_JS: string;
 		NUMBER_OF_PROCESSORS: string;
 		NVM_HOME: string;
 		NVM_SYMLINK: string;
@@ -256,7 +261,6 @@ declare module '$env/dynamic/private' {
 		VSCODE_INJECTION: string;
 		VSCODE_PYTHON_AUTOACTIVATE_GUARD: string;
 		windir: string;
-		__COMPAT_LAYER: string;
 		[key: `PUBLIC_${string}`]: undefined;
 		[key: `${string}`]: string | undefined;
 	}
