@@ -546,8 +546,7 @@ fn is_window_pinned(app: tauri::AppHandle) -> Result<bool, String> {
 /// Get display and work area information for the window's monitor.
 ///
 /// Returns complete display metrics including the usable work area (screen minus
-/// taskbar), scale factor, edge padding, and maximum window dimensions. This
-/// information can be used by the frontend to adapt layout decisions.
+/// taskbar), scale factor, edge padding, and maximum window dimensions.
 #[tauri::command]
 fn get_display_info(app: tauri::AppHandle) -> Result<window_utils::DisplayInfo, String> {
     if let Some(window) = app.get_webview_window("main") {
@@ -566,10 +565,7 @@ async fn restart_application(app: tauri::AppHandle) -> Result<(), String> {
     audio_management::shutdown_audio_thread();
     hardware_input::shutdown_input_thread();
 
-    // Close the current app gracefully
-    app.exit(0);
-    
-    // Relaunch the application
+    // Spawn the new instance before exiting
     #[cfg(target_os = "windows")]
     {
         use std::process::Command;
@@ -588,7 +584,9 @@ async fn restart_application(app: tauri::AppHandle) -> Result<(), String> {
         // Placeholder for non-Windows platforms
         return Err("Restart not implemented for this platform".to_string());
     }
-    
+
+    // Terminate the current instance after the new one is launched
+    perform_graceful_quit(&app);
     Ok(())
 }
 
@@ -666,11 +664,13 @@ fn load_config_value(
 }
 
 /// Quit the application gracefully.
-/// Uses Tauri's exit mechanism instead of std::process::exit() for a
-/// graceful shutdown of WebView2 and backend resources.
 #[tauri::command]
 fn quit_application(app: tauri::AppHandle) {
-    // Signal all background threads to shut down cleanly
+    perform_graceful_quit(&app);
+}
+
+/// Signal all background threads to shut down cleanly, then exit the process.
+pub fn perform_graceful_quit(app: &tauri::AppHandle) {
     THEME_MONITOR_SHUTDOWN.store(true, Ordering::Relaxed);
     audio_management::shutdown_audio_thread();
     hardware_input::shutdown_input_thread();
