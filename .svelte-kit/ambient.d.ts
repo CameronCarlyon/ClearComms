@@ -38,17 +38,23 @@ declare module '$env/static/private' {
 	export const CommonProgramW6432: string;
 	export const COMPUTERNAME: string;
 	export const ComSpec: string;
+	export const COPILOT_AGENT: string;
 	export const DriverData: string;
 	export const EDITOR: string;
-	export const EFC_4860_1262719628: string;
-	export const EFC_4860_1592913036: string;
-	export const EFC_4860_2283032206: string;
-	export const EFC_4860_2775293581: string;
-	export const EFC_4860_344590478: string;
-	export const EFC_4860_3789132940: string;
+	export const EFC_10064_1262719628: string;
+	export const EFC_10064_1592913036: string;
+	export const EFC_10064_2283032206: string;
+	export const EFC_10064_2775293581: string;
+	export const EFC_10064_3789132940: string;
+	export const EFC_10064_4126798990: string;
 	export const FPS_BROWSER_APP_PROFILE_STRING: string;
 	export const FPS_BROWSER_USER_PROFILE_STRING: string;
 	export const GIT_ASKPASS: string;
+	export const GIT_EDITOR: string;
+	export const GIT_MERGE_AUTOEDIT: string;
+	export const GIT_PAGER: string;
+	export const GK_GL_ADDR: string;
+	export const GK_GL_PATH: string;
 	export const HOME: string;
 	export const HOMEDRIVE: string;
 	export const HOMEPATH: string;
@@ -108,13 +114,6 @@ declare module '$env/static/private' {
 	export const SESSIONNAME: string;
 	export const SystemDrive: string;
 	export const SystemRoot: string;
-	export const TAURI_CLI_VERBOSITY: string;
-	export const TAURI_ENV_ARCH: string;
-	export const TAURI_ENV_DEBUG: string;
-	export const TAURI_ENV_FAMILY: string;
-	export const TAURI_ENV_PLATFORM: string;
-	export const TAURI_ENV_PLATFORM_VERSION: string;
-	export const TAURI_ENV_TARGET_TRIPLE: string;
 	export const TEMP: string;
 	export const TERM_PROGRAM: string;
 	export const TERM_PROGRAM_VERSION: string;
@@ -130,6 +129,7 @@ declare module '$env/static/private' {
 	export const VSCODE_INJECTION: string;
 	export const VSCODE_PYTHON_AUTOACTIVATE_GUARD: string;
 	export const windir: string;
+	export const __COMPAT_LAYER: string;
 }
 
 /**
@@ -171,17 +171,23 @@ declare module '$env/dynamic/private' {
 		CommonProgramW6432: string;
 		COMPUTERNAME: string;
 		ComSpec: string;
+		COPILOT_AGENT: string;
 		DriverData: string;
 		EDITOR: string;
-		EFC_4860_1262719628: string;
-		EFC_4860_1592913036: string;
-		EFC_4860_2283032206: string;
-		EFC_4860_2775293581: string;
-		EFC_4860_344590478: string;
-		EFC_4860_3789132940: string;
+		EFC_10064_1262719628: string;
+		EFC_10064_1592913036: string;
+		EFC_10064_2283032206: string;
+		EFC_10064_2775293581: string;
+		EFC_10064_3789132940: string;
+		EFC_10064_4126798990: string;
 		FPS_BROWSER_APP_PROFILE_STRING: string;
 		FPS_BROWSER_USER_PROFILE_STRING: string;
 		GIT_ASKPASS: string;
+		GIT_EDITOR: string;
+		GIT_MERGE_AUTOEDIT: string;
+		GIT_PAGER: string;
+		GK_GL_ADDR: string;
+		GK_GL_PATH: string;
 		HOME: string;
 		HOMEDRIVE: string;
 		HOMEPATH: string;
@@ -241,13 +247,6 @@ declare module '$env/dynamic/private' {
 		SESSIONNAME: string;
 		SystemDrive: string;
 		SystemRoot: string;
-		TAURI_CLI_VERBOSITY: string;
-		TAURI_ENV_ARCH: string;
-		TAURI_ENV_DEBUG: string;
-		TAURI_ENV_FAMILY: string;
-		TAURI_ENV_PLATFORM: string;
-		TAURI_ENV_PLATFORM_VERSION: string;
-		TAURI_ENV_TARGET_TRIPLE: string;
 		TEMP: string;
 		TERM_PROGRAM: string;
 		TERM_PROGRAM_VERSION: string;
@@ -263,6 +262,7 @@ declare module '$env/dynamic/private' {
 		VSCODE_INJECTION: string;
 		VSCODE_PYTHON_AUTOACTIVATE_GUARD: string;
 		windir: string;
+		__COMPAT_LAYER: string;
 		[key: `PUBLIC_${string}`]: undefined;
 		[key: `${string}`]: string | undefined;
 	}

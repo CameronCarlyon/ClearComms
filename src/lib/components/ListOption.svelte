@@ -9,6 +9,7 @@
     processName?: string;
     displayName?: string;
     danger?: boolean;
+    warning?: boolean;
     ariaLabel?: string;
     fullWidth?: boolean;
     animationIndex?: number;
@@ -20,6 +21,7 @@
     processName, 
     displayName,
     danger = false,
+    warning = false,
     ariaLabel,
     fullWidth = false,
     animationIndex = 0,
@@ -40,6 +42,7 @@
 <button 
   class="list-option {className}"
   class:danger
+  class:warning
   class:full-width={fullWidth}
   class:fade-in={animationType === 'fadeIn'}
   role="option"
@@ -53,6 +56,11 @@
 
 <style>
   .list-option {
+    display: flex;
+    flex-direction: row;
+    align-items: center;
+    width: 100%;
+    padding: 0.75rem 1rem;
     padding: 1rem;
     min-width: 100%;
     background: transparent;
@@ -61,9 +69,11 @@
     color: var(--text-primary);
     font-size: 0.8rem;
     font-weight: 500;
-    text-align: left;
+    text-align: center;
+    justify-content: center;
     cursor: pointer;
-    transition: background 0.3s ease, box-shadow 0.2s ease;
+    transform-origin: center;
+    transition: background 0.3s ease, box-shadow 0.2s ease, transform 0.12s ease;
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
@@ -116,13 +126,20 @@
   }
 
   .list-option:active {
-    background: var(--text-primary);
-    color: var(--bg-primary);
+    background: var(--bg-card-hover);
+    color: var(--text-primary);
+    transform: scale(0.97);
   }
 
   .list-option.danger:hover {
     background: #ff4444 !important;
     color: white !important;
     box-shadow: 0 0 80px rgba(255, 68, 68, 0.5);
+  }
+
+  .list-option.warning:hover {
+    background: #ff8c00 !important;
+    color: white !important;
+    box-shadow: 0 0 80px rgba(255, 140, 0, 0.5);
   }
 </style>
