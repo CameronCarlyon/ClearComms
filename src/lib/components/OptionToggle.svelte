@@ -57,6 +57,7 @@
   .option-toggle {
     --thumb-inset: 10.5px;
     --thumb-size: 25px;
+    --thumb-background: var(--text-primary);
     position: relative;
     width: 100%;
     height: 46px;
@@ -104,7 +105,7 @@
     width: var(--thumb-size);
     height: var(--thumb-size);
     border-radius: 50%;
-    background: var(--text-muted);
+    background: var(--thumb-background);
     opacity: 0;
     transform: translateY(-50%);
     transition:
@@ -117,20 +118,20 @@
   .option-toggle.checked .option-toggle__indicator {
     left: calc(100% - var(--thumb-inset) - var(--thumb-size));
     transform: translateY(-50%) scale(1.04);
-    background: var(--text-primary);
   }
 
-  .option-toggle:hover:not(.disabled) .option-toggle__indicator,
-  .option-toggle:focus-visible .option-toggle__indicator {
+  .option-toggle:hover:not(.disabled):not(.checked) .option-toggle__indicator,
+  .option-toggle:focus-visible:not(.disabled):not(.checked) .option-toggle__indicator {
+    opacity: 0.2;
+  }
+
+  .option-toggle:hover:not(.disabled).checked .option-toggle__indicator,
+  .option-toggle:focus-visible:not(.disabled).checked .option-toggle__indicator {
     opacity: 1;
   }
 
   .option-toggle:hover:not(.disabled) {
     background: var(--bg-card-hover);
-  }
-
-  .option-toggle:hover:not(.disabled) .option-toggle__label {
-    opacity: 0.96;
   }
 
   .option-toggle:focus-visible {

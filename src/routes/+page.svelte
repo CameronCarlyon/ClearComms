@@ -877,8 +877,8 @@
       // Send measurements to backend
       // The Rust formula is: (n × channelWidth) + ((n-1) × channelGap) + (2 × padding)
       const result = await invoke<string>('update_layout_measurements', {
-        channel_width: channelWidth,
-        channel_gap: channelGap,
+        channelWidth: channelWidth,
+        channelGap: channelGap,
         padding: padding,
       });
       

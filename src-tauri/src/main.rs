@@ -312,9 +312,6 @@ fn update_layout_measurements(
     measurements.channel_gap = channel_gap;
     measurements.padding = padding;
     
-    tracing::debug!("[Layout] Updated measurements: channel={}px, gap={}px, padding={}px",
-             channel_width, channel_gap, padding);
-    
     Ok(format!("Layout measurements updated: channel={}px, gap={}px, padding={}px", 
                channel_width, channel_gap, padding))
 }
