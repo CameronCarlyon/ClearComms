@@ -145,7 +145,7 @@
         <ListOption
           displayName="User Guide"
           fullWidth={true}
-          ariaLabel="View ClearComms guide (opens in external browser)"
+          ariaLabel="View ClearComms user guide (opens in external browser)."
           animationType="fadeIn"
           animationIndex={9}
           on:select={handleOpenGuide}
@@ -154,7 +154,7 @@
           label="Pin on Top"
           checked={windowPinned}
           ariaLabel={windowPinned ? "Disable pin on top" : "Enable pin on top"}
-          title="Pin application window on top"
+          title="Keep application window on top of others, even when not focused."
           animationType="fadeIn"
           animationIndex={10}
           ontoggle={handleTogglePin}
@@ -163,7 +163,7 @@
           displayName="Reboot"
           warning={true}
           fullWidth={true}
-          ariaLabel="Restart the application"
+          ariaLabel="Restart the application."
           animationType="fadeIn"
           animationIndex={11}
           on:select={handleReboot}
@@ -178,7 +178,7 @@
         variant="toggle"
         active={isEditMode}
         disabled={!audioInitialised}
-        ariaLabel={isEditMode ? 'Exit edit mode' : 'Enter edit mode to configure bindings'}
+        ariaLabel={isEditMode ? 'Exit edit mode.' : 'Enter edit mode to configure bindings.'}
         title={isEditMode ? 'Exit Edit Mode' : 'Edit Bindings'}
         on:toggle={() => dispatch('toggleeditmode')}
       >
@@ -212,7 +212,7 @@
           displayName="Quit"
           danger={true}
           fullWidth={true}
-          ariaLabel="Quit the application"
+          ariaLabel="Quit the application."
           class="close-option"
           animationType="fadeIn"
           animationIndex={6}
@@ -221,7 +221,7 @@
         <ListOption
           displayName="Minimise"
           fullWidth={true}
-          ariaLabel="Minimise the application"
+          ariaLabel="Minimise the application."
           animationType="fadeIn"
           class="close-option"
           animationIndex={5}

@@ -47,6 +47,7 @@
   {title}
   onclick={handleClick}
   style="--animation-delay: {animationIndex * 0.05}s"
+  disabled={disabled || undefined}
 >
   <span class="option-toggle__indicator" aria-hidden="true"></span>
   <span class="option-toggle__label">{label}</span>
@@ -54,22 +55,18 @@
 
 <style>
   .option-toggle {
-    --thumb-inset: 12px;
-    --thumb-size: 22px;
+    --thumb-inset: 10.5px;
+    --thumb-size: 25px;
     position: relative;
     width: 100%;
     height: 46px;
-    min-height: 46px;
-    padding: var(--thumb-inset);
     box-sizing: border-box;
     background: transparent;
+    animation-delay: var(--animation-delay, 0s);
     border: none;
     border-radius: 999px;
     color: var(--text-primary);
     cursor: pointer;
-    display: flex;
-    align-items: center;
-    justify-content: center;
     transform-origin: center;
     transition:
       background 300ms ease,
@@ -78,7 +75,6 @@
     animation-duration: 0.25s;
     animation-timing-function: ease-out;
     animation-fill-mode: forwards;
-    animation-delay: var(--animation-delay, 0s);
     opacity: 0;
   }
 
