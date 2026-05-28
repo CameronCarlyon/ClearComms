@@ -20,6 +20,7 @@
     pendingButtonBinding: { sessionId: string; sessionName: string; processId: number; processName: string } | null;
     addAppListExpanded: boolean;
     addAppComponentKey: number;
+    settingsOpen: boolean;
   }
 
   let {
@@ -33,7 +34,8 @@
     pendingBinding,
     pendingButtonBinding,
     addAppListExpanded = $bindable(),
-    addAppComponentKey
+    addAppComponentKey,
+    settingsOpen = false
   }: Props = $props();
 
   let isOnboarding = $derived(boundSessions.length === 0);
@@ -84,7 +86,7 @@
 
 {#if boundSessions.length > 0 || isEditMode}
   <!-- Mixer View -->
-  <div class="mixer-container" bind:this={mixerContainer} onwheel={handleWheel}>
+  <div class="mixer-container" class:settings-open={settingsOpen} bind:this={mixerContainer} onwheel={handleWheel}>
     {#each boundSessions as session, index (session.session_id)}
       {@const mapping = axisMappings.find(m => m.processName === session.process_name)}
       {@const buttonMapping = buttonMappings.find(m => m.processName === session.process_name)}
@@ -170,6 +172,19 @@
     scroll-behavior: smooth;
     scrollbar-width: none;
     padding: 0rem 2.5rem;
+    opacity: 1;
+    max-height: 100%;
+    transition: opacity 0.15s ease, max-height 0.3s ease, flex 0.3s ease, padding 0.3s ease;
+  }
+
+  .mixer-container.settings-open {
+    opacity: 0;
+    pointer-events: none;
+    max-height: 0;
+    flex: 0 1 0;
+    padding-top: 0;
+    padding-bottom: 0;
+    overflow: hidden;
   }
 
   .mixer-container > .application-channel {

@@ -104,9 +104,14 @@ impl AudioThreadHandle {
         self.sender
             .send(build_cmd(reply_tx))
             .map_err(|_| "Audio thread is not running".to_string())?;
+        // A 5-second timeout prevents Tauri commands from blocking indefinitely
+        // if the audio thread panics, deadlocks, or stalls mid-operation.
         reply_rx
-            .recv()
-            .map_err(|_| "Audio thread did not respond".to_string())?
+            .recv_timeout(std::time::Duration::from_secs(5))
+            .map_err(|e| match e {
+                mpsc::RecvTimeoutError::Timeout => "Audio thread timed out (>5s)".to_string(),
+                mpsc::RecvTimeoutError::Disconnected => "Audio thread did not respond".to_string(),
+            })?
     }
 }
 
@@ -230,9 +235,14 @@ unsafe fn query_version_string(
         && !value_ptr.is_null()
         && value_len > 0
     {
+        // `value_len` is in characters and includes the null terminator.
+        // Clamp to the buffer length as a safeguard against a malformed PE
+        // returning a length that extends past the end of the version-info block.
+        let char_count = (value_len as usize - 1) // exclude null terminator
+            .min(buffer.len() / 2);               // cap to buffer's u16 capacity
         let text = String::from_utf16_lossy(std::slice::from_raw_parts(
             value_ptr as *const u16,
-            value_len as usize - 1, // exclude null terminator
+            char_count,
         ));
         let trimmed = text.trim();
         if !trimmed.is_empty() {
@@ -289,11 +299,18 @@ fn get_friendly_name(executable_path: &str) -> Option<String> {
             return None;
         }
 
-        let mut buffer = vec![0u8; size as usize];
+        // GetFileVersionInfoSizeW occasionally underreports the required buffer size for
+        // certain executables. Allocate extra padding and pass the padded size to
+        // GetFileVersionInfoW so it knows the true available space, preventing a heap
+        // overflow if the actual data is slightly larger than reported.
+        // Keep the arithmetic in u32 (matching the API type) to avoid a widening-then-
+        // truncating cast that would silently pass a smaller size than the buffer.
+        let padded_size = size.saturating_add(512);
+        let mut buffer = vec![0u8; padded_size as usize];
         if !GetFileVersionInfoW(
             wide_path.as_ptr(),
             0,
-            size,
+            padded_size,
             buffer.as_mut_ptr() as *mut std::ffi::c_void,
         )
         .as_bool()
@@ -623,45 +640,54 @@ impl AudioManager {
                                 Err(_) => format!("session_{}", i),
                             };
 
-                            let display_name = match session_control2.GetDisplayName() {
-                                Ok(pwstr) => {
-                                    let s = pwstr.to_string()
-                                        .unwrap_or_else(|_| format!("Process {}", process_id));
-                                    // Free COM-allocated PWSTR to prevent memory leak
-                                    CoTaskMemFree(Some(pwstr.0 as *const core::ffi::c_void));
-                                    s
-                                }
-                                Err(_) => format!("Process {}", process_id),
-                            };
-
-                            // Get the actual process executable name and path
-                            let (process_name, executable_path) = get_process_name(process_id);
-
-                            // Determine the best display name from multiple sources:
-                            // 1. Version resource (FileDescription → ProductName)
-                            // 2. COM session display name (set at runtime via SetDisplayName)
-                            // 3. Process window title (what the Windows Volume Mixer uses as fallback)
-                            // 4. Empty string → frontend formats the process name
-                            let friendly_display_name = {
-                                let version_name = if !executable_path.is_empty() {
-                                    get_friendly_name(&executable_path)
-                                } else {
-                                    None
+                            // If this session was already resolved in a previous enumeration,
+                            // reuse the cached names and skip the expensive per-process I/O:
+                            // QueryFullProcessImageNameW, GetFileVersionInfoW, and EnumWindows.
+                            // These are one-time costs per session lifetime, not per-poll.
+                            let (process_name, friendly_display_name) = if let Some(cached) = self.sessions.get(&session_id) {
+                                (cached.process_name.clone(), cached.display_name.clone())
+                            } else {
+                                // New session: resolve names via the full lookup chain.
+                                let display_name = match session_control2.GetDisplayName() {
+                                    Ok(pwstr) => {
+                                        let s = pwstr.to_string()
+                                            .unwrap_or_else(|_| format!("Process {}", process_id));
+                                        // Free COM-allocated PWSTR to prevent memory leak
+                                        CoTaskMemFree(Some(pwstr.0 as *const core::ffi::c_void));
+                                        s
+                                    }
+                                    Err(_) => format!("Process {}", process_id),
                                 };
 
-                                let com_name_is_useful = !display_name.is_empty()
-                                    && !display_name.starts_with('@')
-                                    && !display_name.starts_with("Process ");
+                                // Get the actual process executable name and path
+                                let (proc_name, executable_path) = get_process_name(process_id);
 
-                                if let Some(name) = version_name {
-                                    name
-                                } else if com_name_is_useful {
-                                    display_name.clone()
-                                } else if let Some(title) = get_window_title(process_id) {
-                                    title
-                                } else {
-                                    String::new()
-                                }
+                                // Determine the best display name from multiple sources:
+                                // 1. Version resource (FileDescription → ProductName)
+                                // 2. COM session display name (set at runtime via SetDisplayName)
+                                // 3. Process window title (what the Windows Volume Mixer uses as fallback)
+                                // 4. Empty string → frontend formats the process name
+                                let friendly = {
+                                    let version_name = if !executable_path.is_empty() {
+                                        get_friendly_name(&executable_path)
+                                    } else {
+                                        None
+                                    };
+
+                                    let com_name_is_useful = !display_name.is_empty()
+                                        && !display_name.starts_with('@')
+                                        && !display_name.starts_with("Process ");
+
+                                    if let Some(name) = version_name {
+                                        name
+                                    } else if com_name_is_useful {
+                                        display_name
+                                    } else {
+                                        get_window_title(process_id).unwrap_or_default()
+                                    }
+                                };
+
+                                (proc_name, friendly)
                             };
 
                             // Get volume control
@@ -1086,14 +1112,23 @@ fn with_handle<T>(
 /// Initialise the audio manager on a dedicated COM thread
 #[tauri::command]
 pub fn init_audio_manager() -> std::result::Result<String, String> {
-    tracing::info!("[Audio] Spawning dedicated audio thread...");
-    let handle = spawn_audio_thread()?;
-    
     let mut lock = AUDIO_THREAD_HANDLE
         .lock()
         .map_err(|e| format!("Failed to lock audio thread handle: {}", e))?;
+
+    // Guard against double-initialisation (e.g. rapid frontend retries).
+    // Without this, a second call would replace the first sender, causing the
+    // running thread's rx to close and the thread to exit, briefly leaving two
+    // COM threads alive simultaneously.
+    if lock.is_some() {
+        tracing::info!("[Audio] Audio manager already initialised, skipping");
+        return Ok("Audio manager already initialised".to_string());
+    }
+
+    tracing::info!("[Audio] Spawning dedicated audio thread...");
+    let handle = spawn_audio_thread()?;
     *lock = Some(handle);
-    
+
     tracing::info!("[Audio] Audio manager ready (dedicated thread)");
     Ok("Audio manager initialised successfully".to_string())
 }

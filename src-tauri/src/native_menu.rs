@@ -126,19 +126,20 @@ pub fn show_native_context_menu(app: &tauri::AppHandle, x: i32, y: i32) -> Resul
                 }
             }
             MENU_RESTART => {
-                // Restart the application
-                app.exit(0);
+                // Spawn the new instance before exiting — app.exit() calls
+                // std::process::exit() synchronously, so code after it is unreachable.
                 #[cfg(target_os = "windows")]
                 {
                     if let Ok(current_exe) = std::env::current_exe() {
                         let _ = std::process::Command::new(current_exe).spawn();
                     }
                 }
+                crate::perform_graceful_quit(app);
             }
             MENU_QUIT => {
-                // Use Tauri's graceful exit for a clean shutdown of
-                // WebView2 and backend resources
-                app.exit(0);
+                // Route through the shared graceful-quit helper so all background
+                // threads receive a clean shutdown signal before the process exits.
+                crate::perform_graceful_quit(app);
             }
             _ => {}
         }
