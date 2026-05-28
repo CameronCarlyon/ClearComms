@@ -49,15 +49,18 @@
   style="--animation-delay: {animationIndex * 0.05}s"
   disabled={disabled || undefined}
 >
-  <span class="option-toggle__indicator" aria-hidden="true"></span>
+  <span class="option-toggle__dot" aria-hidden="true"></span>
   <span class="option-toggle__label">{label}</span>
 </button>
 
 <style>
   .option-toggle {
-    --thumb-inset: 10.5px;
-    --thumb-size: 25px;
-    --thumb-background: var(--text-primary);
+    --dot-inset: 10.5px;
+    --dot-size: 25px;
+    --dot-size-stretched: 40px;
+    --dot-background: var(--text-primary);
+    --dot-motion-duration: 480ms;
+    --dot-motion-ease: cubic-bezier(0.22, 1, 0.36, 1);
     position: relative;
     width: 100%;
     height: 46px;
@@ -98,35 +101,39 @@
     transition: opacity 240ms ease;
   }
 
-  .option-toggle__indicator {
+  .option-toggle__dot {
     position: absolute;
-    left: var(--thumb-inset);
+    left: calc(var(--dot-inset) + (var(--dot-size) / 2));
     top: 50%;
-    width: var(--thumb-size);
-    height: var(--thumb-size);
+    width: var(--dot-size);
+    height: var(--dot-size);
     border-radius: 50%;
-    background: var(--thumb-background);
+    background: var(--dot-background);
     opacity: 0;
-    transform: translateY(-50%);
+    transform: translate(-50%, -50%);
     transition:
       background 300ms ease,
       opacity 180ms ease,
-      transform 360ms cubic-bezier(0.22, 1, 0.36, 1),
-      left 360ms cubic-bezier(0.22, 1, 0.36, 1);
+      transform var(--dot-motion-duration) var(--dot-motion-ease),
+      left var(--dot-motion-duration) var(--dot-motion-ease),
+      width 1000ms ease;
+    /* Different animation name per state forces re-trigger on each toggle */
+    animation: dot-stretch-off var(--dot-motion-duration) var(--dot-motion-ease);
   }
 
-  .option-toggle.checked .option-toggle__indicator {
-    left: calc(100% - var(--thumb-inset) - var(--thumb-size));
-    transform: translateY(-50%) scale(1.04);
+  .option-toggle.checked .option-toggle__dot {
+    left: calc(100% - var(--dot-inset) - (var(--dot-size) / 2));
+    transform: translate(-50%, -50%);
+    animation: dot-stretch-on var(--dot-motion-duration) var(--dot-motion-ease);
   }
 
-  .option-toggle:hover:not(.disabled):not(.checked) .option-toggle__indicator,
-  .option-toggle:focus-visible:not(.disabled):not(.checked) .option-toggle__indicator {
+  .option-toggle:hover:not(.disabled):not(.checked) .option-toggle__dot,
+  .option-toggle:focus-visible:not(.disabled):not(.checked) .option-toggle__dot {
     opacity: 0.2;
   }
 
-  .option-toggle:hover:not(.disabled).checked .option-toggle__indicator,
-  .option-toggle:focus-visible:not(.disabled).checked .option-toggle__indicator {
+  .option-toggle:hover:not(.disabled).checked .option-toggle__dot,
+  .option-toggle:focus-visible:not(.disabled).checked .option-toggle__dot {
     opacity: 1;
   }
 
@@ -144,8 +151,8 @@
     background: var(--bg-card-hover);
   }
 
-  .option-toggle:active:not(.disabled) .option-toggle__indicator {
-    transform: translateY(-50%) scale(0.97);
+  .option-toggle:active:not(.disabled) .option-toggle__dot {
+    transform: translate(-50%, -50%) scale(0.97);
   }
 
   .option-toggle.disabled {
@@ -156,10 +163,29 @@
   @media (prefers-reduced-motion: reduce) {
     .option-toggle,
     .option-toggle__label,
-    .option-toggle__indicator {
+    .option-toggle__dot {
       transition-duration: 0ms !important;
       animation-duration: 0ms !important;
     }
+  }
+
+  /* Shared stretch profile (via CSS vars) keeps the shape in one place.
+     Two animation names are still required so toggling checked reliably
+     restarts the keyframed stretch in pure CSS. */
+  @keyframes dot-stretch-on {
+    0%   { width: var(--dot-size); }
+    30%  { width: var(--dot-size-stretched); }
+    40%  { width: var(--dot-size-stretched); }
+    70%  { width: var(--dot-size); }
+    100% { width: var(--dot-size); }
+  }
+
+  @keyframes dot-stretch-off {
+    0%   { width: var(--dot-size); }
+    30%  { width: var(--dot-size-stretched); }
+    40%  { width: var(--dot-size-stretched); }
+    70%  { width: var(--dot-size); }
+    100% { width: var(--dot-size); }
   }
 
   @keyframes fadeInSlide {
