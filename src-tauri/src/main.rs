@@ -703,6 +703,10 @@ fn main() {
     let last_hidden_for_events = last_hidden.clone();
 
     tauri::Builder::default()
+        .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
+            // When a second instance is launched, show the launch toast in the existing instance
+            queue_launch_toast(app);
+        }))
         .setup(move |app| {
             // Get main window and position it
             if let Some(window) = app.get_webview_window("main") {
