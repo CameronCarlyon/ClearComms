@@ -1,6 +1,6 @@
 <script lang="ts">
   import { invoke } from "@tauri-apps/api/core";
-  import { listen } from "@tauri-apps/api/event";
+  import { listen, type UnlistenFn } from "@tauri-apps/api/event";
   import { onMount, onDestroy } from "svelte";
   import type { 
     AudioSession, 
@@ -129,6 +129,7 @@
   let closeMenuExpanded = $state(false);
   let dockOpen = $state(false);
   let addAppComponentKey = $state(0);
+
 
   // ─────────────────────────────────────────────────────────────────────────────
   // DERIVED STATE
@@ -515,6 +516,7 @@
       windowPinned = event.payload;
     });
 
+
     const handleBlur = async () => {
       // Fetch current pinned state to ensure we have the latest value
       await fetchWindowPinnedState();
@@ -611,6 +613,7 @@
       delete (window as any).clearCommsDebug;
     }
   });
+
 
   // ─────────────────────────────────────────────────────────────────────────────
   // INITIALISATION & POLLING
@@ -1949,6 +1952,7 @@
     {/if}
 
     <Footer />
+
   </main>
 {:else}
   <BootScreen status={initStatus} errorMessage={errorMsg} />
@@ -2008,6 +2012,7 @@
     font-size: 0.85rem;
     font-weight: 500;
   }
+
 
   .status-text {
     text-align: center;

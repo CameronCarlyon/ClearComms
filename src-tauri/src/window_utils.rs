@@ -262,3 +262,107 @@ pub fn set_window_pos_and_size(
     let _ = window.set_position(tauri::Position::Physical(tauri::PhysicalPosition::new(x, y)));
     let _ = window.set_size(tauri::Size::Physical(tauri::PhysicalSize { width, height }));
 }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Window Visuals
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// Apply the same Windows visual treatment used by the main application window.
+///
+/// This includes Acrylic backdrop, rounded corners, and disabled transitions
+/// for instant show/hide behaviour.
+#[cfg(target_os = "windows")]
+pub fn apply_standard_window_visuals(window: &tauri::WebviewWindow, label: &str) {
+    use window_vibrancy::apply_acrylic;
+    use windows::Win32::Foundation::HWND;
+    use windows::Win32::Graphics::Dwm::*;
+
+    tracing::info!("[Window:{}] Applying standard window visuals", label);
+
+    if let Err(error) = apply_acrylic(window, None) {
+        tracing::warn!("[Window:{}] Failed to apply acrylic effect: {}", label, error);
+    } else {
+        tracing::info!("[Window:{}] Acrylic effect applied", label);
+    }
+
+    let hwnd = match window.hwnd() {
+        Ok(raw) => HWND(raw.0),
+        Err(error) => {
+            tracing::warn!("[Window:{}] Failed to get HWND for visual attributes: {}", label, error);
+            return;
+        }
+    };
+
+    let corner_preference: i32 = DWMWCP_ROUND.0;
+    unsafe {
+        let _ = DwmSetWindowAttribute(
+            hwnd,
+            DWMWA_WINDOW_CORNER_PREFERENCE,
+            &corner_preference as *const _ as *const _,
+            std::mem::size_of::<i32>() as u32,
+        );
+    }
+
+    let disable_transitions: i32 = 1; // TRUE
+    unsafe {
+        let _ = DwmSetWindowAttribute(
+            hwnd,
+            DWMWA_TRANSITIONS_FORCEDISABLED,
+            &disable_transitions as *const _ as *const _,
+            std::mem::size_of::<i32>() as u32,
+        );
+    }
+}
+
+#[cfg(not(target_os = "windows"))]
+pub fn apply_standard_window_visuals(_window: &tauri::WebviewWindow, _label: &str) {}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Theme Detection
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// Checks if Windows is using light mode for applications.
+/// Returns `true` for light mode (use black icon), `false` for dark mode (use white icon).
+#[cfg(target_os = "windows")]
+pub fn is_windows_light_mode() -> bool {
+    use windows::Win32::System::Registry::{
+        RegCloseKey, RegOpenKeyExW, RegQueryValueExW, HKEY_CURRENT_USER, KEY_READ, REG_DWORD,
+    };
+    use windows::core::w;
+
+    unsafe {
+        let mut hkey = windows::Win32::System::Registry::HKEY::default();
+        let subkey = w!("Software\\Microsoft\\Windows\\CurrentVersion\\Themes\\Personalize");
+
+        if RegOpenKeyExW(HKEY_CURRENT_USER, subkey, 0, KEY_READ, &mut hkey).is_err() {
+            return false;
+        }
+
+        let value_name = w!("AppsUseLightTheme");
+        let mut data: u32 = 0;
+        let mut data_size = std::mem::size_of::<u32>() as u32;
+        let mut data_type = REG_DWORD;
+
+        let result = RegQueryValueExW(
+            hkey,
+            value_name,
+            None,
+            Some(&mut data_type),
+            Some(&mut data as *mut u32 as *mut u8),
+            Some(&mut data_size),
+        );
+
+        let _ = RegCloseKey(hkey);
+
+        if result.is_ok() {
+            data == 1
+        } else {
+            false
+        }
+    }
+}
+
+#[cfg(not(target_os = "windows"))]
+pub fn is_windows_light_mode() -> bool {
+    false
+}

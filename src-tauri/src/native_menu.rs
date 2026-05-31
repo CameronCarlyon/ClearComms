@@ -14,9 +14,6 @@ use windows::Win32::{
 use tauri::{Manager, Emitter};
 
 #[cfg(windows)]
-use crate::window_utils::position_window_bottom_right;
-
-#[cfg(windows)]
 const MENU_SHOW: usize = 1001;
 #[cfg(windows)]
 const MENU_PIN: usize = 1003;
@@ -95,10 +92,8 @@ pub fn show_native_context_menu(app: &tauri::AppHandle, x: i32, y: i32) -> Resul
         // Handle the selected menu item (cmd is the menu item ID)
         match cmd.0 as usize {
             MENU_SHOW => {
-                if let Some(window) = app.get_webview_window("main") {
-                    position_window_bottom_right(&window);
-                    let _ = window.show();
-                    let _ = window.set_focus();
+                if let Err(e) = crate::show_main_window_internal(app) {
+                    tracing::error!("[Menu] Failed to show main window: {}", e);
                 }
             }
             MENU_PIN => {
@@ -126,15 +121,9 @@ pub fn show_native_context_menu(app: &tauri::AppHandle, x: i32, y: i32) -> Resul
                 }
             }
             MENU_RESTART => {
-                // Spawn the new instance before exiting — app.exit() calls
-                // std::process::exit() synchronously, so code after it is unreachable.
-                #[cfg(target_os = "windows")]
-                {
-                    if let Ok(current_exe) = std::env::current_exe() {
-                        let _ = std::process::Command::new(current_exe).spawn();
-                    }
+                if let Err(e) = crate::restart_application_internal(app) {
+                    tracing::error!("[Menu] Failed to restart application: {}", e);
                 }
-                crate::perform_graceful_quit(app);
             }
             MENU_QUIT => {
                 // Route through the shared graceful-quit helper so all background

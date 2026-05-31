@@ -1,0 +1,203 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>ClearComms Toast</title>
+  <style>
+    *,
+    *::before,
+    *::after {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+    }
+
+    html,
+    body {
+      width: 100%;
+      height: 100%;
+    }
+
+    body {
+      font-family: system-ui, -apple-system, sans-serif;
+      -webkit-user-select: none;
+      user-select: none;
+    }
+
+    .toast-wrapper {
+      width: 100%;
+      height: 100%;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      padding: 16px;
+      position: relative;
+    }
+
+    .toast-wrapper.dark {
+      color: #ffffff;
+      --accent: #ffffff;
+    }
+
+    .toast-wrapper.light {
+      color: #1a1a1a;
+      --accent: #1a1a1a;
+    }
+
+    .icon {
+      width: 48px;
+      height: 48px;
+    }
+
+    .content {
+      display: flex;
+      flex-direction: column;
+      min-width: 0;
+    }
+
+    .title {
+      font-weight: 600;
+      font-size: 14px;
+      line-height: 1.3;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+
+    .body {
+      font-weight: 400;
+      font-size: 13px;
+      line-height: 1.4;
+      display: -webkit-box;
+      -webkit-line-clamp: 2;
+      -webkit-box-orient: vertical;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+
+    .progress-bar {
+      position: absolute;
+      bottom: 0;
+      left: 0;
+      height: 5px;
+      width: 100%;
+      background: #FFF;
+      transform-origin: left;
+      opacity: 0;
+    }
+
+    @keyframes shrink {
+      from {
+        transform: scaleX(1);
+      }
+
+      to {
+        transform: scaleX(0);
+      }
+    }
+
+    .progress-bar.animate {
+      animation: shrink 5s linear forwards;
+      opacity: 1;
+    }
+
+    .progress-bar.paused {
+      animation-play-state: paused;
+    }
+  </style>
+</head>
+<body>
+  <div id="toast" class="toast-wrapper dark" role="button" tabindex="0">
+    <img id="icon" src="" alt="" class="icon" />
+    <div class="content">
+      <div id="title" class="title"></div>
+      <div id="body" class="body"></div>
+    </div>
+    <div id="progress" class="progress-bar"></div>
+  </div>
+
+  <script>
+    const DISMISS_MS = 5000;
+    const payload = window.__CLEARCOMMS_TOAST__ || {};
+
+    const titleEl = document.getElementById('title');
+    const bodyEl = document.getElementById('body');
+    const iconEl = document.getElementById('icon');
+    const toastEl = document.getElementById('toast');
+    const progressEl = document.getElementById('progress');
+
+    titleEl.textContent = payload.title || '';
+    bodyEl.textContent = payload.body || '';
+    if (payload.iconDataUrl) iconEl.src = payload.iconDataUrl;
+    if (payload.theme === 'light') toastEl.classList.replace('dark', 'light');
+
+    let dismissTimer = null;
+    let dismissRemaining = DISMISS_MS;
+    let dismissLastStart = 0;
+
+    function tauriInvoke(command, args) {
+      try {
+        const tauri = window.__TAURI__;
+        if (!tauri) return Promise.resolve();
+        if (tauri.core && typeof tauri.core.invoke === 'function') {
+          return tauri.core.invoke(command, args);
+        }
+        if (typeof tauri.invoke === 'function') {
+          return tauri.invoke(command, args);
+        }
+      } catch (e) {}
+      return Promise.resolve();
+    }
+
+    function closeToast() {
+      tauriInvoke('close_toast_window');
+    }
+
+    function showMainWindow() {
+      tauriInvoke('show_main_window');
+    }
+
+    function startTimer() {
+      progressEl.classList.add('animate');
+      dismissLastStart = performance.now();
+      dismissTimer = setTimeout(closeToast, dismissRemaining);
+    }
+
+    function pauseTimer() {
+      if (!dismissTimer) return;
+      clearTimeout(dismissTimer);
+      dismissTimer = null;
+      progressEl.classList.add('paused');
+      dismissRemaining -= performance.now() - dismissLastStart;
+    }
+
+    function resumeTimer() {
+      if (dismissTimer || dismissRemaining <= 0) return;
+      progressEl.classList.remove('paused');
+      startTimer();
+    }
+
+    toastEl.addEventListener('mouseenter', pauseTimer);
+    toastEl.addEventListener('mouseleave', resumeTimer);
+    toastEl.addEventListener('click', () => {
+      showMainWindow();
+      closeToast();
+    });
+    toastEl.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter' || e.key === ' ') {
+        e.preventDefault();
+        showMainWindow();
+        closeToast();
+      }
+    });
+
+    if (payload.title || payload.body) {
+      startTimer();
+    } else {
+      closeToast();
+    }
+  </script>
+</body>
+</html>
