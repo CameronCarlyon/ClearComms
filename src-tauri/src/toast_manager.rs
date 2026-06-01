@@ -4,7 +4,6 @@
 
 use serde::Serialize;
 use tauri::{Manager, WebviewUrl, WebviewWindowBuilder};
-use base64::Engine;
 
 const TOAST_WINDOW_LABEL: &str = "toast";
 const TOAST_WIDTH: f64 = 360.0;
@@ -33,7 +32,6 @@ pub struct ToastPayload {
     pub title: String,
     pub body: String,
     pub toast_type: String,
-    pub icon_data_url: String,
     pub theme: String,
 }
 
@@ -43,7 +41,6 @@ impl ToastPayload {
             title: title.into(),
             body: body.into(),
             toast_type: "general".into(),
-            icon_data_url: String::new(),
             theme: String::new(),
         }
     }
@@ -64,7 +61,7 @@ pub fn show_toast(app: &tauri::AppHandle, payload: ToastPayload) -> Result<(), S
         close_toast_window_internal(app);
     }
 
-    let window = WebviewWindowBuilder::new(app, TOAST_WINDOW_LABEL, WebviewUrl::App("toast.html".into()))
+    let window = WebviewWindowBuilder::new(app, TOAST_WINDOW_LABEL, WebviewUrl::App("toast-launch.html".into()))
         .title("ClearComms Toast")
         .inner_size(TOAST_WIDTH, TOAST_HEIGHT)
         .decorations(false)
@@ -124,7 +121,7 @@ fn main_window_is_visible(app: &tauri::AppHandle) -> bool {
 }
 
 fn resolve_payload(payload: ToastPayload) -> Result<ToastPayload, String> {
-    if payload.icon_data_url.is_empty() || payload.theme.is_empty() {
+    if payload.theme.is_empty() {
         return build_payload(
             payload.title,
             payload.body,
@@ -135,27 +132,12 @@ fn resolve_payload(payload: ToastPayload) -> Result<ToastPayload, String> {
     Ok(payload)
 }
 
-lazy_static::lazy_static! {
-    static ref ICON_LIGHT: String = {
-        let bytes = include_bytes!("../icons/black/64x64.png");
-        format!("data:image/png;base64,{}", base64::engine::general_purpose::STANDARD.encode(bytes))
-    };
-    static ref ICON_DARK: String = {
-        let bytes = include_bytes!("../icons/white/64x64.png");
-        format!("data:image/png;base64,{}", base64::engine::general_purpose::STANDARD.encode(bytes))
-    };
-}
-
 fn build_payload(
     title: String,
     body: String,
     toast_type: ToastType,
 ) -> Result<ToastPayload, String> {
     let theme_name = crate::theme::get_resolved_theme_name();
-    let icon_data_url = match theme_name {
-        "light" => ICON_LIGHT.clone(),
-        _ => ICON_DARK.clone(),
-    };
 
     Ok(ToastPayload {
         title,
@@ -164,7 +146,6 @@ fn build_payload(
             ToastType::General => "general".to_string(),
             ToastType::FutureFeature => "future".to_string(),
         },
-        icon_data_url,
         theme: theme_name.to_string(),
     })
 }

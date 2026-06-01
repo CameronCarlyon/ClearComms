@@ -468,17 +468,6 @@ pub fn get_input_status() -> Result<String, String> {
     }
 }
 
-/// Enumerate all connected game controllers.
-/// Note: This is only needed at startup; the polling thread handles hot-plug
-/// detection automatically. Kept for compatibility with the frontend init sequence.
-#[tauri::command]
-pub fn enumerate_input_devices() -> Result<Vec<String>, String> {
-    // The polling thread owns the manager now. Return a placeholder.
-    // In practice the frontend does not need this after init — device data
-    // comes via the "input-axis-data" event which includes device names.
-    Ok(vec![])
-}
-
 /// Clean up input manager resources and stop the polling thread
 #[tauri::command]
 pub fn cleanup_input_manager() -> Result<String, String> {

@@ -240,3 +240,14 @@ pub fn set_theme_mode_command(mode: String) -> Result<String, String> {
 pub fn get_resolved_theme_name_command() -> Result<String, String> {
     Ok(get_resolved_theme_name().to_string())
 }
+
+/// Get both theme mode and resolved theme in a single call.
+/// Reduces frontend startup IPC round-trips.
+#[tauri::command]
+pub fn get_theme_state_command() -> Result<(String, String), String> {
+    let mode = get_theme_mode();
+    let resolved = get_resolved_theme_name().to_string();
+    let mode_json = serde_json::to_string(&mode)
+        .map_err(|e| format!("Failed to serialise theme mode: {}", e))?;
+    Ok((mode_json, resolved))
+}

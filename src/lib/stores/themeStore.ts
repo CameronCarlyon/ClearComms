@@ -32,11 +32,9 @@ export const theme = derived(
  */
 export async function initTheme() {
   try {
-    const modeStr = await invoke<string>('get_theme_mode');
+    const [modeStr, resolved] = await invoke<[string, string]>('get_theme_state');
     const mode: ThemeMode = JSON.parse(modeStr);
     themeMode.set(mode);
-
-    const resolved = await invoke<string>('get_resolved_theme_name');
     resolvedTheme.set(resolved as ResolvedTheme);
   } catch (error) {
     console.error('Failed to initialise theme:', error);

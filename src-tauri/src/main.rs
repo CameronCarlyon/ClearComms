@@ -22,7 +22,7 @@
 // Prevents additional console window on Windows in release, DO NOT REMOVE!!
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, LazyLock};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant};
 use std::path::PathBuf;
@@ -34,7 +34,6 @@ use tauri::tray::{TrayIconBuilder, TrayIconId, MouseButton, MouseButtonState};
 
 mod audio_management;
 mod hardware_input;
-mod lvar_input;
 mod native_menu;
 mod window_utils;
 mod toast_manager;
@@ -95,14 +94,12 @@ impl Default for LayoutMeasurements {
 }
 
 // Global layout measurements, protected by mutex
-lazy_static::lazy_static! {
-    static ref LAYOUT_MEASUREMENTS: Arc<Mutex<LayoutMeasurements>> = 
-        Arc::new(Mutex::new(LayoutMeasurements::default()));
+static LAYOUT_MEASUREMENTS: LazyLock<Arc<Mutex<LayoutMeasurements>>> =
+    LazyLock::new(|| Arc::new(Mutex::new(LayoutMeasurements::default())));
 
-    /// Serialises all reads and writes to the UI config file to prevent
-    /// concurrent save_config_value calls from losing each other's updates.
-    static ref UI_CONFIG_LOCK: Mutex<()> = Mutex::new(());
-}
+/// Serialises all reads and writes to the UI config file to prevent
+/// concurrent save_config_value calls from losing each other's updates.
+static UI_CONFIG_LOCK: Mutex<()> = Mutex::new(());
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Singleton Animation Thread (Fix 4)
@@ -181,22 +178,28 @@ const RESIZE_ANIMATION_FRAME_US: u64 = 4_167;
 /// Tray icon identifier
 const TRAY_ICON_ID: &str = "clearcomms-tray";
 
+/// Decode a PNG icon once at first use and cache the result.
+fn decode_icon(bytes: &[u8]) -> Image<'static> {
+    let img = image::load_from_memory(bytes).expect("Failed to decode tray icon PNG");
+    let rgba = img.to_rgba8();
+    let (width, height) = rgba.dimensions();
+    Image::new_owned(rgba.into_raw(), width, height)
+}
+
+static ICON_LIGHT: LazyLock<Image<'static>> = LazyLock::new(|| {
+    decode_icon(include_bytes!("../icons/white/32x32.png"))
+});
+static ICON_DARK: LazyLock<Image<'static>> = LazyLock::new(|| {
+    decode_icon(include_bytes!("../icons/black/32x32.png"))
+});
+
 /// Loads the appropriate tray icon based on the current resolved theme.
 /// Returns the white icon for dark mode, black icon for light mode.
 fn load_theme_appropriate_icon() -> Image<'static> {
-    let icon_set = theme::get_icon_set();
-    let icon_bytes: &[u8] = match icon_set {
-        "black" => include_bytes!("../icons/black/32x32.png"),
-        "white" => include_bytes!("../icons/white/32x32.png"),
-        _ => include_bytes!("../icons/white/32x32.png"),
-    };
-    
-    // Decode PNG to RGBA
-    let img = image::load_from_memory(icon_bytes).expect("Failed to decode tray icon PNG");
-    let rgba = img.to_rgba8();
-    let (width, height) = rgba.dimensions();
-    
-    Image::new_owned(rgba.into_raw(), width, height)
+    match theme::get_icon_set() {
+        "black" => ICON_DARK.clone(),
+        _ => ICON_LIGHT.clone(),
+    }
 }
 
 
@@ -785,9 +788,6 @@ fn main() {
             std::thread::Builder::new()
                 .name("theme-monitor".to_string())
                 .spawn(move || {
-                // Initialise resolved theme on startup
-                theme::update_resolved_theme();
-                
                 loop {
                     std::thread::sleep(Duration::from_secs(2));
 
@@ -860,7 +860,6 @@ fn main() {
         .invoke_handler(tauri::generate_handler![
             hardware_input::init_input,
             hardware_input::get_input_status,
-            hardware_input::enumerate_input_devices,
             hardware_input::cleanup_input_manager,
             audio_management::init_audio_manager,
             audio_management::get_audio_sessions,
@@ -889,6 +888,7 @@ fn main() {
             theme::get_theme_mode_command,
             theme::set_theme_mode_command,
             theme::get_resolved_theme_name_command,
+            theme::get_theme_state_command,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
