@@ -38,6 +38,7 @@ mod lvar_input;
 mod native_menu;
 mod window_utils;
 mod toast_manager;
+mod theme;
 
 use window_utils::{position_window_bottom_right, get_display_info_for_window, set_window_pos_and_size};
 
@@ -180,16 +181,14 @@ const RESIZE_ANIMATION_FRAME_US: u64 = 4_167;
 /// Tray icon identifier
 const TRAY_ICON_ID: &str = "clearcomms-tray";
 
-/// Loads the appropriate tray icon based on the current Windows theme.
+/// Loads the appropriate tray icon based on the current resolved theme.
 /// Returns the white icon for dark mode, black icon for light mode.
 fn load_theme_appropriate_icon() -> Image<'static> {
-    let is_light = window_utils::is_windows_light_mode();
-    let icon_bytes: &[u8] = if is_light {
-        // Light mode: use black icon for contrast
-        include_bytes!("../icons/black/32x32.png")
-    } else {
-        // Dark mode: use white icon for contrast
-        include_bytes!("../icons/white/32x32.png")
+    let icon_set = theme::get_icon_set();
+    let icon_bytes: &[u8] = match icon_set {
+        "black" => include_bytes!("../icons/black/32x32.png"),
+        "white" => include_bytes!("../icons/white/32x32.png"),
+        _ => include_bytes!("../icons/white/32x32.png"),
     };
     
     // Decode PNG to RGBA
@@ -608,20 +607,10 @@ pub fn perform_graceful_quit(app: &tauri::AppHandle) {
 }
 
 fn queue_launch_toast(app: &tauri::AppHandle) {
-    let app_handle = app.clone();
-    std::thread::Builder::new()
-        .name("launch-toast".to_string())
-        .spawn(move || {
-            std::thread::sleep(std::time::Duration::from_millis(500));
-            let handle_clone = app_handle.clone();
-            let _ = app_handle.run_on_main_thread(move || {
-                let _ = toast_manager::show_toast(
-                    &handle_clone,
-                    toast_manager::ToastPayload::new("ClearComms", "Running in your system tray."),
-                );
-            });
-        })
-        .expect("Failed to spawn launch toast thread");
+    let _ = toast_manager::show_toast(
+        app,
+        toast_manager::ToastPayload::new("ClearComms", "Running in your system tray."),
+    );
 }
 
 pub fn restart_application_internal(app: &tauri::AppHandle) -> Result<(), String> {
@@ -783,9 +772,12 @@ fn main() {
                     }
                 })
                 .build(app)?;
-            
-            // Show launch toast after a brief delay to ensure the app is fully initialised.
-            queue_launch_toast(app.handle());
+           
+           // Initialise theme before toast to avoid registry read delay
+           theme::update_resolved_theme();
+           
+           // Show launch toast (theme already initialised, no registry read needed)
+           queue_launch_toast(app.handle());
             
             // Spawn a background thread to monitor Windows theme changes
             // and update the tray icon accordingly
@@ -793,7 +785,8 @@ fn main() {
             std::thread::Builder::new()
                 .name("theme-monitor".to_string())
                 .spawn(move || {
-                let mut last_light_mode = window_utils::is_windows_light_mode();
+                // Initialise resolved theme on startup
+                theme::update_resolved_theme();
                 
                 loop {
                     std::thread::sleep(Duration::from_secs(2));
@@ -805,25 +798,25 @@ fn main() {
                         break;
                     }
                     
-                    let current_light_mode = window_utils::is_windows_light_mode();
-                    if current_light_mode != last_light_mode {
-                        last_light_mode = current_light_mode;
-                        
-                        // Update tray icon on the main thread
-                        let app_for_tray = app_handle.clone();
-                        let _ = app_handle.run_on_main_thread(move || {
-                            match app_for_tray.tray_by_id(TRAY_ICON_ID) {
-                                Some(tray) => {
-                                    let new_icon = load_theme_appropriate_icon();
-                                    if let Err(e) = tray.set_icon(Some(new_icon)) {
-                                        tracing::error!("[Theme] Failed to update tray icon: {}", e);
+                    // Only update if in Automatic mode and system theme changed
+                    if theme::get_theme_mode() == theme::ThemeMode::Automatic {
+                        if theme::update_resolved_theme() {
+                            // Theme changed - update tray icon on the main thread
+                            let app_for_tray = app_handle.clone();
+                            let _ = app_handle.run_on_main_thread(move || {
+                                match app_for_tray.tray_by_id(TRAY_ICON_ID) {
+                                    Some(tray) => {
+                                        let new_icon = load_theme_appropriate_icon();
+                                        if let Err(e) = tray.set_icon(Some(new_icon)) {
+                                            tracing::error!("[Theme] Failed to update tray icon: {}", e);
+                                        }
+                                    }
+                                    None => {
+                                        tracing::warn!("[Theme] Could not find tray icon with id '{}'", TRAY_ICON_ID);
                                     }
                                 }
-                                None => {
-                                    tracing::warn!("[Theme] Could not find tray icon with id '{}'", TRAY_ICON_ID);
-                                }
-                            }
-                        });
+                            });
+                        }
                     }
                 }
             }).expect("Failed to spawn theme monitor thread");
@@ -893,6 +886,9 @@ fn main() {
             open_url,
             toast_manager::trigger_toast,
             toast_manager::close_toast_window,
+            theme::get_theme_mode_command,
+            theme::set_theme_mode_command,
+            theme::get_resolved_theme_name_command,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

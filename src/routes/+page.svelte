@@ -12,13 +12,14 @@
     LiveVolumeState,
     AnimationSignal
   } from "$lib/types";
-  import { 
+  import {
     Mixer,
-    Dock, 
-    BootScreen, 
+    Dock,
+    BootScreen,
     Footer
   } from "$lib/components";
   import { formatProcessName, applyDisplayNameOverride, SYSTEM_VOLUME_ID, SYSTEM_VOLUME_PROCESS_NAME, SYSTEM_VOLUME_DISPLAY_NAME, isSystemVolume } from "$lib/stores/audioStore";
+  import { initTheme, theme, applyTheme } from "$lib/stores/themeStore";
 
 
   // ─────────────────────────────────────────────────────────────────────────────
@@ -134,6 +135,11 @@
   // ─────────────────────────────────────────────────────────────────────────────
   // DERIVED STATE
   // ─────────────────────────────────────────────────────────────────────────────
+
+  $effect(() => {
+    // Apply theme when resolved
+    applyTheme($theme.resolved);
+  });
 
   $effect(() => {
     // Enforce edit mode when no pinned applications (onboarding mode)
@@ -495,6 +501,9 @@
     }
 
     void (async () => {
+      // Initialise theme from backend
+      await initTheme();
+      
       await Promise.all([
         loadMappings(),
         loadButtonMappings(),

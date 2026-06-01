@@ -59,7 +59,10 @@ pub fn show_toast(app: &tauri::AppHandle, payload: ToastPayload) -> Result<(), S
     let payload = resolve_payload(payload)?;
     let initialisation_script = build_initialisation_script(&payload)?;
 
-    close_toast_window_internal(app);
+    // Only attempt close if a toast window actually exists (avoids unnecessary lookup on first launch)
+    if app.get_webview_window(TOAST_WINDOW_LABEL).is_some() {
+        close_toast_window_internal(app);
+    }
 
     let window = WebviewWindowBuilder::new(app, TOAST_WINDOW_LABEL, WebviewUrl::App("toast.html".into()))
         .title("ClearComms Toast")
@@ -77,13 +80,13 @@ pub fn show_toast(app: &tauri::AppHandle, payload: ToastPayload) -> Result<(), S
 
     crate::window_utils::position_window_bottom_right(&window);
 
-    // Show window first, then apply visual effects (acrylic requires visible window)
-    let _ = window.show();
-
+    // Apply visual effects before showing (reduces flicker)
     #[cfg(target_os = "windows")]
     {
         crate::window_utils::apply_standard_window_visuals(&window, "toast");
     }
+
+    let _ = window.show();
 
     Ok(())
 }
@@ -148,12 +151,10 @@ fn build_payload(
     body: String,
     toast_type: ToastType,
 ) -> Result<ToastPayload, String> {
-    let is_light = crate::window_utils::is_windows_light_mode();
-    let theme = if is_light { "light" } else { "dark" };
-    let icon_data_url = if is_light {
-        ICON_LIGHT.clone()
-    } else {
-        ICON_DARK.clone()
+    let theme_name = crate::theme::get_resolved_theme_name();
+    let icon_data_url = match theme_name {
+        "light" => ICON_LIGHT.clone(),
+        _ => ICON_DARK.clone(),
     };
 
     Ok(ToastPayload {
@@ -164,7 +165,7 @@ fn build_payload(
             ToastType::FutureFeature => "future".to_string(),
         },
         icon_data_url,
-        theme: theme.to_string(),
+        theme: theme_name.to_string(),
     })
 }
 
