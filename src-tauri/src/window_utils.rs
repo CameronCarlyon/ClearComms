@@ -262,3 +262,57 @@ pub fn set_window_pos_and_size(
     let _ = window.set_position(tauri::Position::Physical(tauri::PhysicalPosition::new(x, y)));
     let _ = window.set_size(tauri::Size::Physical(tauri::PhysicalSize { width, height }));
 }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Window Visuals
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// Apply the same Windows visual treatment used by the main application window.
+///
+/// This includes Acrylic backdrop, rounded corners, and disabled transitions
+/// for instant show/hide behaviour.
+#[cfg(target_os = "windows")]
+pub fn apply_standard_window_visuals(window: &tauri::WebviewWindow, label: &str) {
+    use window_vibrancy::apply_acrylic;
+    use windows::Win32::Foundation::HWND;
+    use windows::Win32::Graphics::Dwm::*;
+
+    tracing::info!("[Window:{}] Applying standard window visuals", label);
+
+    if let Err(error) = apply_acrylic(window, None) {
+        tracing::warn!("[Window:{}] Failed to apply acrylic effect: {}", label, error);
+    } else {
+        tracing::info!("[Window:{}] Acrylic effect applied", label);
+    }
+
+    let hwnd = match window.hwnd() {
+        Ok(raw) => HWND(raw.0),
+        Err(error) => {
+            tracing::warn!("[Window:{}] Failed to get HWND for visual attributes: {}", label, error);
+            return;
+        }
+    };
+
+    let corner_preference: i32 = DWMWCP_ROUND.0;
+    unsafe {
+        let _ = DwmSetWindowAttribute(
+            hwnd,
+            DWMWA_WINDOW_CORNER_PREFERENCE,
+            &corner_preference as *const _ as *const _,
+            std::mem::size_of::<i32>() as u32,
+        );
+    }
+
+    let disable_transitions: i32 = 1; // TRUE
+    unsafe {
+        let _ = DwmSetWindowAttribute(
+            hwnd,
+            DWMWA_TRANSITIONS_FORCEDISABLED,
+            &disable_transitions as *const _ as *const _,
+            std::mem::size_of::<i32>() as u32,
+        );
+    }
+}
+
+#[cfg(not(target_os = "windows"))]
+pub fn apply_standard_window_visuals(_window: &tauri::WebviewWindow, _label: &str) {}

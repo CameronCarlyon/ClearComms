@@ -22,7 +22,7 @@
 // Prevents additional console window on Windows in release, DO NOT REMOVE!!
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, LazyLock};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant};
 use std::path::PathBuf;
@@ -34,9 +34,10 @@ use tauri::tray::{TrayIconBuilder, TrayIconId, MouseButton, MouseButtonState};
 
 mod audio_management;
 mod hardware_input;
-mod lvar_input;
 mod native_menu;
 mod window_utils;
+mod toast_manager;
+mod theme;
 
 use window_utils::{position_window_bottom_right, get_display_info_for_window, set_window_pos_and_size};
 
@@ -54,6 +55,7 @@ static PIN_STATE: AtomicBool = AtomicBool::new(false);
 /// Shutdown signal for the theme monitor thread.
 /// Set to `true` during app shutdown so the thread exits cleanly.
 static THEME_MONITOR_SHUTDOWN: AtomicBool = AtomicBool::new(false);
+
 
 /// Update the tracked pin state. Call this whenever the pin state changes.
 pub fn set_pin_state(pinned: bool) {
@@ -92,14 +94,12 @@ impl Default for LayoutMeasurements {
 }
 
 // Global layout measurements, protected by mutex
-lazy_static::lazy_static! {
-    static ref LAYOUT_MEASUREMENTS: Arc<Mutex<LayoutMeasurements>> = 
-        Arc::new(Mutex::new(LayoutMeasurements::default()));
+static LAYOUT_MEASUREMENTS: LazyLock<Arc<Mutex<LayoutMeasurements>>> =
+    LazyLock::new(|| Arc::new(Mutex::new(LayoutMeasurements::default())));
 
-    /// Serialises all reads and writes to the UI config file to prevent
-    /// concurrent save_config_value calls from losing each other's updates.
-    static ref UI_CONFIG_LOCK: Mutex<()> = Mutex::new(());
-}
+/// Serialises all reads and writes to the UI config file to prevent
+/// concurrent save_config_value calls from losing each other's updates.
+static UI_CONFIG_LOCK: Mutex<()> = Mutex::new(());
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Singleton Animation Thread (Fix 4)
@@ -178,76 +178,28 @@ const RESIZE_ANIMATION_FRAME_US: u64 = 4_167;
 /// Tray icon identifier
 const TRAY_ICON_ID: &str = "clearcomms-tray";
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Theme Detection (Windows)
-// ─────────────────────────────────────────────────────────────────────────────
-
-/// Checks if Windows is using light mode for applications.
-/// Returns `true` for light mode (use black icon), `false` for dark mode (use white icon).
-#[cfg(target_os = "windows")]
-fn is_windows_light_mode() -> bool {
-    use windows::Win32::System::Registry::{
-        RegCloseKey, RegOpenKeyExW, RegQueryValueExW, HKEY_CURRENT_USER, KEY_READ, REG_DWORD,
-    };
-    use windows::core::w;
-    
-    unsafe {
-        let mut hkey = windows::Win32::System::Registry::HKEY::default();
-        let subkey = w!("Software\\Microsoft\\Windows\\CurrentVersion\\Themes\\Personalize");
-        
-        // Open the registry key
-        if RegOpenKeyExW(HKEY_CURRENT_USER, subkey, 0, KEY_READ, &mut hkey).is_err() {
-            return false;
-        }
-        
-        let value_name = w!("AppsUseLightTheme");
-        let mut data: u32 = 0;
-        let mut data_size = std::mem::size_of::<u32>() as u32;
-        let mut data_type = REG_DWORD;
-        
-        let result = RegQueryValueExW(
-            hkey,
-            value_name,
-            None,
-            Some(&mut data_type),
-            Some(&mut data as *mut u32 as *mut u8),
-            Some(&mut data_size),
-        );
-        
-        let _ = RegCloseKey(hkey);
-        
-        if result.is_ok() {
-            // 1 = light mode, 0 = dark mode
-            data == 1
-        } else {
-            false
-        }
-    }
-}
-
-#[cfg(not(target_os = "windows"))]
-fn is_windows_light_mode() -> bool {
-    false
-}
-
-/// Loads the appropriate tray icon based on the current Windows theme.
-/// Returns the white icon for dark mode, black icon for light mode.
-fn load_theme_appropriate_icon() -> Image<'static> {
-    let is_light = is_windows_light_mode();
-    let icon_bytes: &[u8] = if is_light {
-        // Light mode: use black icon for contrast
-        include_bytes!("../icons/black/32x32.png")
-    } else {
-        // Dark mode: use white icon for contrast
-        include_bytes!("../icons/white/32x32.png")
-    };
-    
-    // Decode PNG to RGBA
-    let img = image::load_from_memory(icon_bytes).expect("Failed to decode tray icon PNG");
+/// Decode a PNG icon once at first use and cache the result.
+fn decode_icon(bytes: &[u8]) -> Image<'static> {
+    let img = image::load_from_memory(bytes).expect("Failed to decode tray icon PNG");
     let rgba = img.to_rgba8();
     let (width, height) = rgba.dimensions();
-    
     Image::new_owned(rgba.into_raw(), width, height)
+}
+
+static ICON_LIGHT: LazyLock<Image<'static>> = LazyLock::new(|| {
+    decode_icon(include_bytes!("../icons/white/32x32.png"))
+});
+static ICON_DARK: LazyLock<Image<'static>> = LazyLock::new(|| {
+    decode_icon(include_bytes!("../icons/black/32x32.png"))
+});
+
+/// Loads the appropriate tray icon based on the current resolved theme.
+/// Returns the white icon for dark mode, black icon for light mode.
+fn load_theme_appropriate_icon() -> Image<'static> {
+    match theme::get_icon_set() {
+        "black" => ICON_DARK.clone(),
+        _ => ICON_LIGHT.clone(),
+    }
 }
 
 
@@ -465,16 +417,23 @@ fn animate_window_resize(
 }
 
 /// Show the main application window
-#[tauri::command]
-fn show_main_window(app: tauri::AppHandle) -> Result<(), String> {
+pub fn show_main_window_internal(app: &tauri::AppHandle) -> Result<(), String> {
     if let Some(window) = app.get_webview_window("main") {
         position_window_bottom_right(&window);
+        if let Some(toast) = app.get_webview_window("toast") {
+            let _ = toast.close();
+        }
         let _ = window.show();
         let _ = window.set_focus();
         Ok(())
     } else {
         Err("Main window not found".to_string())
     }
+}
+
+#[tauri::command]
+fn show_main_window(app: tauri::AppHandle) -> Result<(), String> {
+    show_main_window_internal(&app)
 }
 
 fn hide_main_window_internal(
@@ -509,6 +468,9 @@ fn hide_main_window(app: tauri::AppHandle) -> Result<(), String> {
 /// Returns the new pin state after toggling
 pub fn perform_pin_toggle(window: &tauri::WebviewWindow) -> Result<bool, String> {
     position_window_bottom_right(window);
+    if let Some(toast) = window.app_handle().get_webview_window("toast") {
+        let _ = toast.close();
+    }
     let _ = window.show();
     let _ = window.set_focus();
     
@@ -557,34 +519,7 @@ fn get_display_info(app: tauri::AppHandle) -> Result<window_utils::DisplayInfo, 
 /// Restart the application
 #[tauri::command]
 async fn restart_application(app: tauri::AppHandle) -> Result<(), String> {
-    // Signal all background threads to shut down cleanly
-    THEME_MONITOR_SHUTDOWN.store(true, Ordering::Relaxed);
-    audio_management::shutdown_audio_thread();
-    hardware_input::shutdown_input_thread();
-
-    // Spawn the new instance before exiting
-    #[cfg(target_os = "windows")]
-    {
-        use std::process::Command;
-        use std::env;
-        
-        let current_exe = env::current_exe()
-            .map_err(|e| format!("Failed to get current executable: {}", e))?;
-        
-        Command::new(current_exe)
-            .spawn()
-            .map_err(|e| format!("Failed to restart application: {}", e))?;
-    }
-    
-    #[cfg(not(target_os = "windows"))]
-    {
-        // Placeholder for non-Windows platforms
-        return Err("Restart not implemented for this platform".to_string());
-    }
-
-    // Terminate the current instance after the new one is launched
-    perform_graceful_quit(&app);
-    Ok(())
+    restart_application_internal(&app)
 }
 
 /// Persistent UI config filename stored in the app config directory.
@@ -674,6 +609,44 @@ pub fn perform_graceful_quit(app: &tauri::AppHandle) {
     app.exit(0);
 }
 
+fn queue_launch_toast(app: &tauri::AppHandle) {
+    let _ = toast_manager::show_toast(
+        app,
+        toast_manager::ToastPayload::new("ClearComms", "Running in your system tray."),
+    );
+}
+
+pub fn restart_application_internal(app: &tauri::AppHandle) -> Result<(), String> {
+    if tauri::is_dev() {
+        audio_management::shutdown_audio_thread();
+        hardware_input::shutdown_input_thread();
+
+        if let Some(toast) = app.get_webview_window("toast") {
+            let _ = toast.close();
+        }
+
+        let Some(window) = app.get_webview_window("main") else {
+            return Err("Main window not found".to_string());
+        };
+
+        let _ = window.set_always_on_top(false);
+        set_pin_state(false);
+        let _ = window.hide();
+        window
+            .reload()
+            .map_err(|e| format!("Failed to reload main window: {}", e))?;
+
+        queue_launch_toast(app);
+        return Ok(());
+    }
+
+    THEME_MONITOR_SHUTDOWN.store(true, Ordering::Relaxed);
+    audio_management::shutdown_audio_thread();
+    hardware_input::shutdown_input_thread();
+    app.request_restart();
+    Ok(())
+}
+
 /// Open a URL in the default browser and bring it to the foreground
 #[tauri::command]
 async fn open_url(url: String) -> Result<(), String> {
@@ -722,41 +695,17 @@ fn main() {
     let last_hidden_for_events = last_hidden.clone();
 
     tauri::Builder::default()
+        .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
+            // When a second instance is launched, show the launch toast in the existing instance
+            queue_launch_toast(app);
+        }))
         .setup(move |app| {
             // Get main window and position it
             if let Some(window) = app.get_webview_window("main") {
                 // Apply Windows Acrylic effect and rounded corners
                 #[cfg(target_os = "windows")]
                 {
-                    use window_vibrancy::apply_acrylic;
-                    use windows::Win32::Graphics::Dwm::*;
-                    use windows::Win32::Foundation::HWND;
-
-                    // Apply acrylic with automatic color matching to Windows theme
-                    let _ = apply_acrylic(&window, None);
-
-                    // Apply rounded corners
-                    let hwnd = HWND(window.hwnd().unwrap().0);
-                    let corner_preference: i32 = DWMWCP_ROUND.0;
-                    unsafe {
-                        let _ = DwmSetWindowAttribute(
-                            hwnd,
-                            DWMWA_WINDOW_CORNER_PREFERENCE,
-                            &corner_preference as *const _ as *const _,
-                            std::mem::size_of::<i32>() as u32,
-                        );
-                    }
-
-                    // Disable window animations (instant hide/show)
-                    let disable_transitions: i32 = 1; // TRUE
-                    unsafe {
-                        let _ = DwmSetWindowAttribute(
-                            hwnd,
-                            DWMWA_TRANSITIONS_FORCEDISABLED,
-                            &disable_transitions as *const _ as *const _,
-                            std::mem::size_of::<i32>() as u32,
-                        );
-                    }
+                    crate::window_utils::apply_standard_window_visuals(&window, "main");
                 }
                 // Position window in bottom-right corner
                 position_window_bottom_right(&window);
@@ -803,9 +752,7 @@ fn main() {
                                 } else {
                                     // Window is hidden and wasn't just hidden - show it
                                     tracing::debug!("[Tray] Showing window");
-                                    position_window_bottom_right(&window);
-                                    let _ = window.show();
-                                    let _ = window.set_focus();
+                                    let _ = show_main_window_internal(&app);
                                 }
                             }
                         }
@@ -828,6 +775,12 @@ fn main() {
                     }
                 })
                 .build(app)?;
+           
+           // Initialise theme before toast to avoid registry read delay
+           theme::update_resolved_theme();
+           
+           // Show launch toast (theme already initialised, no registry read needed)
+           queue_launch_toast(app.handle());
             
             // Spawn a background thread to monitor Windows theme changes
             // and update the tray icon accordingly
@@ -835,8 +788,6 @@ fn main() {
             std::thread::Builder::new()
                 .name("theme-monitor".to_string())
                 .spawn(move || {
-                let mut last_light_mode = is_windows_light_mode();
-                
                 loop {
                     std::thread::sleep(Duration::from_secs(2));
 
@@ -847,25 +798,25 @@ fn main() {
                         break;
                     }
                     
-                    let current_light_mode = is_windows_light_mode();
-                    if current_light_mode != last_light_mode {
-                        last_light_mode = current_light_mode;
-                        
-                        // Update tray icon on the main thread
-                        let app_for_tray = app_handle.clone();
-                        let _ = app_handle.run_on_main_thread(move || {
-                            match app_for_tray.tray_by_id(TRAY_ICON_ID) {
-                                Some(tray) => {
-                                    let new_icon = load_theme_appropriate_icon();
-                                    if let Err(e) = tray.set_icon(Some(new_icon)) {
-                                        tracing::error!("[Theme] Failed to update tray icon: {}", e);
+                    // Only update if in Automatic mode and system theme changed
+                    if theme::get_theme_mode() == theme::ThemeMode::Automatic {
+                        if theme::update_resolved_theme() {
+                            // Theme changed - update tray icon on the main thread
+                            let app_for_tray = app_handle.clone();
+                            let _ = app_handle.run_on_main_thread(move || {
+                                match app_for_tray.tray_by_id(TRAY_ICON_ID) {
+                                    Some(tray) => {
+                                        let new_icon = load_theme_appropriate_icon();
+                                        if let Err(e) = tray.set_icon(Some(new_icon)) {
+                                            tracing::error!("[Theme] Failed to update tray icon: {}", e);
+                                        }
+                                    }
+                                    None => {
+                                        tracing::warn!("[Theme] Could not find tray icon with id '{}'", TRAY_ICON_ID);
                                     }
                                 }
-                                None => {
-                                    tracing::warn!("[Theme] Could not find tray icon with id '{}'", TRAY_ICON_ID);
-                                }
-                            }
-                        });
+                            });
+                        }
                     }
                 }
             }).expect("Failed to spawn theme monitor thread");
@@ -873,6 +824,10 @@ fn main() {
             Ok(())
         })
         .on_window_event(move |window, event| {
+            if window.label() != "main" {
+                return;
+            }
+
             match event {
                 tauri::WindowEvent::CloseRequested { api, .. } => {
                     // Prevent window from closing, hide it instead
@@ -905,7 +860,6 @@ fn main() {
         .invoke_handler(tauri::generate_handler![
             hardware_input::init_input,
             hardware_input::get_input_status,
-            hardware_input::enumerate_input_devices,
             hardware_input::cleanup_input_manager,
             audio_management::init_audio_manager,
             audio_management::get_audio_sessions,
@@ -929,6 +883,12 @@ fn main() {
             load_config_value,
             quit_application,
             open_url,
+            toast_manager::trigger_toast,
+            toast_manager::close_toast_window,
+            theme::get_theme_mode_command,
+            theme::set_theme_mode_command,
+            theme::get_resolved_theme_name_command,
+            theme::get_theme_state_command,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
