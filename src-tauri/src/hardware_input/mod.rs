@@ -34,7 +34,7 @@ const INITIAL_HID_DEVICE_CAPACITY: usize = 32;
 const DEVICE_REENUMERATION_INTERVAL: Duration = Duration::from_secs(2);
 
 /// Axis and button data from a hardware device
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct AxisData {
     pub device_handle: String,
     pub device_name: String,
@@ -414,6 +414,10 @@ pub fn init_input(app: tauri::AppHandle) -> Result<String, String> {
         .spawn(move || {
             tracing::info!("[Input] Dedicated input polling thread running");
 
+            // Last axis/button values emitted to the frontend. Only emit when data has
+            // changed to avoid flooding the JS event queue when no controls are moving.
+            let mut last_emitted_data: Vec<AxisData> = Vec::new();
+
             loop {
                 if shutdown_flag.load(Ordering::Relaxed) {
                     break;
@@ -428,9 +432,14 @@ pub fn init_input(app: tauri::AppHandle) -> Result<String, String> {
                 // Read all axis/button values
                 match manager.read_all_axes() {
                     Ok(data) => {
-                        // Emit to the frontend via Tauri event
-                        if let Err(e) = app.emit("input-axis-data", &data) {
-                            tracing::warn!("[Input] Failed to emit axis data: {}", e);
+                        // Only emit when values have actually changed — avoids sending a
+                        // Tauri event (and triggering JS processing) on every tick when
+                        // the user is not interacting with any hardware control.
+                        if data != last_emitted_data {
+                            if let Err(e) = app.emit("input-axis-data", &data) {
+                                tracing::warn!("[Input] Failed to emit axis data: {}", e);
+                            }
+                            last_emitted_data = data;
                         }
                     }
                     Err(e) => {
@@ -438,7 +447,15 @@ pub fn init_input(app: tauri::AppHandle) -> Result<String, String> {
                     }
                 }
 
-                std::thread::sleep(POLL_INTERVAL);
+                // Sleep for longer when no devices are connected to reduce idle wakeups.
+                // The hot-plug check interval (DEVICE_REENUMERATION_INTERVAL = 2 s) still
+                // governs how quickly we detect newly connected hardware.
+                let sleep_duration = if manager.get_devices().is_empty() {
+                    Duration::from_secs(1)
+                } else {
+                    POLL_INTERVAL
+                };
+                std::thread::sleep(sleep_duration);
             }
 
             manager.cleanup();

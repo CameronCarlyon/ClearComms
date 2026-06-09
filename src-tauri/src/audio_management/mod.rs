@@ -1,7 +1,10 @@
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 use std::sync::mpsc;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::time::{Duration, Instant};
 use std::collections::{HashMap, HashSet};
 use serde::{Serialize, Deserialize};
+use tauri::Emitter;
 
 #[cfg(windows)]
 use windows::{
@@ -14,6 +17,10 @@ use windows::{
     Win32::UI::WindowsAndMessaging::*,
 };
 
+#[cfg(windows)]
+use windows::core::implement;
+#[cfg(windows)]
+use windows::Win32::UI::Shell::PropertiesSystem::PROPERTYKEY;
 #[cfg(windows)]
 use std::ffi::OsStr;
 #[cfg(windows)]
@@ -35,8 +42,16 @@ const INITIAL_SESSION_CAPACITY: usize = 64;
 /// Interval for logging enumerate calls (every N calls)
 const LOG_INTERVAL: usize = 200;
 
+/// How often the audio thread polls its topology-changed flag between commands.
+/// Short enough that device/session changes are noticed promptly.
+const FLAG_CHECK_INTERVAL: Duration = Duration::from_millis(500);
+
+/// Safety-net interval for a proactive full session enumeration.
+/// Catches external volume changes not covered by COM notifications.
+const SAFETY_NET_INTERVAL: Duration = Duration::from_secs(10);
+
 /// Information about an audio session (application)
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct AudioSession {
     pub session_id: String,
     pub display_name: String,
@@ -66,9 +81,6 @@ enum AudioCommand {
         muted: bool,
         reply: mpsc::Sender<std::result::Result<(), String>>,
     },
-    CheckDeviceChanged {
-        reply: mpsc::Sender<std::result::Result<bool, String>>,
-    },
     GetSystemVolume {
         reply: mpsc::Sender<std::result::Result<f32, String>>,
     },
@@ -92,6 +104,12 @@ enum AudioCommand {
 /// Handle to the dedicated audio thread, used by Tauri commands to send messages.
 pub struct AudioThreadHandle {
     sender: mpsc::Sender<AudioCommand>,
+    /// Win32 event handle (as isize) used to signal the notification thread to shut down.
+    #[cfg(windows)]
+    notification_shutdown_event: isize,
+    /// Join handle for the notification background thread.
+    #[cfg(windows)]
+    notification_join_handle: Option<std::thread::JoinHandle<()>>,
 }
 
 impl AudioThreadHandle {
@@ -115,6 +133,48 @@ impl AudioThreadHandle {
     }
 }
 
+/// COM callback object that receives Windows audio endpoint change notifications.
+/// Registered with IMMDeviceEnumerator::RegisterEndpointNotificationCallback on
+/// a dedicated MTA notification thread so callbacks are delivered without needing
+/// a Win32 message pump. Sets an atomic flag that the audio COM thread checks.
+#[cfg(windows)]
+#[implement(IMMNotificationClient)]
+struct DeviceChangeCallback {
+    flag: Arc<AtomicBool>,
+}
+
+#[cfg(windows)]
+impl IMMNotificationClient_Impl for DeviceChangeCallback_Impl {
+    fn OnDeviceStateChanged(&self, _: &PCWSTR, _: DEVICE_STATE) -> windows::core::Result<()> {
+        self.flag.store(true, Ordering::Release);
+        Ok(())
+    }
+    fn OnDeviceAdded(&self, _: &PCWSTR) -> windows::core::Result<()> {
+        self.flag.store(true, Ordering::Release);
+        Ok(())
+    }
+    fn OnDeviceRemoved(&self, _: &PCWSTR) -> windows::core::Result<()> {
+        self.flag.store(true, Ordering::Release);
+        Ok(())
+    }
+    fn OnDefaultDeviceChanged(
+        &self,
+        flow: EDataFlow,
+        role: ERole,
+        _: &PCWSTR,
+    ) -> windows::core::Result<()> {
+        // Only react to the default render endpoint used for console applications —
+        // this is the device that the Windows Volume Mixer targets.
+        if flow == eRender && role == eConsole {
+            self.flag.store(true, Ordering::Release);
+        }
+        Ok(())
+    }
+    fn OnPropertyValueChanged(&self, _: &PCWSTR, _: &PROPERTYKEY) -> windows::core::Result<()> {
+        Ok(())
+    }
+}
+
 /// Manages Windows Core Audio API for application volume control.
 /// Lives exclusively on the dedicated audio thread.
 struct AudioManager {
@@ -122,13 +182,22 @@ struct AudioManager {
     current_device_id: String,
     enumerate_calls: usize,
     last_logged_counts: Option<(usize, usize)>,
-    /// Cached COM objects — only recreated on device change (Fix 3)
+    /// Cached COM objects — only recreated on device change
     #[cfg(windows)]
     cached_enumerator: Option<IMMDeviceEnumerator>,
     #[cfg(windows)]
     cached_device: Option<IMMDevice>,
     #[cfg(windows)]
     cached_endpoint_volume: Option<IAudioEndpointVolume>,
+    /// Kept alive so the IMMNotificationClient registration remains active.
+    #[cfg(windows)]
+    device_notification: Option<IMMNotificationClient>,
+    /// Shared flag set by the IMMNotificationClient callback when audio topology changes.
+    topology_changed_flag: Arc<AtomicBool>,
+    /// Tauri app handle for emitting push events to the frontend.
+    app_handle: tauri::AppHandle,
+    /// Last session list emitted to the frontend; used for change detection.
+    last_emitted_sessions: Vec<AudioSession>,
 }
 
 #[cfg(windows)]
@@ -427,7 +496,7 @@ fn get_window_title(process_id: u32) -> Option<String> {
 impl AudioManager {
     /// Create a new audio manager instance.
     /// Must be called on the dedicated audio thread after CoInitializeEx.
-    fn new() -> std::result::Result<Self, String> {
+    fn new(app_handle: tauri::AppHandle, topology_changed_flag: Arc<AtomicBool>) -> std::result::Result<Self, String> {
         tracing::info!("[Audio] Detecting default audio device...");
         let device_id = Self::get_default_device_id_fresh()?;
         tracing::info!("[Audio] Default device: {}", device_id);
@@ -440,9 +509,13 @@ impl AudioManager {
             cached_enumerator: None,
             cached_device: None,
             cached_endpoint_volume: None,
+            device_notification: None,
+            topology_changed_flag,
+            app_handle,
+            last_emitted_sessions: Vec::new(),
         };
         
-        // Pre-populate the COM cache
+        // Pre-populate the COM cache and register the notification client
         mgr.rebuild_com_cache()?;
         
         Ok(mgr)
@@ -450,8 +523,17 @@ impl AudioManager {
     
     /// Build or rebuild the cached COM object chain.
     /// Called once at init and again whenever the default device changes.
+    /// Re-registers the IMMNotificationClient on the new enumerator.
     fn rebuild_com_cache(&mut self) -> std::result::Result<(), String> {
         unsafe {
+            // Unregister the old notification client before dropping the enumerator
+            if let (Some(ref enumerator), Some(ref client)) =
+                (&self.cached_enumerator, &self.device_notification)
+            {
+                enumerator.UnregisterEndpointNotificationCallback(client).ok();
+            }
+            self.device_notification = None;
+
             let enumerator: IMMDeviceEnumerator = CoCreateInstance(
                 &MMDeviceEnumerator,
                 None,
@@ -465,6 +547,15 @@ impl AudioManager {
             let endpoint_volume: IAudioEndpointVolume = device
                 .Activate(CLSCTX_ALL, None)
                 .map_err(|e: Error| format!("Failed to activate endpoint volume: {}", e))?;
+
+            // Register a new notification client using the topology_changed_flag.
+            // The callback is held in self.device_notification to keep the COM object alive.
+            let callback: IMMNotificationClient =
+                DeviceChangeCallback { flag: self.topology_changed_flag.clone() }.into();
+            enumerator
+                .RegisterEndpointNotificationCallback(&callback)
+                .map_err(|e: Error| format!("Failed to register device notification: {}", e))?;
+            self.device_notification = Some(callback);
 
             self.cached_enumerator = Some(enumerator);
             self.cached_device = Some(device);
@@ -951,6 +1042,23 @@ impl AudioManager {
             }
         }
     }
+
+    /// Enumerates active audio sessions and emits an `audio-state-updated` Tauri event
+    /// to the frontend only when the session list has changed since the last emission.
+    /// This is the push-notification mechanism that replaces frontend polling.
+    fn emit_if_changed(&mut self) {
+        match self.enumerate_sessions() {
+            Ok(sessions) => {
+                if sessions != self.last_emitted_sessions {
+                    if let Err(e) = self.app_handle.emit("audio-state-updated", &sessions) {
+                        tracing::warn!("[Audio] Failed to emit audio-state-updated: {}", e);
+                    }
+                    self.last_emitted_sessions = sessions;
+                }
+            }
+            Err(e) => tracing::warn!("[Audio] emit_if_changed: enumerate_sessions failed: {}", e),
+        }
+    }
 }
 
 #[cfg(windows)]
@@ -958,7 +1066,18 @@ impl AudioManager {
     /// Explicit cleanup method for proper resource management
     fn cleanup(&mut self) {
         tracing::info!("[Audio] Cleaning up audio manager resources...");
-        
+
+        // Unregister the IMMNotificationClient before dropping the enumerator —
+        // the enumerator must still be valid when UnregisterEndpointNotificationCallback is called.
+        unsafe {
+            if let (Some(ref enumerator), Some(ref client)) =
+                (&self.cached_enumerator, &self.device_notification)
+            {
+                enumerator.UnregisterEndpointNotificationCallback(client).ok();
+            }
+        }
+        self.device_notification = None;
+
         // Drop cached COM objects
         self.cached_endpoint_volume = None;
         self.cached_device = None;
@@ -980,6 +1099,87 @@ impl AudioManager {
 // so Drop does not need to handle it.
 
 // ─────────────────────────────────────────────────────────────────────────────
+// IMMNotificationClient — Notification Thread
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// Spawns a dedicated MTA COM thread whose sole purpose is to keep an
+/// `IMMNotificationClient` registration alive and deliver audio-topology
+/// change events to the audio COM thread via a shared atomic flag.
+///
+/// Using a separate MTA thread avoids the need for a Win32 message pump on
+/// the STA audio COM thread — MTA callbacks are delivered directly on the
+/// MMDevice notification thread rather than being marshalled through a pump.
+///
+/// # Shutdown
+/// Signal `shutdown_event` with `SetEvent` and then join the returned handle
+/// for a clean exit.
+#[cfg(windows)]
+fn spawn_notification_thread(
+    topology_changed_flag: Arc<AtomicBool>,
+    shutdown_event: isize,
+) -> std::result::Result<std::thread::JoinHandle<()>, String> {
+    std::thread::Builder::new()
+        .name("audio-notify".to_string())
+        .spawn(move || {
+            unsafe {
+                // MTA apartment: callbacks are delivered directly on the
+                // MMDevice notification thread — no message pump required.
+                if CoInitializeEx(None, COINIT_MULTITHREADED).ok().is_err() {
+                    tracing::error!("[AudioNotify] CoInitializeEx failed");
+                    return;
+                }
+            }
+
+            let result = run_notification_loop(topology_changed_flag, shutdown_event);
+            if let Err(e) = result {
+                tracing::error!("[AudioNotify] Notification loop error: {}", e);
+            }
+
+            unsafe { CoUninitialize(); }
+            tracing::info!("[AudioNotify] Notification thread exited");
+        })
+        .map_err(|e| format!("Failed to spawn notification thread: {}", e))
+}
+
+/// Inner loop for the notification thread. Registers an IMMNotificationClient
+/// with the device enumerator and waits until the shutdown event is signalled.
+#[cfg(windows)]
+fn run_notification_loop(
+    topology_changed_flag: Arc<AtomicBool>,
+    shutdown_event: isize,
+) -> std::result::Result<(), String> {
+    unsafe {
+        let enumerator: IMMDeviceEnumerator = CoCreateInstance(
+            &MMDeviceEnumerator,
+            None,
+            CLSCTX_ALL,
+        ).map_err(|e: Error| format!("Failed to create device enumerator: {}", e))?;
+
+        let callback: IMMNotificationClient =
+            DeviceChangeCallback { flag: topology_changed_flag }.into();
+
+        enumerator
+            .RegisterEndpointNotificationCallback(&callback)
+            .map_err(|e: Error| format!("Failed to register notification callback: {}", e))?;
+
+        tracing::info!("[AudioNotify] IMMNotificationClient registered — waiting for events");
+
+        // Block until the shutdown event is signalled. Zero CPU usage while idle.
+        WaitForSingleObject(
+            HANDLE(shutdown_event as *mut std::ffi::c_void),
+            INFINITE,
+        );
+
+        enumerator
+            .UnregisterEndpointNotificationCallback(&callback)
+            .ok();
+
+        tracing::info!("[AudioNotify] IMMNotificationClient unregistered");
+        Ok(())
+    }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // Dedicated Audio Thread
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -988,19 +1188,40 @@ static AUDIO_THREAD_HANDLE: Mutex<Option<AudioThreadHandle>> = Mutex::new(None);
 
 /// Spawn the dedicated audio thread. CoInitializeEx is called at the top of
 /// the thread and CoUninitialize when it exits. The thread processes commands
-/// from the mpsc channel until it receives Shutdown (or the channel closes).
+/// from the mpsc channel, also waking periodically to check the topology-changed
+/// flag and run the safety-net session enumeration.
 #[cfg(windows)]
-fn spawn_audio_thread() -> std::result::Result<AudioThreadHandle, String> {
+fn spawn_audio_thread(app_handle: tauri::AppHandle) -> std::result::Result<AudioThreadHandle, String> {
     let (tx, rx) = mpsc::channel::<AudioCommand>();
+
+    // Create the shared flag that the notification thread sets on topology changes
+    let topology_changed_flag = Arc::new(AtomicBool::new(false));
+
+    // Create the Win32 event used to signal the notification thread to shut down.
+    // Manual-reset event, initially unsignalled.
+    let notification_shutdown_event: isize = unsafe {
+        let h = CreateEventW(None, true, false, None)
+            .map_err(|e| format!("Failed to create notification shutdown event: {}", e))?;
+        h.0 as isize
+    };
+
+    // Spawn the notification thread — it registers IMMNotificationClient on a
+    // dedicated MTA thread so callbacks arrive without needing a message pump.
+    let notification_thread = spawn_notification_thread(
+        topology_changed_flag.clone(),
+        notification_shutdown_event,
+    )?;
+
+    // Clone the flag for passing into the audio thread closure
+    let flag_for_manager = topology_changed_flag.clone();
 
     std::thread::Builder::new()
         .name("audio-com".to_string())
         .spawn(move || {
-            // Initialise COM on this dedicated thread
+            // Initialise COM on this dedicated thread using a single-threaded apartment
             unsafe {
                 if let Err(e) = CoInitializeEx(None, COINIT_APARTMENTTHREADED).ok() {
                     tracing::error!("[Audio] CoInitializeEx failed on audio thread: {}", e);
-                    // Drain any waiting commands with an error
                     while let Ok(cmd) = rx.try_recv() {
                         reply_error(cmd, format!("COM init failed: {}", e));
                     }
@@ -1008,7 +1229,7 @@ fn spawn_audio_thread() -> std::result::Result<AudioThreadHandle, String> {
                 }
             }
 
-            let manager_result = AudioManager::new();
+            let manager_result = AudioManager::new(app_handle, flag_for_manager);
             let mut manager = match manager_result {
                 Ok(m) => m,
                 Err(e) => {
@@ -1021,43 +1242,81 @@ fn spawn_audio_thread() -> std::result::Result<AudioThreadHandle, String> {
                 }
             };
 
+            // Emit the initial session list immediately so the frontend has data on startup
+            manager.emit_if_changed();
+
             tracing::info!("[Audio] Dedicated audio thread running");
 
-            // Process commands until shutdown or channel disconnect
-            while let Ok(cmd) = rx.recv() {
-                match cmd {
-                    AudioCommand::EnumerateSessions { reply } => {
-                        let _ = reply.send(manager.enumerate_sessions());
+            // Proactive safety-net timer: catches external volume changes not signalled by COM callbacks
+            let mut last_safety_net_check = Instant::now();
+
+            // Event-driven main loop: wakes on commands OR on the flag-check interval.
+            // The flag-check interval is short (FLAG_CHECK_INTERVAL) to ensure COM notifications
+            // (device add/remove/default change) are picked up promptly.
+            loop {
+                match rx.recv_timeout(FLAG_CHECK_INTERVAL) {
+                    Ok(cmd) => {
+                        match cmd {
+                            AudioCommand::EnumerateSessions { reply } => {
+                                let _ = reply.send(manager.enumerate_sessions());
+                            }
+                            AudioCommand::SetSessionVolume { session_id, volume, reply } => {
+                                let _ = reply.send(manager.set_session_volume(&session_id, volume));
+                            }
+                            AudioCommand::SetSessionMute { session_id, muted, reply } => {
+                                let _ = reply.send(manager.set_session_mute(&session_id, muted));
+                            }
+                            AudioCommand::GetSystemVolume { reply } => {
+                                let _ = reply.send(manager.get_system_volume());
+                            }
+                            AudioCommand::GetSystemMute { reply } => {
+                                let _ = reply.send(manager.get_system_mute());
+                            }
+                            AudioCommand::SetSystemVolume { volume, reply } => {
+                                let _ = reply.send(manager.set_system_volume(volume));
+                            }
+                            AudioCommand::SetSystemMute { muted, reply } => {
+                                let _ = reply.send(manager.set_system_mute(muted));
+                            }
+                            AudioCommand::Cleanup { reply } => {
+                                manager.cleanup();
+                                let _ = reply.send(Ok("Audio manager cleaned up successfully".to_string()));
+                            }
+                            AudioCommand::Shutdown => {
+                                tracing::info!("[Audio] Shutdown command received");
+                                break;
+                            }
+                        }
                     }
-                    AudioCommand::SetSessionVolume { session_id, volume, reply } => {
-                        let _ = reply.send(manager.set_session_volume(&session_id, volume));
+                    Err(mpsc::RecvTimeoutError::Timeout) => {
+                        // Normal wake — check notification flags and safety-net timer below
                     }
-                    AudioCommand::SetSessionMute { session_id, muted, reply } => {
-                        let _ = reply.send(manager.set_session_mute(&session_id, muted));
-                    }
-                    AudioCommand::CheckDeviceChanged { reply } => {
-                        let _ = reply.send(manager.check_device_changed());
-                    }
-                    AudioCommand::GetSystemVolume { reply } => {
-                        let _ = reply.send(manager.get_system_volume());
-                    }
-                    AudioCommand::GetSystemMute { reply } => {
-                        let _ = reply.send(manager.get_system_mute());
-                    }
-                    AudioCommand::SetSystemVolume { volume, reply } => {
-                        let _ = reply.send(manager.set_system_volume(volume));
-                    }
-                    AudioCommand::SetSystemMute { muted, reply } => {
-                        let _ = reply.send(manager.set_system_mute(muted));
-                    }
-                    AudioCommand::Cleanup { reply } => {
-                        manager.cleanup();
-                        let _ = reply.send(Ok("Audio manager cleaned up successfully".to_string()));
-                    }
-                    AudioCommand::Shutdown => {
-                        tracing::info!("[Audio] Shutdown command received");
+                    Err(mpsc::RecvTimeoutError::Disconnected) => {
+                        tracing::warn!("[Audio] Command channel disconnected — exiting");
                         break;
                     }
+                }
+
+                // Check whether the IMMNotificationClient has signalled a topology change.
+                // The flag is set by the notification thread on device add/remove/default change.
+                if topology_changed_flag.swap(false, Ordering::AcqRel) {
+                    tracing::debug!("[Audio] Topology change detected — rebuilding COM cache");
+                    // check_device_changed rebuilds the COM cache only when the default
+                    // render endpoint has actually changed, avoiding unnecessary work.
+                    if let Err(e) = manager.check_device_changed() {
+                        tracing::warn!("[Audio] check_device_changed after topology event: {}", e);
+                    }
+                    manager.emit_if_changed();
+                    last_safety_net_check = Instant::now(); // Reset safety-net timer
+                    continue;
+                }
+
+                // Safety-net proactive check: runs every SAFETY_NET_INTERVAL (10 s) to catch
+                // external volume changes that COM notifications do not cover (e.g. another
+                // application adjusting a per-session volume via the Windows Volume Mixer).
+                if last_safety_net_check.elapsed() >= SAFETY_NET_INTERVAL {
+                    last_safety_net_check = Instant::now();
+                    manager.emit_if_changed();
                 }
             }
 
@@ -1068,7 +1327,11 @@ fn spawn_audio_thread() -> std::result::Result<AudioThreadHandle, String> {
         })
         .map_err(|e| format!("Failed to spawn audio thread: {}", e))?;
 
-    Ok(AudioThreadHandle { sender: tx })
+    Ok(AudioThreadHandle {
+        sender: tx,
+        notification_shutdown_event,
+        notification_join_handle: Some(notification_thread),
+    })
 }
 
 /// Helper: send an error reply for any command variant when the thread cannot process it.
@@ -1078,7 +1341,6 @@ fn reply_error(cmd: AudioCommand, err: String) {
         AudioCommand::EnumerateSessions { reply } => { let _ = reply.send(Err(err)); }
         AudioCommand::SetSessionVolume { reply, .. } => { let _ = reply.send(Err(err)); }
         AudioCommand::SetSessionMute { reply, .. } => { let _ = reply.send(Err(err)); }
-        AudioCommand::CheckDeviceChanged { reply } => { let _ = reply.send(Err(err)); }
         AudioCommand::GetSystemVolume { reply } => { let _ = reply.send(Err(err)); }
         AudioCommand::GetSystemMute { reply } => { let _ = reply.send(Err(err)); }
         AudioCommand::SetSystemVolume { reply, .. } => { let _ = reply.send(Err(err)); }
@@ -1109,9 +1371,10 @@ fn with_handle<T>(
 // Tauri Commands — thin wrappers that send/receive via the channel
 // ─────────────────────────────────────────────────────────────────────────────
 
-/// Initialise the audio manager on a dedicated COM thread
+/// Initialise the audio manager on a dedicated COM thread.
+/// Tauri automatically injects the `AppHandle` when this command is invoked.
 #[tauri::command]
-pub fn init_audio_manager() -> std::result::Result<String, String> {
+pub fn init_audio_manager(app: tauri::AppHandle) -> std::result::Result<String, String> {
     let mut lock = AUDIO_THREAD_HANDLE
         .lock()
         .map_err(|e| format!("Failed to lock audio thread handle: {}", e))?;
@@ -1126,7 +1389,7 @@ pub fn init_audio_manager() -> std::result::Result<String, String> {
     }
 
     tracing::info!("[Audio] Spawning dedicated audio thread...");
-    let handle = spawn_audio_thread()?;
+    let handle = spawn_audio_thread(app)?;
     *lock = Some(handle);
 
     tracing::info!("[Audio] Audio manager ready (dedicated thread)");
@@ -1149,12 +1412,6 @@ pub fn set_session_volume(session_id: String, volume: f32) -> std::result::Resul
 #[tauri::command]
 pub fn set_session_mute(session_id: String, muted: bool) -> std::result::Result<(), String> {
     with_handle(|h| h.send_and_recv(|reply| AudioCommand::SetSessionMute { session_id: session_id.clone(), muted, reply }))
-}
-
-/// Check if the default audio device has changed
-#[tauri::command]
-pub fn check_default_device_changed() -> std::result::Result<bool, String> {
-    with_handle(|h| h.send_and_recv(|reply| AudioCommand::CheckDeviceChanged { reply }))
 }
 
 /// Clean up audio manager resources
@@ -1187,13 +1444,35 @@ pub fn set_system_mute(muted: bool) -> std::result::Result<(), String> {
     with_handle(|h| h.send_and_recv(|reply| AudioCommand::SetSystemMute { muted, reply }))
 }
 
-/// Send a shutdown signal to the audio thread.
+/// Send a shutdown signal to the audio thread and the notification thread.
 /// Called during app shutdown to ensure clean COM teardown.
 pub fn shutdown_audio_thread() {
     if let Ok(mut lock) = AUDIO_THREAD_HANDLE.lock() {
         if let Some(handle) = lock.take() {
+            // Signal the audio COM thread to shut down
             let _ = handle.sender.send(AudioCommand::Shutdown);
             tracing::info!("[Audio] Shutdown signal sent to audio thread");
+
+            // Signal the notification thread to shut down and join it cleanly
+            #[cfg(windows)]
+            if handle.notification_shutdown_event != 0 {
+                unsafe {
+                    SetEvent(
+                        HANDLE(handle.notification_shutdown_event as *mut std::ffi::c_void)
+                    ).ok();
+                }
+                if let Some(thread) = handle.notification_join_handle {
+                    if let Err(e) = thread.join() {
+                        tracing::error!("[Audio] Failed to join notification thread: {:?}", e);
+                    }
+                }
+                // Close the Win32 event handle
+                unsafe {
+                    CloseHandle(
+                        HANDLE(handle.notification_shutdown_event as *mut std::ffi::c_void)
+                    ).ok();
+                }
+            }
         }
     }
 }

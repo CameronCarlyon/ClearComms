@@ -108,3 +108,15 @@ export interface DisplayInfo {
   /** Maximum permissible window height in physical pixels */
   maxWindowHeight: number;
 }
+
+/** Simulator connection status returned from the Rust backend */
+export interface SimStatus {
+  /** True when SimConnect is open and dispatching */
+  connected: boolean;
+  /** True when the MobiFlight WASM module responded to the last ping */
+  wasmPresent: boolean;
+  /** Currently loaded aircraft title, if known */
+  aircraftTitle: string | null;
+  /** Detected simulator version: "2020", "2024", or "unknown" */
+  simVersion: string;
+}

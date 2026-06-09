@@ -20,6 +20,7 @@
   } from "$lib/components";
   import { formatProcessName, applyDisplayNameOverride, SYSTEM_VOLUME_ID, SYSTEM_VOLUME_PROCESS_NAME, SYSTEM_VOLUME_DISPLAY_NAME, isSystemVolume } from "$lib/stores/audioStore";
   import { initTheme, theme, applyTheme } from "$lib/stores/themeStore";
+  import { startSimStatusListener, stopSimStatusListener, simStatus } from '$lib/stores/simStore.svelte';
 
 
   // ─────────────────────────────────────────────────────────────────────────────
@@ -44,7 +45,8 @@
   let appFriendlyNames = $state<Map<string, string>>(new Map()); // processName -> friendlyName
   let windowPinned = $state(false);
   let pollingInterval: number | null = null;
-  let audioMonitorInterval: number | null = null;
+  /** Unlisten handle for the audio-state-updated push event from the Rust backend */
+  let unlistenAudioState: UnlistenFn | null = null;
   let isPolling = $state(false);
   let initStatus = $state("Initialising...");
   let audioInitialised = $state(false);
@@ -70,6 +72,7 @@
   let closeMenuExpanded = $state(false);
   let dockOpen = $state(false);
   let addAppComponentKey = $state(0);
+  let stopSimStatusListenerFn: (() => void) | null = null;
 
 
   // ─────────────────────────────────────────────────────────────────────────────
@@ -563,6 +566,9 @@
 
   onDestroy(() => {
     stopPolling();
+    if (stopSimStatusListenerFn) {
+      stopSimStatusListenerFn();
+    }
     cleanupAllAnimations();
     cleanupAllLiveVolumeStates();
     cleanupAllCaches();
@@ -592,13 +598,19 @@
 
       if (audioResult.status === "fulfilled") {
         audioInitialised = true;
+        // The audio thread emits the initial session list immediately after init,
+        // but fetch once here as a guarantee in case the event arrives before the
+        // listener is registered below.
         await refreshAudioSessions();
       } else {
         console.warn("Audio manager failed (non-critical):", audioResult.reason);
       }
 
-      initStatus = "Starting real-time polling...";
+      initStatus = "Starting real-time monitoring...";
       startPolling();
+      
+      // Start listening for simulator status change events
+      stopSimStatusListenerFn = await startSimStatusListener();
 
       initStatus = "Ready";
       errorMsg = "";
@@ -630,13 +642,18 @@
     
     isPolling = true;
 
-    // Listen for axis data events emitted by the dedicated Rust input thread
+    // Listen for axis data events emitted by the dedicated Rust input thread.
+    // The Rust thread only emits when values have changed, so this fires at
+    // most at the poll cadence and only when hardware is being moved.
     listen<AxisData[]>('input-axis-data', (event) => {
       handleAxisData(event.payload);
     }).then((unlisten) => {
       unlistenInputAxis = unlisten;
     });
-    
+
+    // Listen for audio session push events from the Rust audio COM thread.
+    // The backend emits this when it detects topology changes (device add/remove,
+    // session start/stop, external volume change) — no frontend polling required.
     startAudioMonitoring();
     startMemoryMonitoring();
     startMemoryProfiler();
@@ -659,37 +676,52 @@
     stopMemoryProfiler();
   }
 
-  let lastAudioRefresh = 0;
-  const AUDIO_REFRESH_MIN_INTERVAL = 2000;
-
+  /**
+   * Subscribe to the `audio-state-updated` push event emitted by the Rust audio
+   * COM thread whenever the session topology or volumes change. Replaces the
+   * previous setInterval-based approach which polled every 1 second.
+   */
   function startAudioMonitoring() {
-    if (audioMonitorInterval) return;
-    
-    audioMonitorInterval = setInterval(async () => {
-      try {
-        const deviceChanged = await invoke<boolean>("check_default_device_changed");
-        const now = Date.now();
-        if (deviceChanged || (now - lastAudioRefresh > AUDIO_REFRESH_MIN_INTERVAL)) {
-          lastAudioRefresh = now;
-          await refreshAudioSessions();
-        }
-      } catch (error) {
-        console.error("Audio monitoring error:", error);
-      }
-    }, 1000); // Poll every 1s for external audio changes (reduces COM object pressure)
+    if (unlistenAudioState) return;
+
+    listen<AudioSession[]>('audio-state-updated', async (event) => {
+      await handleAudioStateUpdate(event.payload);
+    }).then((unlisten) => {
+      unlistenAudioState = unlisten;
+    }).catch((e) => {
+      console.error("Failed to subscribe to audio-state-updated:", e);
+    });
   }
 
   function stopAudioMonitoring() {
-    if (audioMonitorInterval) {
-      clearInterval(audioMonitorInterval);
-      audioMonitorInterval = null;
+    if (unlistenAudioState) {
+      unlistenAudioState();
+      unlistenAudioState = null;
     }
   }
 
+  /**
+   * Fetch the latest audio sessions from the backend and apply them.
+   * Used on startup and as a manual force-refresh. Ongoing updates arrive
+   * via the `audio-state-updated` push event handled by `handleAudioStateUpdate`.
+   */
   async function refreshAudioSessions() {
     try {
       const sessions = await invoke<AudioSession[]>("get_audio_sessions");
-      
+      await handleAudioStateUpdate(sessions);
+    } catch (error) {
+      console.error("Error getting audio sessions:", error);
+      errorMsg = `Audio error: ${error}`;
+    }
+  }
+
+  /**
+   * Process an incoming session list — either from a manual `get_audio_sessions`
+   * call or from the `audio-state-updated` push event. Merges new data with
+   * existing UI state (preserving manual control, animations) and optionally
+   * augments the list with the system volume session when it is bound.
+   */
+  async function handleAudioStateUpdate(sessions: AudioSession[]) {
       // Build a lookup map once to avoid O(n²) findIndex scans
       const existingById = new Map(audioSessions.map(s => [s.session_id, s]));
       
@@ -803,10 +835,6 @@
       }
       
       cleanupStaleMappings();
-    } catch (error) {
-      console.error("Error getting audio sessions:", error);
-      errorMsg = `Audio error: ${error}`;
-    }
   }
 
   function cleanupStaleMappings() {
@@ -1918,7 +1946,7 @@
       <p class="status-text">Initialising...</p>
     {/if}
 
-    <Footer />
+    <Footer simStatus={simStatus} />
 
   </main>
 {:else}

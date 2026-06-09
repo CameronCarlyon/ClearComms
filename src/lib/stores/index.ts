@@ -4,3 +4,4 @@
  */
 export * from './audioStore';
 export * from './themeStore';
+export * from './simStore.svelte';
