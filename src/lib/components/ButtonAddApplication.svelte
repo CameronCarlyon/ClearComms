@@ -30,6 +30,19 @@
       dispatch('select', { processName: event.detail.processName });
     }
   }
+
+  /** Track previous expanded state to reset animation on each open. */
+  let prevExpanded = $state(false);
+  /** Key value to force re-mount of the {#each} block when the menu opens. */
+  let animationKey = $state(0);
+
+  $effect(() => {
+    if (expanded && !prevExpanded) {
+      // Menu just opened - increment key to force re-mount and restart animations
+      animationKey++;
+    }
+    prevExpanded = expanded;
+  });
 </script>
 
 <ButtonExpandable
@@ -40,14 +53,20 @@
   title={availableSessions.length > 0 ? (expanded ? "Close" : "Add Application") : "No applications available"}
 >
   {#snippet children()}
-    {#each availableSessions as session, index}
-      <ListOption
-        processName={session.process_name}
-        displayName={applyDisplayNameOverride(session.display_name || formatProcessName(session.process_name), session.process_name)}
-        animationIndex={index + 3}
-        animationType="fadeIn"
-        on:select={handleSelect}
-      />
-    {/each}
+    {#key animationKey}
+      {#each availableSessions as session, i}
+        {@const delay = (0.2 + i * 0.05).toFixed(2)}
+        <span class="expandable__item">
+          <ListOption
+            processName={session.process_name}
+            displayName={applyDisplayNameOverride(session.display_name || formatProcessName(session.process_name), session.process_name)}
+            animationDelay={delay + 's'}
+            visible={true}
+            on:select={handleSelect}
+          />
+        </span>
+      {/each}
+    {/key}
   {/snippet}
 </ButtonExpandable>
+

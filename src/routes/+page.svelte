@@ -1946,7 +1946,7 @@
       <p class="status-text">Initialising...</p>
     {/if}
 
-    <Footer simStatus={simStatus} />
+    <Footer />
 
   </main>
 {:else}

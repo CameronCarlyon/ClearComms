@@ -33,30 +33,25 @@
     children
   }: Props = $props();
 
-  let openRenderCycle = $state(0);
-  
   function handleClick() {
-    if (!expanded) {
-      openRenderCycle += 1;
-    }
     expanded = !expanded;
   }
 </script>
 
-<div 
+<div
   class="btn-expandable {variant} anchor-{anchor} {className}"
   class:expanded
   class:onboarding
 >
-  {#if expanded && children}
-    {#key openRenderCycle}
-      <div class="btn-expandable__list {className}" role="listbox">
+  <div class="btn-expandable__list {className}" role="listbox" aria-hidden={!expanded}>
+    {#key expanded}
+      {#if expanded && children}
         {@render children()}
-      </div>
+      {/if}
     {/key}
-  {/if}
+  </div>
   
-  <button 
+  <button
     class="btn-expandable__trigger"
     onclick={handleClick}
     {disabled}
@@ -206,5 +201,21 @@
 
   .btn-expandable__list::-webkit-scrollbar {
     display: none;
+  }
+
+  /* Sequential fade-in for expandable menu items.
+     Each child sets its own animation-delay inline via style attribute. */
+  .btn-expandable__list > :global(.expandable__item) {
+    opacity: 0;
+  }
+
+  .btn-expandable.expanded .btn-expandable__list > :global(.expandable__item) {
+    opacity: 0;
+    animation: expandableFadeIn 0.25s ease forwards;
+  }
+
+  @keyframes expandableFadeIn {
+    from { opacity: 0; }
+    to { opacity: 1; }
   }
 </style>

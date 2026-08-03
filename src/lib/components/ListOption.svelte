@@ -12,21 +12,20 @@
     warning?: boolean;
     ariaLabel?: string;
     fullWidth?: boolean;
-    animationIndex?: number;
-    animationType?: 'fadeInSlide' | 'fadeIn';
     class?: string;
+    /** CSS animation delay in seconds for sequential entrance animation. */
+    animationDelay?: string;
   }
   
-  let { 
-    processName, 
+  let {
+    processName,
     displayName,
     danger = false,
     warning = false,
     ariaLabel,
     fullWidth = false,
-    animationIndex = 0,
-    animationType = 'fadeInSlide',
-    class: className = ''
+    class: className = '',
+    animationDelay = '0s'
   }: Props = $props();
   
   const dispatch = createEventDispatcher<{
@@ -37,19 +36,37 @@
     e.stopPropagation();
     dispatch('select', { processName });
   }
+
+  /** Action to trigger a fade-in transition after mount.
+   *  Uses CSS transition by setting opacity after a reflow. */
+  function fadeIn(node: HTMLElement, delaySec: string) {
+    // Start invisible
+    node.style.opacity = '0';
+    // Force reflow
+    void node.offsetHeight;
+    // Set the transition with the specified delay
+    node.style.transition = `opacity 0.25s ease ${delaySec}`;
+    // Trigger the transition
+    node.style.opacity = '1';
+    return {
+      destroy() {
+        node.style.transition = '';
+        node.style.opacity = '';
+      }
+    };
+  }
 </script>
 
-<button 
+<button
   class="list-option {className}"
   class:danger
   class:warning
   class:full-width={fullWidth}
-  class:fade-in={animationType === 'fadeIn'}
   role="option"
   aria-selected="false"
   onclick={handleClick}
   aria-label={ariaLabel || (displayName ? `Select ${displayName}` : '')}
-  style="--animation-delay: {animationIndex * 0.05}s"
+  use:fadeIn={animationDelay}
 >
   {displayName || ''}
 </button>
@@ -78,42 +95,12 @@
     overflow: hidden;
     text-overflow: ellipsis;
     flex-shrink: 0;
-    animation-name: fadeInSlide;
-    animation-duration: 0.25s;
-    animation-timing-function: ease-out;
-    animation-fill-mode: forwards;
-    animation-delay: var(--animation-delay, 0s);
-    opacity: 0;
     height: 46px;
     min-height: 46px;
   }
 
   .close-option {
     text-align: center;
-  }
-
-  @keyframes fadeInSlide {
-    from {
-      opacity: 0;
-      transform: translateY(-8px);
-    }
-    to {
-      opacity: 1;
-      transform: translateY(0);
-    }
-  }
-  
-  .list-option.fade-in {
-    animation-name: fadeIn;
-  }
-  
-  @keyframes fadeIn {
-    from {
-      opacity: 0;
-    }
-    to {
-      opacity: 1;
-    }
   }
 
   .list-option.full-width {
@@ -142,4 +129,5 @@
     color: white !important;
     box-shadow: 0 0 80px rgba(255, 140, 0, 0.5);
   }
+
 </style>

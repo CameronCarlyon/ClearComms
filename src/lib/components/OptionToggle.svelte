@@ -9,8 +9,6 @@
     disabled?: boolean;
     ariaLabel?: string;
     title?: string;
-    animationIndex?: number;
-    animationType?: 'fadeInSlide' | 'fadeIn';
     ontoggle?: (detail: { checked: boolean }) => void;
   }
 
@@ -20,8 +18,6 @@
     disabled = false,
     ariaLabel,
     title,
-    animationIndex = 0,
-    animationType = 'fadeInSlide',
     ontoggle
   }: Props = $props();
 
@@ -39,14 +35,12 @@
   class="option-toggle"
   class:checked
   class:disabled
-  class:fade-in={animationType === 'fadeIn'}
   type="button"
   role="switch"
   aria-checked={checked}
   aria-label={ariaLabel || `Toggle ${label}`}
   {title}
   onclick={handleClick}
-  style="--animation-delay: {animationIndex * 0.05}s"
   disabled={disabled || undefined}
 >
   <span class="option-toggle__dot" aria-hidden="true"></span>
@@ -66,7 +60,6 @@
     height: 46px;
     box-sizing: border-box;
     background: transparent;
-    animation-delay: var(--animation-delay, 0s);
     border: none;
     border-radius: 999px;
     color: var(--text-primary);
@@ -75,15 +68,6 @@
     transition:
       background 300ms ease,
       transform 120ms ease;
-    animation-name: fadeInSlide;
-    animation-duration: 0.25s;
-    animation-timing-function: ease-out;
-    animation-fill-mode: forwards;
-    opacity: 0;
-  }
-
-  .option-toggle.fade-in {
-    animation-name: fadeIn;
   }
 
   .option-toggle__label {
@@ -188,23 +172,4 @@
     100% { width: var(--dot-size); }
   }
 
-  @keyframes fadeInSlide {
-    from {
-      opacity: 0;
-      transform: translateY(-8px);
-    }
-    to {
-      opacity: 1;
-      transform: translateY(0);
-    }
-  }
-
-  @keyframes fadeIn {
-    from {
-      opacity: 0;
-    }
-    to {
-      opacity: 1;
-    }
-  }
 </style>

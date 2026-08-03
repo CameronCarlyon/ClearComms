@@ -84,11 +84,18 @@ pub fn spawn_sim_detection_thread(
     let handle = std::thread::Builder::new()
         .name("sim-detection".to_string())
         .spawn(move || {
-            run_detection(sender, shutdown_event_int);
-            // Close the shutdown handle on thread exit
-            unsafe {
-                CloseHandle(HANDLE(shutdown_event_int as *mut std::ffi::c_void)).ok();
+            // RAII guard ensures the event handle is closed even if the thread panics.
+            struct EventGuard(isize);
+            impl Drop for EventGuard {
+                fn drop(&mut self) {
+                    unsafe {
+                        CloseHandle(HANDLE(self.0 as *mut std::ffi::c_void)).ok();
+                    }
+                }
             }
+            let _guard = EventGuard(shutdown_event_int);
+
+            run_detection(sender, shutdown_event_int);
         })
         .expect("Failed to spawn sim detection thread");
 

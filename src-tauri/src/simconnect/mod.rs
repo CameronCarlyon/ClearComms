@@ -36,9 +36,9 @@ use tauri::Emitter;
 use tauri::State;
 
 #[cfg(windows)]
-use windows::Win32::Foundation::{CloseHandle, HANDLE};
+use windows::Win32::Foundation::{CloseHandle, HANDLE, WAIT_OBJECT_0};
 #[cfg(windows)]
-use windows::Win32::System::Threading::SetEvent;
+use windows::Win32::System::Threading::{SetEvent, WaitForSingleObject};
 
 pub mod state;
 mod connection;
@@ -181,7 +181,13 @@ pub fn shutdown_simconnect_thread(session: &Arc<SimConnectSessionHandle>) {
     // would cause a deadlock: this function would wait for the thread to exit
     // while the thread waits for the lock.
     let sess = {
-        let mut lock = session.lock().unwrap();
+        let mut lock = match session.lock() {
+            Ok(l) => l,
+            Err(e) => {
+                tracing::error!("[SimConnect] Session mutex poisoned during shutdown: {}", e);
+                return;
+            }
+        };
         lock.take()
     };
 
@@ -235,7 +241,16 @@ fn spawn_simconnect_thread(
     version: SimVersion,
     retry_sender: std::sync::mpsc::Sender<SimDetectionEvent>,
 ) {
-    let mut lock = session.lock().unwrap();
+    let mut lock = match session.lock() {
+        Ok(l) => l,
+        Err(e) => {
+            tracing::error!(
+                "[SimConnect] Session mutex poisoned — cannot spawn thread: {}",
+                e
+            );
+            return;
+        }
+    };
 
     if lock.is_some() {
         tracing::debug!("[SimConnect] Connection manager already running, skipping");
@@ -255,6 +270,7 @@ fn spawn_simconnect_thread(
     let state_for_thread = state.clone();
     let session_for_thread = session.clone();
     let app_for_thread = app.clone();
+    let retry_sender_for_thread = retry_sender.clone();
 
     let handle = std::thread::Builder::new()
         .name("simconnect".to_string())
@@ -283,10 +299,8 @@ fn spawn_simconnect_thread(
                 .unwrap_or(false);
 
             let shutdown_signalled = unsafe {
-                use windows::Win32::Foundation::WAIT_OBJECT_0;
-                use windows::Win32::System::Threading::WaitForSingleObject;
                 WaitForSingleObject(
-                    windows::Win32::Foundation::HANDLE(shutdown_event_int as *mut std::ffi::c_void),
+                    HANDLE(shutdown_event_int as *mut std::ffi::c_void),
                     0,
                 ) == WAIT_OBJECT_0
             };
@@ -294,19 +308,19 @@ fn spawn_simconnect_thread(
             // Clear our own session entry so the lifecycle controller can spawn a
             // fresh one when it receives the retry event.
             {
-                let mut lock = session_for_thread.lock().unwrap();
-                if lock.is_some() {
-                    // Only clear if the shutdown event hasn't been taken by
-                    // stop_simconnect_thread — that function takes the session
-                    // first (under the same lock), so if we still own it here
-                    // we are responsible for closing the event handle.
-                    *lock = None;
-                    unsafe {
-                        CloseHandle(windows::Win32::Foundation::HANDLE(
-                            shutdown_event_int as *mut std::ffi::c_void,
-                        ))
-                        .ok();
+                let mut lock = match session_for_thread.lock() {
+                    Ok(l) => l,
+                    Err(e) => {
+                        tracing::error!(
+                            "[SimConnect] Session mutex poisoned during post-exit cleanup: {}",
+                            e
+                        );
+                        // Still proceed to close the event handle below.
+                        return;
                     }
+                };
+                if lock.as_ref().map(|s| s.shutdown_event) == Some(shutdown_event_int) {
+                    *lock = None;
                 }
             }
 
@@ -323,19 +337,30 @@ fn spawn_simconnect_thread(
                         RETRY_DELAY_MS / 1000
                     );
                     // Interruptible sleep — wakes immediately if shutdown is signalled.
-                    // We no longer hold the shutdown event (closed above), so use a
-                    // plain sleep here; the duration is short (5 s) and we already
-                    // verified the sim is running. If the sim exits mid-sleep the
-                    // process-scan guard on the next watcher prevents infinite loops.
-                    std::thread::sleep(std::time::Duration::from_millis(RETRY_DELAY_MS as u64));
-                    let _ = retry_sender.send(SimDetectionEvent::Started(version));
-                    tracing::info!("[SimConnect] Retry event sent to lifecycle controller");
+                    // We still own the shutdown event here, so WaitForSingleObject works.
+                    let wait_result = unsafe {
+                        WaitForSingleObject(
+                            HANDLE(shutdown_event_int as *mut std::ffi::c_void),
+                            RETRY_DELAY_MS,
+                        )
+                    };
+                    if wait_result != WAIT_OBJECT_0 {
+                        let _ = retry_sender_for_thread.send(SimDetectionEvent::Started(version));
+                        tracing::info!("[SimConnect] Retry event sent to lifecycle controller");
+                    } else {
+                        tracing::info!("[SimConnect] Shutdown signalled during retry delay — aborting retry");
+                    }
                 } else {
                     tracing::info!(
                         "[SimConnect] Connection failed and MSFS no longer running — \
                          not scheduling retry"
                     );
                 }
+            }
+
+            // Close the shutdown event handle now that we are done with it.
+            unsafe {
+                CloseHandle(HANDLE(shutdown_event_int as *mut std::ffi::c_void)).ok();
             }
 
             tracing::info!("[SimConnect] Connection manager exited");
@@ -360,7 +385,19 @@ fn stop_simconnect_thread(
     state: &Arc<SimStateHandle>,
 ) {
     let sess = {
-        let mut lock = session.lock().unwrap();
+        let mut lock = match session.lock() {
+            Ok(l) => l,
+            Err(e) => {
+                tracing::error!(
+                    "[SimConnect] Session mutex poisoned during stop: {}",
+                    e
+                );
+                // Poisoned mutex — we cannot safely access the data, so
+                // simply drop the guard and proceed without a session.
+                // The event handle may leak, but crashing is worse.
+                return;
+            }
+        };
         lock.take()
     };
 
@@ -420,16 +457,16 @@ where
 /// Apply a mutation to the shared `SimState` and emit a Tauri event with the new status.
 ///
 /// This is the event-driven version used to notify the frontend of status changes.
+/// The lock is released before emitting to avoid re-entrancy deadlocks.
 pub fn update_state_and_emit<F>(app: &tauri::AppHandle, state: &Arc<SimStateHandle>, f: F)
 where
     F: FnOnce(&mut SimState),
 {
-    match state.lock() {
+    let response = match state.lock() {
         Ok(mut guard) => {
             f(&mut *guard);
-            
-            // Emit the updated status to the frontend
-            let response = SimStatusResponse {
+
+            SimStatusResponse {
                 connected: matches!(guard.connection, ConnectionState::Connected),
                 wasm_present: matches!(guard.wasm, WasmState::Present),
                 aircraft_title: guard.aircraft_title.clone(),
@@ -438,14 +475,15 @@ where
                     SimVersion::Msfs2024 => "2024".to_string(),
                     SimVersion::Unknown => "unknown".to_string(),
                 },
-            };
-            
-            if let Err(e) = app.emit("sim-status-changed", response) {
-                tracing::warn!("[SimConnect] Failed to emit sim-status-changed event: {}", e);
             }
         }
         Err(e) => {
             tracing::error!("[SimConnect] SimState mutex poisoned: {}", e);
+            return;
         }
+    };
+
+    if let Err(e) = app.emit("sim-status-changed", response) {
+        tracing::warn!("[SimConnect] Failed to emit sim-status-changed event: {}", e);
     }
 }

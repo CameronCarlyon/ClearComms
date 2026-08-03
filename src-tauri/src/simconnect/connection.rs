@@ -29,9 +29,9 @@ use simconnect_sys::*;
 #[cfg(windows)]
 use windows::Win32::System::Com::{CoInitializeEx, CoUninitialize, COINIT_APARTMENTTHREADED};
 #[cfg(windows)]
-use windows::Win32::Foundation::{CloseHandle, HANDLE, WAIT_OBJECT_0};
+use windows::Win32::Foundation::{CloseHandle, HANDLE, WAIT_OBJECT_0, WAIT_TIMEOUT};
 #[cfg(windows)]
-use windows::Win32::System::Threading::{WaitForMultipleObjects, WaitForSingleObject, INFINITE};
+use windows::Win32::System::Threading::{WaitForMultipleObjects, WaitForSingleObject};
 
 // Raw FFI for CreateEventW since the windows crate path varies by version
 #[cfg(windows)]
@@ -86,6 +86,56 @@ impl Default for PingState {
             awaiting_pong: false,
         }
     }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Defensive message validation
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// Validates that `msg` is non-null and that the supplied buffer size `cb` is
+/// large enough to contain the target SimConnect message type.  This defends
+/// against struct-layout mismatches in the FFI bindings and corrupted messages.
+///
+/// # Safety
+/// `msg` must have been returned by a successful `SimConnect_GetNextDispatch`
+/// call (i.e. the pointer is non-null and backed by SimConnect memory).
+#[inline]
+unsafe fn validate_message<T>(msg: *mut SIMCONNECT_RECV, cb: u32) -> Option<*mut T> {
+    if msg.is_null() {
+        return None;
+    }
+    let base_size = std::mem::size_of::<SIMCONNECT_RECV>();
+    if (cb as usize) < base_size {
+        tracing::warn!(
+            "[SimConnect] Message buffer too small for base header: {} bytes",
+            cb
+        );
+        return None;
+    }
+    // SimConnect sets dwSize to the total bytes of this individual message.
+    // It should always match cb.  If it does not, the stream is corrupted.
+    let dw_size = (*msg).dwSize;
+    if dw_size != cb {
+        tracing::warn!(
+            "[SimConnect] Message size mismatch: dwSize={} but cb={}",
+            dw_size,
+            cb
+        );
+        // dwSize must never be larger than the buffer we were given.
+        if (cb as usize) < (dw_size as usize) {
+            return None;
+        }
+    }
+    let needed = std::mem::size_of::<T>();
+    if (cb as usize) < needed {
+        tracing::warn!(
+            "[SimConnect] Message buffer too small for expected type (need {} got {}): skipping",
+            needed,
+            cb
+        );
+        return None;
+    }
+    Some(msg as *mut T)
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -296,10 +346,10 @@ unsafe fn handle_pong_response(
     ping_state: &mut PingState,
     state: &std::sync::Arc<SimStateHandle>,
 ) {
-    // Guard against empty payloads — SimConnect should never deliver zero bytes
-    // for a valid CLIENT_DATA message, but defend against it anyway.
-    if data_bytes == 0 {
-        tracing::warn!("[SimConnect] MobiFlight response delivered zero bytes");
+    // Guard against empty or null payloads — SimConnect should never deliver
+    // such data for a valid CLIENT_DATA message, but defend against it anyway.
+    if data_bytes == 0 || data_ptr.is_null() {
+        tracing::warn!("[SimConnect] MobiFlight response delivered null or zero-byte payload");
         return;
     }
 
@@ -402,6 +452,22 @@ const DEFINE_ID_TITLE: u32 = 30;
 const REQUEST_ID_TITLE: u32 = 40;
 
 // ─────────────────────────────────────────────────────────────────────────────
+// COM Apartment RAII Guard
+// ─────────────────────────────────────────────────────────────────────────────
+
+#[cfg(windows)]
+struct ComApartment;
+
+#[cfg(windows)]
+impl Drop for ComApartment {
+    fn drop(&mut self) {
+        unsafe {
+            CoUninitialize();
+        }
+    }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // Public Entry Point
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -427,12 +493,15 @@ pub fn run_simconnect_loop(
 ) {
     // Initialise COM on this dedicated thread — required for SimConnect
     #[cfg(windows)]
-    unsafe {
-        if let Err(e) = CoInitializeEx(None, COINIT_APARTMENTTHREADED).ok() {
-            tracing::error!("[SimConnect] CoInitializeEx failed: {}", e);
-            return;
+    let _com = unsafe {
+        match CoInitializeEx(None, COINIT_APARTMENTTHREADED).ok() {
+            Ok(_) => Some(ComApartment),
+            Err(e) => {
+                tracing::error!("[SimConnect] CoInitializeEx failed: {}", e);
+                return;
+            }
         }
-    }
+    };
 
     let shutdown_handle = HANDLE(shutdown_event as *mut std::ffi::c_void);
 
@@ -445,8 +514,6 @@ pub fn run_simconnect_loop(
     match unsafe { WaitForSingleObject(shutdown_handle, 0) } {
         WAIT_OBJECT_0 => {
             tracing::info!("[SimConnect] Shutdown signal received before connection attempt");
-            #[cfg(windows)]
-            unsafe { CoUninitialize(); }
             return;
         }
         _ => {}
@@ -471,11 +538,6 @@ pub fn run_simconnect_loop(
                 s.last_error = Some(e);
             });
         }
-    }
-
-    #[cfg(windows)]
-    unsafe {
-        CoUninitialize();
     }
 
     tracing::info!("[SimConnect] Background thread exited");
@@ -543,15 +605,19 @@ fn try_connect_and_run(
 
     let mut ping_state = PingState::default();
     let mut setup_complete = false;
+    let mut quit_received = false;
 
-    // Use WaitForMultipleObjects with INFINITE timeout so the thread never
-    // wakes spuriously. It sleeps at the OS level until either SimConnect
-    // signals a message or the shutdown event is signalled.
+    // Use a finite timeout so the thread can periodically check whether the
+    // simulator process is still alive and whether a QUIT message has already
+    // been processed.  This prevents infinite hangs when the SimConnect event
+    // handle is orphaned.
+    const WAIT_TIMEOUT_MS: u32 = 5000;
+
     loop {
         let handles = [simconnect_event, *shutdown_event];
 
         let wait_result = unsafe {
-            WaitForMultipleObjects(&handles, false, INFINITE)
+            WaitForMultipleObjects(&handles, false, WAIT_TIMEOUT_MS)
         };
 
         // WAIT_OBJECT_0 is the base value (0). The windows crate wraps the
@@ -559,6 +625,10 @@ fn try_connect_and_run(
         let result_code = wait_result.0;
 
         if result_code == WAIT_OBJECT_0.0 {
+            if quit_received {
+                tracing::info!("[SimConnect] Quit already processed — discarding stale messages");
+                break;
+            }
             // SimConnect has messages — drain the queue
             loop {
                 let mut msg: *mut SIMCONNECT_RECV = std::ptr::null_mut();
@@ -573,16 +643,24 @@ fn try_connect_and_run(
                         handle_message(app, msg, cb, state, &mut setup_complete, &mut ping_state, handle)
                     };
                     if !should_continue {
+                        quit_received = true;
                         break;
                     }
                 } else if result == 0 {
                     // No more messages available
                     break;
                 } else {
-                    // GetNextDispatch returning E_FAIL when the queue is empty is
-                    // expected and normal. Treat it as "no message available" and
-                    // continue rather than triggering a reconnect.
-                    tracing::trace!("[SimConnect] GetNextDispatch returned {:#010x} — no message available", result);
+                    const E_FAIL: i32 = 0x80004005_u32 as i32;
+                    if result == E_FAIL {
+                        tracing::warn!(
+                            "[SimConnect] GetNextDispatch returned E_FAIL — connection may be dead"
+                        );
+                    } else {
+                        tracing::debug!(
+                            "[SimConnect] GetNextDispatch returned {:#010x} — treating as queue empty",
+                            result
+                        );
+                    }
                     break;
                 }
             }
@@ -590,9 +668,26 @@ fn try_connect_and_run(
             // Shutdown signalled — break cleanly
             tracing::info!("[SimConnect] Shutdown signal received in dispatch loop");
             break;
+        } else if result_code == WAIT_TIMEOUT.0 {
+            if quit_received {
+                tracing::info!(
+                    "[SimConnect] Quit already received but event still waking — forcing exit"
+                );
+                break;
+            }
+            // Health-check: if the sim process is gone, exit cleanly.
+            if crate::sim_detection::scan_for_running_sim().is_none() {
+                tracing::info!(
+                    "[SimConnect] Simulator no longer running — exiting dispatch loop"
+                );
+                break;
+            }
         } else {
             // Unexpected result — log and break
-            tracing::warn!("[SimConnect] WaitForMultipleObjects returned unexpected result");
+            tracing::warn!(
+                "[SimConnect] WaitForMultipleObjects returned unexpected result: {:#010x}",
+                result_code
+            );
             break;
         }
     }
@@ -636,7 +731,10 @@ unsafe fn handle_message(
         SIMCONNECT_RECV_ID_OPEN => {
             // Only perform setup once per connection
             if !*setup_complete {
-                let open_msg = msg as *mut SIMCONNECT_RECV_OPEN;
+                let open_msg = match validate_message::<SIMCONNECT_RECV_OPEN>(msg, cb) {
+                    Some(m) => m,
+                    None => return true,
+                };
                 let major = (*open_msg).dwApplicationVersionMajor;
                 // Sanity check: the version from the OPEN message should match
                 // what the detection module told us. Log a warning if not.
@@ -708,7 +806,10 @@ unsafe fn handle_message(
         }
 
         SIMCONNECT_RECV_ID_SIMOBJECT_DATA => {
-            let data_msg = msg as *mut SIMCONNECT_RECV_SIMOBJECT_DATA;
+            let data_msg = match validate_message::<SIMCONNECT_RECV_SIMOBJECT_DATA>(msg, cb) {
+                Some(m) => m,
+                None => return true,
+            };
             if (*data_msg).dwRequestID == REQUEST_ID_TITLE {
                 // The data payload starts at the dwData field of the struct.
                 // dwData is a DWORD placeholder that marks the start of the
@@ -746,7 +847,10 @@ unsafe fn handle_message(
         }
 
         SIMCONNECT_RECV_ID_CLIENT_DATA => {
-            let client_data = msg as *mut SIMCONNECT_RECV_CLIENT_DATA;
+            let client_data = match validate_message::<SIMCONNECT_RECV_CLIENT_DATA>(msg, cb) {
+                Some(m) => m,
+                None => return true,
+            };
             let request_id = (*client_data)._base.dwRequestID;
             // Accept responses from both the ON_SET subscription and the
             // one-shot ONCE read. Using separate request IDs prevents
@@ -776,10 +880,18 @@ unsafe fn handle_message(
         }
 
         SIMCONNECT_RECV_ID_EXCEPTION => {
-            let exc = msg as *mut SIMCONNECT_RECV_EXCEPTION;
-            let dw_exception = std::ptr::read_unaligned(std::ptr::addr_of!((*exc).dwException));
-            let dw_send_id = std::ptr::read_unaligned(std::ptr::addr_of!((*exc).dwSendID));
-            let dw_index = std::ptr::read_unaligned(std::ptr::addr_of!((*exc).dwIndex));
+            let exc = match validate_message::<SIMCONNECT_RECV_EXCEPTION>(msg, cb) {
+                Some(m) => m,
+                None => return true,
+            };
+            // read_unaligned is kept as a defensive measure in case the
+            // simconnect_sys crate uses packed structs.
+            let dw_exception =
+                std::ptr::read_unaligned(std::ptr::addr_of!((*exc).dwException));
+            let dw_send_id =
+                std::ptr::read_unaligned(std::ptr::addr_of!((*exc).dwSendID));
+            let dw_index =
+                std::ptr::read_unaligned(std::ptr::addr_of!((*exc).dwIndex));
             tracing::warn!(
                 "[SimConnect] Exception: dwException={} dwSendID={} dwIndex={}",
                 dw_exception,

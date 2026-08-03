@@ -5,7 +5,7 @@
 <script lang="ts">
   import { invoke } from '@tauri-apps/api/core';
   import { createEventDispatcher } from 'svelte';
-  import { ButtonExpandable, ButtonRound, ListOption, OptionToggle } from '$lib/components';
+  import { ButtonExpandable, ButtonRound, ListOption, OptionToggle, Dropdown } from '$lib/components';
   
   interface Props {
     dockOpen: boolean;
@@ -50,7 +50,7 @@
       closeMenuExpanded = false;
     }
   });
-  
+
   let dockContainer: HTMLElement | null = $state(null);
   
   function handleDockFocusIn(e: FocusEvent) {
@@ -142,32 +142,40 @@
         </svg>
       {/snippet}
       {#snippet children()}
-        <ListOption
-          displayName="User Guide"
-          fullWidth={true}
-          ariaLabel="View ClearComms user guide (opens in external browser)."
-          animationType="fadeIn"
-          animationIndex={9}
-          on:select={handleOpenGuide}
-        />
-        <OptionToggle
-          label="Pin on Top"
-          checked={windowPinned}
-          ariaLabel={windowPinned ? "Disable pin on top" : "Enable pin on top"}
-          title="Keep application window on top of others, even when not focused."
-          animationType="fadeIn"
-          animationIndex={10}
-          ontoggle={handleTogglePin}
-        />
-        <ListOption
-          displayName="Reboot"
-          warning={true}
-          fullWidth={true}
-          ariaLabel="Restart the application."
-          animationType="fadeIn"
-          animationIndex={11}
-          on:select={handleReboot}
-        />
+        <span class="expandable__item" style="animation-delay: 0.20s">
+          <ListOption
+            displayName="User Guide"
+            fullWidth={true}
+            ariaLabel="View ClearComms user guide (opens in external browser)."
+            on:select={handleOpenGuide}
+          />
+        </span>
+        <span class="expandable__item" style="animation-delay: 0.25s">
+          <OptionToggle
+            label="Pin Window"
+            checked={windowPinned}
+            ariaLabel={windowPinned ? "Disable always on top" : "Enable always on top"}
+            title="Keep ClearComms' window on top of others, even when interacting with other windows."
+            ontoggle={handleTogglePin}
+          />
+        </span>
+        <span class="expandable__item" style="animation-delay: 0.30s">
+          <Dropdown
+            label="Nerd Zone"
+            options={['Disabled', 'Enabled']}
+            ariaLabel="View or hide debugging features."
+            title="View debugging information for development and troubleshooting."
+          />
+        </span>
+        <span class="expandable__item" style="animation-delay: 0.35s">
+          <ListOption
+            displayName="Reboot"
+            warning={true}
+            fullWidth={true}
+            ariaLabel="Restart the application."
+            on:select={handleReboot}
+          />
+        </span>
       {/snippet}
     </ButtonExpandable>
     </div>
@@ -208,25 +216,25 @@
         <p>Return</p>
       {/snippet}
       {#snippet children()}
-        <ListOption
-          displayName="Quit"
-          danger={true}
-          fullWidth={true}
-          ariaLabel="Quit the application."
-          class="close-option"
-          animationType="fadeIn"
-          animationIndex={6}
-          on:select={handleQuit}
-        />
-        <ListOption
-          displayName="Minimise"
-          fullWidth={true}
-          ariaLabel="Minimise the application."
-          animationType="fadeIn"
-          class="close-option"
-          animationIndex={5}
-          on:select={handleMinimise}
-        />
+        <span class="expandable__item" style="animation-delay: 0.20s">
+          <ListOption
+            displayName="Quit"
+            danger={true}
+            fullWidth={true}
+            ariaLabel="Quit the application."
+            class="close-option"
+            on:select={handleQuit}
+          />
+        </span>
+        <span class="expandable__item" style="animation-delay: 0.25s">
+          <ListOption
+            displayName="Minimise"
+            fullWidth={true}
+            ariaLabel="Minimise the application."
+            class="close-option"
+            on:select={handleMinimise}
+          />
+        </span>
       {/snippet}
     </ButtonExpandable>
     </div>

@@ -9,16 +9,14 @@
     ariaLabel?: string;
     ariaPressed?: boolean;
     title?: string;
-    animationIndex?: number;
     icon?: Snippet;
     onclick?: (e: MouseEvent) => void;
   }
   
-  let { 
+  let {
     ariaLabel,
     ariaPressed,
     title,
-    animationIndex = 0,
     icon,
     onclick
   }: Props = $props();
@@ -35,7 +33,6 @@
   aria-pressed={ariaPressed}
   {title}
   type="button"
-  style="--animation-delay: {animationIndex * 0.05}s"
 >
   {#if icon}
     {@render icon()}
@@ -56,18 +53,6 @@
     align-items: center;
     justify-content: center;
     transition: background 0.15s ease;
-    animation: fadeIn 0.25s ease-out forwards;
-    animation-delay: var(--animation-delay, 0s);
-    opacity: 0;
-  }
-  
-  @keyframes fadeIn {
-    from {
-      opacity: 0;
-    }
-    to {
-      opacity: 1;
-    }
   }
 
   .settings-option:hover {
