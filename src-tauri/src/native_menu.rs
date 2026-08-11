@@ -22,6 +22,35 @@ const MENU_RESTART: usize = 1005;
 #[cfg(windows)]
 const MENU_QUIT: usize = 1004;
 
+/// Run `f` on the main thread *after* the current callback has unwound.
+///
+/// `AppHandle::run_on_main_thread` cannot be used directly here: when it is
+/// already on the main thread, tauri-runtime-wry's `send_user_message`
+/// short-circuits and invokes the closure inline, which is precisely what must
+/// be avoided. Bouncing the request through a short-lived thread forces it onto
+/// the event loop proxy instead, so the closure is queued and only runs once the
+/// event loop reaches its next clean iteration — after the tray callback and the
+/// `TrackPopupMenu` modal loop have both returned.
+#[cfg(windows)]
+fn defer_to_event_loop<F>(app: &tauri::AppHandle, what: &'static str, f: F)
+where
+    F: FnOnce(tauri::AppHandle) + Send + 'static,
+{
+    let app = app.clone();
+    let spawn_result = std::thread::Builder::new()
+        .name("menu-defer".to_string())
+        .spawn(move || {
+            let app_for_task = app.clone();
+            if let Err(e) = app.run_on_main_thread(move || f(app_for_task)) {
+                tracing::error!("[Menu] Failed to queue {} on main thread: {}", what, e);
+            }
+        });
+
+    if let Err(e) = spawn_result {
+        tracing::error!("[Menu] Failed to spawn deferral thread for {}: {}", what, e);
+    }
+}
+
 #[cfg(windows)]
 pub fn show_native_context_menu(app: &tauri::AppHandle, x: i32, y: i32) -> Result<(), String> {
     use windows::core::PCWSTR;
@@ -120,15 +149,25 @@ pub fn show_native_context_menu(app: &tauri::AppHandle, x: i32, y: i32) -> Resul
                     }
                 }
             }
+            // Restart and Quit tear down windows, the WebView2 host and every
+            // background thread. Doing that inline would run the teardown from
+            // inside the tray-icon callback, which is itself nested inside the
+            // message loop that TrackPopupMenu just re-entered — destroying
+            // objects the event loop is still walking. Both are therefore posted
+            // back to the event loop and run once this callback has unwound.
             MENU_RESTART => {
-                if let Err(e) = crate::restart_application_internal(app) {
-                    tracing::error!("[Menu] Failed to restart application: {}", e);
-                }
+                defer_to_event_loop(app, "restart", |app| {
+                    if let Err(e) = crate::restart_application_internal(&app) {
+                        tracing::error!("[Menu] Failed to restart application: {}", e);
+                    }
+                });
             }
             MENU_QUIT => {
                 // Route through the shared graceful-quit helper so all background
                 // threads receive a clean shutdown signal before the process exits.
-                crate::perform_graceful_quit(app);
+                defer_to_event_loop(app, "quit", |app| {
+                    crate::perform_graceful_quit(&app);
+                });
             }
             _ => {}
         }

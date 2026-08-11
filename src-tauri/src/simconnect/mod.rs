@@ -46,6 +46,122 @@ mod connection;
 use state::{ConnectionState, SimState, SimStateHandle, SimStatusResponse, SimVersion, WasmState};
 use crate::sim_detection::SimDetectionEvent;
 
+// ─────────────────────────────────────────────────────────────────────────────
+// LVar Command Channel
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// Maximum number of LVars the frontend may subscribe at once. Far beyond the
+/// 16 needed for a fully assigned radio panel (8 categories × volume + mute),
+/// while keeping client data definition/request ID ranges bounded.
+pub const MAX_LVAR_SUBSCRIPTIONS: usize = 64;
+
+/// Commands sent from the frontend to the SimConnect thread for MobiFlight
+/// LVar operations. All SimConnect API calls must happen on the connection
+/// thread, so Tauri commands enqueue work here and signal a Win32 event to
+/// wake the dispatch loop.
+#[derive(Debug)]
+pub enum LvarCommand {
+    /// Replace the entire LVar subscription set. An empty list unsubscribes all.
+    Subscribe(Vec<String>),
+    /// Write a value to an LVar via `MF.SimVars.Set`.
+    Set { name: String, value: f64 },
+}
+
+/// The sending half of the LVar command channel plus the Win32 event handle
+/// (as `isize`, for Send + Sync) used to wake the dispatch loop after a send.
+pub struct LvarCommandChannel {
+    pub sender: std::sync::mpsc::Sender<LvarCommand>,
+    pub wake_event: isize,
+}
+
+/// Thread-safe optional command channel. Populated while a SimConnect
+/// connection is active; `None` when the simulator is not connected.
+pub type LvarCommandHandle = Mutex<Option<LvarCommandChannel>>;
+
+/// Validate an LVar name before it is embedded into MobiFlight calculator code.
+/// LVar names consist solely of ASCII alphanumerics and underscores; rejecting
+/// anything else prevents malformed (or injected) RPN from ever reaching the
+/// WASM module.
+fn validate_lvar_name(name: &str) -> Result<(), String> {
+    if name.is_empty() || name.len() > 128 {
+        return Err(format!("Invalid LVar name length: {}", name.len()));
+    }
+    if !name.chars().all(|c| c.is_ascii_alphanumeric() || c == '_') {
+        return Err(format!("Invalid characters in LVar name: {}", name));
+    }
+    Ok(())
+}
+
+/// Send a command to the SimConnect thread and wake its dispatch loop.
+///
+/// The mutex is deliberately held across `SetEvent`. The connection thread
+/// closes the wake event handle only while holding this same lock, so keeping it
+/// for the duration of the signal makes it impossible to `SetEvent` a handle
+/// that has just been closed — and possibly already recycled by Windows for an
+/// unrelated kernel object elsewhere in the process. Both operations inside the
+/// lock are non-blocking (an unbounded channel send and one fast syscall), so
+/// there is no contention risk.
+fn send_lvar_command(
+    handle: &Arc<LvarCommandHandle>,
+    command: LvarCommand,
+) -> Result<(), String> {
+    let lock = handle
+        .lock()
+        .map_err(|e| format!("Failed to lock LVar command handle: {}", e))?;
+
+    let Some(channel) = lock.as_ref() else {
+        return Err("SimConnect is not connected".to_string());
+    };
+
+    channel
+        .sender
+        .send(command)
+        .map_err(|e| format!("Failed to queue LVar command: {}", e))?;
+
+    // Wake the dispatch loop so the command is processed immediately.
+    #[cfg(windows)]
+    unsafe {
+        SetEvent(HANDLE(channel.wake_event as *mut std::ffi::c_void)).ok();
+    }
+
+    Ok(())
+}
+
+/// Replace the LVar subscription set on the MobiFlight WASM module.
+/// The backend subscribes each name as `(L:<name>)` and streams value changes
+/// back to the frontend as `lvar-value-changed` events.
+#[tauri::command]
+pub fn subscribe_lvars(
+    lvar_handle: State<Arc<LvarCommandHandle>>,
+    names: Vec<String>,
+) -> Result<(), String> {
+    if names.len() > MAX_LVAR_SUBSCRIPTIONS {
+        return Err(format!(
+            "Too many LVar subscriptions: {} (max {})",
+            names.len(),
+            MAX_LVAR_SUBSCRIPTIONS
+        ));
+    }
+    for name in &names {
+        validate_lvar_name(name)?;
+    }
+    send_lvar_command(&lvar_handle, LvarCommand::Subscribe(names))
+}
+
+/// Write a value to an LVar in the simulator.
+#[tauri::command]
+pub fn set_sim_lvar(
+    lvar_handle: State<Arc<LvarCommandHandle>>,
+    name: String,
+    value: f64,
+) -> Result<(), String> {
+    validate_lvar_name(&name)?;
+    if !value.is_finite() {
+        return Err("LVar value must be finite".to_string());
+    }
+    send_lvar_command(&lvar_handle, LvarCommand::Set { name, value })
+}
+
 // Raw FFI for CreateEventW since the windows crate path varies by version
 #[cfg(windows)]
 extern "system" {
@@ -130,9 +246,14 @@ pub type SimConnectSessionHandle = Mutex<Option<SimConnectSession>>;
 /// manager uses it to re-inject `Started` events when a connection attempt fails
 /// but MSFS is still running, enabling automatic retry without polling in the
 /// SimConnect thread itself.
+///
+/// `lvar_handle` is shared with the Tauri commands above: it is populated with
+/// a fresh command channel each time a SimConnect thread spawns and cleared
+/// when that thread exits, so commands always target the live connection.
 pub fn start_lifecycle_controller(
     app: tauri::AppHandle,
     state: Arc<SimStateHandle>,
+    lvar_handle: Arc<LvarCommandHandle>,
     receiver: std::sync::mpsc::Receiver<SimDetectionEvent>,
     retry_sender: std::sync::mpsc::Sender<SimDetectionEvent>,
 ) -> Arc<SimConnectSessionHandle> {
@@ -155,13 +276,14 @@ pub fn start_lifecycle_controller(
                             &app,
                             &session_for_thread,
                             &state_for_thread,
+                            &lvar_handle,
                             version,
                             retry_sender.clone(),
                         );
                     }
                     SimDetectionEvent::Stopped => {
                         tracing::info!("[SimConnect] Lifecycle: simulator stopped");
-                        stop_simconnect_thread(&app, &session_for_thread, &state_for_thread);
+                        stop_simconnect_thread(&app, &session_for_thread, &state_for_thread, &lvar_handle);
                     }
                 }
             }
@@ -238,6 +360,7 @@ fn spawn_simconnect_thread(
     app: &tauri::AppHandle,
     session: &Arc<SimConnectSessionHandle>,
     state: &Arc<SimStateHandle>,
+    lvar_handle: &Arc<LvarCommandHandle>,
     version: SimVersion,
     retry_sender: std::sync::mpsc::Sender<SimDetectionEvent>,
 ) {
@@ -266,11 +389,43 @@ fn spawn_simconnect_thread(
         return;
     }
 
+    // Create the LVar command channel and an auto-reset wake event. The sender
+    // is shared with the Tauri commands; the receiver moves to the connection
+    // thread, which drains it whenever the wake event is signalled.
+    let (lvar_tx, lvar_rx) = std::sync::mpsc::channel::<LvarCommand>();
+    let lvar_wake_event = unsafe {
+        CreateEventW(std::ptr::null_mut(), 0, 0, std::ptr::null())
+    };
+    if lvar_wake_event.is_null() {
+        tracing::error!("[SimConnect] Failed to create LVar wake event handle");
+        unsafe { CloseHandle(HANDLE(shutdown_event)).ok(); }
+        return;
+    }
+
+    let lvar_wake_event_int = lvar_wake_event as isize;
+    match lvar_handle.lock() {
+        Ok(mut lvar_lock) => {
+            *lvar_lock = Some(LvarCommandChannel {
+                sender: lvar_tx,
+                wake_event: lvar_wake_event_int,
+            });
+        }
+        Err(e) => {
+            tracing::error!("[SimConnect] LVar command handle poisoned — cannot spawn: {}", e);
+            unsafe {
+                CloseHandle(HANDLE(shutdown_event)).ok();
+                CloseHandle(HANDLE(lvar_wake_event)).ok();
+            }
+            return;
+        }
+    }
+
     let shutdown_event_int = shutdown_event as isize;
     let state_for_thread = state.clone();
     let session_for_thread = session.clone();
     let app_for_thread = app.clone();
     let retry_sender_for_thread = retry_sender.clone();
+    let lvar_handle_for_thread = lvar_handle.clone();
 
     let handle = std::thread::Builder::new()
         .name("simconnect".to_string())
@@ -283,7 +438,37 @@ fn spawn_simconnect_thread(
                 shutdown_event_int,
                 state_for_thread.clone(),
                 version,
+                lvar_rx,
+                lvar_wake_event_int,
             );
+
+            // Detach the LVar command channel if it is still ours, so Tauri
+            // commands fail fast with "not connected" rather than queueing
+            // into a dead receiver.
+            //
+            // The handle is closed *inside* the lock: `send_lvar_command` holds
+            // this same mutex across its `SetEvent`, so closing here can never
+            // race with an in-flight signal on the handle we are about to
+            // invalidate.
+            match lvar_handle_for_thread.lock() {
+                Ok(mut lvar_lock) => {
+                    if lvar_lock.as_ref().map(|c| c.wake_event) == Some(lvar_wake_event_int) {
+                        *lvar_lock = None;
+                    }
+                    unsafe {
+                        CloseHandle(HANDLE(lvar_wake_event_int as *mut std::ffi::c_void)).ok();
+                    }
+                }
+                Err(e) => {
+                    tracing::error!(
+                        "[SimConnect] LVar command handle poisoned during cleanup: {}",
+                        e
+                    );
+                    unsafe {
+                        CloseHandle(HANDLE(lvar_wake_event_int as *mut std::ffi::c_void)).ok();
+                    }
+                }
+            }
 
             // ── Post-exit: decide whether to schedule a retry ──────────────
             //
@@ -383,7 +568,15 @@ fn stop_simconnect_thread(
     app: &tauri::AppHandle,
     session: &Arc<SimConnectSessionHandle>,
     state: &Arc<SimStateHandle>,
+    lvar_handle: &Arc<LvarCommandHandle>,
 ) {
+    // Detach the LVar command channel immediately so frontend commands fail
+    // fast while the connection thread winds down. The thread closes the
+    // underlying wake event handle itself after its loop exits.
+    if let Ok(mut lvar_lock) = lvar_handle.lock() {
+        *lvar_lock = None;
+    }
+
     let sess = {
         let mut lock = match session.lock() {
             Ok(l) => l,
