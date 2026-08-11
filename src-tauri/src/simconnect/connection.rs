@@ -25,6 +25,7 @@ use std::ffi::CString;
 use std::sync::Arc;
 
 use simconnect_sys::*;
+use tauri::Emitter;
 
 #[cfg(windows)]
 use windows::Win32::System::Com::{CoInitializeEx, CoUninitialize, COINIT_APARTMENTTHREADED};
@@ -45,7 +46,7 @@ extern "system" {
 }
 
 use crate::simconnect::state::{ConnectionState, SimStateHandle, SimVersion, WasmState};
-use crate::simconnect::update_state;
+use crate::simconnect::{update_state, LvarCommand, MAX_LVAR_SUBSCRIPTIONS};
 
 // ═════════════════════════════════════════════════════════════════════════════
 // MobiFlight WASM Module Ping/Pong
@@ -69,6 +70,67 @@ const REQUEST_ID_PONG: u32 = 20;
 /// REQUEST_ID_PONG to avoid corrupting SimConnect's internal request
 /// tracking when an ON_SET subscription is already active.
 const REQUEST_ID_PONG_ONCE: u32 = 21;
+
+// ─────────────────────────────────────────────────────────────────────────────
+// ClearComms MobiFlight Client (LVar read/write)
+// ─────────────────────────────────────────────────────────────────────────────
+//
+// The MobiFlight WASM module supports multiple named clients, each with its own
+// Command/Response/LVars client data areas. Registering our own client
+// ("ClearComms") isolates our LVar subscriptions from the MobiFlight Connector
+// application (or any other client) sharing the default "MobiFlight" client —
+// in particular, `MF.SimVars.Clear` only clears the issuing client's vars.
+
+/// Command sent on the default channel to register our dedicated client.
+const MF_CLIENT_REGISTER_CMD: &str = "MF.Clients.Add.ClearComms";
+/// Confirmation the module sends back on the default Response channel.
+const MF_CLIENT_REGISTER_DONE: &str = "MF.Clients.Add.ClearComms.Finished";
+
+const CC_COMMAND_NAME: &str = "ClearComms.Command";
+const CC_LVARS_NAME: &str = "ClearComms.LVars";
+
+const CLIENT_DATA_ID_CC_COMMAND: u32 = 3;
+const CLIENT_DATA_ID_CC_LVARS: u32 = 4;
+
+const DEFINE_ID_CC_COMMAND: u32 = 12;
+/// Per-LVar definition/request IDs are derived from these bases by index.
+/// Ranges are bounded by MAX_LVAR_SUBSCRIPTIONS.
+const DEFINE_ID_LVAR_BASE: u32 = 100;
+const REQUEST_ID_LVAR_BASE: u32 = 200;
+
+/// Raw buffer size for MobiFlight command writes (matches the existing ping
+/// buffer convention; commands are NUL-padded C strings).
+const MF_COMMAND_BUFFER_SIZE: usize = 256;
+
+/// Connection-thread state for the ClearComms MobiFlight client.
+#[derive(Default)]
+struct LvarClientState {
+    /// `MF.Clients.Add.ClearComms` has been sent, awaiting confirmation.
+    register_sent: bool,
+    /// ClearComms client data areas are mapped and ready for use.
+    client_ready: bool,
+    /// Currently subscribed LVar names; the index is the module's registration
+    /// order and therefore the float offset (index × 4) in the LVars area.
+    subscribed: Vec<String>,
+    /// Subscription requested before the client became ready.
+    pending: Option<Vec<String>>,
+}
+
+/// Mutable state threaded through the dispatch loop's message handler, bundled
+/// to keep the handler's arity reasonable.
+#[derive(Default)]
+struct DispatchState {
+    setup_complete: bool,
+    ping: PingState,
+    lvar: LvarClientState,
+}
+
+/// Payload emitted to the frontend when a subscribed LVar value changes.
+#[derive(serde::Serialize, Clone)]
+struct LvarValueEvent {
+    name: String,
+    value: f32,
+}
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Ping State
@@ -284,6 +346,205 @@ unsafe fn send_ping(
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// MobiFlight Command Helpers
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// Write a NUL-padded command string to a MobiFlight client data area.
+///
+/// # Safety
+/// Must be called on the thread that owns the SimConnect handle, with data
+/// areas already mapped and defined.
+unsafe fn write_mf_command(
+    handle: *mut std::ffi::c_void,
+    area_id: u32,
+    define_id: u32,
+    command: &str,
+) -> Result<(), String> {
+    let bytes = command.as_bytes();
+    if bytes.len() >= MF_COMMAND_BUFFER_SIZE {
+        return Err(format!("MobiFlight command too long: {} bytes", bytes.len()));
+    }
+
+    let mut buffer = [0u8; MF_COMMAND_BUFFER_SIZE];
+    buffer[..bytes.len()].copy_from_slice(bytes);
+
+    let result = SimConnect_SetClientData(
+        handle,
+        area_id,
+        define_id,
+        SIMCONNECT_CLIENT_DATA_SET_FLAG_DEFAULT as u32,
+        0,
+        MF_COMMAND_BUFFER_SIZE as u32,
+        buffer.as_mut_ptr() as *mut std::ffi::c_void,
+    );
+
+    if result != 0 {
+        return Err(format!(
+            "SimConnect_SetClientData failed with HRESULT: {:#010x}",
+            result
+        ));
+    }
+    Ok(())
+}
+
+/// Send a command on the default "MobiFlight" client channel.
+unsafe fn send_mf_command(handle: *mut std::ffi::c_void, command: &str) -> Result<(), String> {
+    write_mf_command(handle, CLIENT_DATA_ID_COMMAND, DEFINE_ID_PING, command)
+}
+
+/// Send a command on our dedicated "ClearComms" client channel.
+unsafe fn send_cc_command(handle: *mut std::ffi::c_void, command: &str) -> Result<(), String> {
+    write_mf_command(handle, CLIENT_DATA_ID_CC_COMMAND, DEFINE_ID_CC_COMMAND, command)
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// ClearComms Client Setup & LVar Subscriptions
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// Map the ClearComms client data areas and define the command write buffer.
+/// Called once the WASM module confirms our client registration.
+///
+/// # Safety
+/// Must be called on the thread that owns the SimConnect handle.
+unsafe fn setup_clearcomms_client_data(handle: *mut std::ffi::c_void) -> Result<(), String> {
+    let command_name = CString::new(CC_COMMAND_NAME)
+        .map_err(|e| format!("Failed to create ClearComms command CString: {}", e))?;
+    let result = SimConnect_MapClientDataNameToID(
+        handle,
+        command_name.as_ptr(),
+        CLIENT_DATA_ID_CC_COMMAND,
+    );
+    if result != 0 {
+        return Err(format!(
+            "MapClientDataNameToID (ClearComms.Command) failed: {:#010x}",
+            result
+        ));
+    }
+
+    let lvars_name = CString::new(CC_LVARS_NAME)
+        .map_err(|e| format!("Failed to create ClearComms LVars CString: {}", e))?;
+    let result = SimConnect_MapClientDataNameToID(
+        handle,
+        lvars_name.as_ptr(),
+        CLIENT_DATA_ID_CC_LVARS,
+    );
+    if result != 0 {
+        return Err(format!(
+            "MapClientDataNameToID (ClearComms.LVars) failed: {:#010x}",
+            result
+        ));
+    }
+
+    let result = SimConnect_AddToClientDataDefinition(
+        handle,
+        DEFINE_ID_CC_COMMAND,
+        0,
+        MF_COMMAND_BUFFER_SIZE as u32,
+        0.0,
+        0,
+    );
+    if result != 0 {
+        return Err(format!(
+            "AddToClientDataDefinition (ClearComms command) failed: {:#010x}",
+            result
+        ));
+    }
+
+    tracing::info!("[SimConnect] ClearComms MobiFlight client ready");
+    Ok(())
+}
+
+/// Replace the LVar subscription set: clears the module's registrations for
+/// our client, then re-registers each name as `(L:<name>)` and subscribes to
+/// its float slot in the ClearComms.LVars area with ON_SET.
+///
+/// The CHANGED flag is deliberately NOT used: the module only writes when a
+/// value changes anyway, but the initial registration write must always be
+/// delivered so the frontend learns the current state (a cleared-then-rewritten
+/// 0 would otherwise be suppressed).
+///
+/// # Safety
+/// Must be called on the thread that owns the SimConnect handle.
+unsafe fn apply_lvar_subscriptions(
+    handle: *mut std::ffi::c_void,
+    lvar_state: &mut LvarClientState,
+    names: Vec<String>,
+) {
+    if !lvar_state.client_ready {
+        // The client registers right after the WASM pong; a subscription that
+        // arrives earlier is applied once registration confirms.
+        lvar_state.pending = Some(names);
+        return;
+    }
+
+    if let Err(e) = send_cc_command(handle, "MF.SimVars.Clear") {
+        tracing::warn!("[SimConnect] Failed to clear LVar subscriptions: {}", e);
+    }
+
+    // Cancel stale value requests beyond the new list length.
+    for i in names.len()..lvar_state.subscribed.len() {
+        SimConnect_RequestClientData(
+            handle,
+            CLIENT_DATA_ID_CC_LVARS,
+            REQUEST_ID_LVAR_BASE + i as u32,
+            DEFINE_ID_LVAR_BASE + i as u32,
+            SIMCONNECT_CLIENT_DATA_PERIOD_NEVER as i32,
+            SIMCONNECT_CLIENT_DATA_REQUEST_FLAG_DEFAULT as u32,
+            0,
+            0,
+            0,
+        );
+    }
+
+    for (i, name) in names.iter().enumerate() {
+        // Each LVar is a 4-byte float at offset index × 4 in the LVars area.
+        let result = SimConnect_AddToClientDataDefinition(
+            handle,
+            DEFINE_ID_LVAR_BASE + i as u32,
+            (i * std::mem::size_of::<f32>()) as u32,
+            std::mem::size_of::<f32>() as u32,
+            0.0,
+            0,
+        );
+        if result != 0 {
+            tracing::warn!(
+                "[SimConnect] AddToClientDataDefinition failed for LVar {}: {:#010x}",
+                name,
+                result
+            );
+            continue;
+        }
+
+        let result = SimConnect_RequestClientData(
+            handle,
+            CLIENT_DATA_ID_CC_LVARS,
+            REQUEST_ID_LVAR_BASE + i as u32,
+            DEFINE_ID_LVAR_BASE + i as u32,
+            SIMCONNECT_CLIENT_DATA_PERIOD_ON_SET as i32,
+            SIMCONNECT_CLIENT_DATA_REQUEST_FLAG_DEFAULT as u32,
+            0,
+            0,
+            0,
+        );
+        if result != 0 {
+            tracing::warn!(
+                "[SimConnect] RequestClientData failed for LVar {}: {:#010x}",
+                name,
+                result
+            );
+            continue;
+        }
+
+        if let Err(e) = send_cc_command(handle, &format!("MF.SimVars.Add.(L:{})", name)) {
+            tracing::warn!("[SimConnect] Failed to subscribe LVar {}: {}", name, e);
+        }
+    }
+
+    tracing::info!("[SimConnect] Subscribed to {} LVar(s)", names.len());
+    lvar_state.subscribed = names;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // Active Poll (ONCE Read)
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -341,9 +602,11 @@ unsafe fn request_response_once(handle: *mut std::ffi::c_void) -> Result<(), Str
 /// SimConnect, which would cause heap corruption.
 unsafe fn handle_pong_response(
     app: &tauri::AppHandle,
+    handle: *mut std::ffi::c_void,
     data_ptr: *const std::ffi::c_void,
     data_bytes: usize,
     ping_state: &mut PingState,
+    lvar_state: &mut LvarClientState,
     state: &std::sync::Arc<SimStateHandle>,
 ) {
     // Guard against empty or null payloads — SimConnect should never deliver
@@ -368,11 +631,30 @@ unsafe fn handle_pong_response(
         tracing::info!("[SimConnect] MobiFlight WASM module responded to ping");
         ping_state.awaiting_pong = false;
         crate::simconnect::update_state_and_emit(app, state, |s| s.wasm = WasmState::Present);
+
+        // Register our dedicated client so LVar subscriptions are isolated
+        // from other MobiFlight clients. The module confirms on this channel.
+        if !lvar_state.register_sent {
+            match send_mf_command(handle, MF_CLIENT_REGISTER_CMD) {
+                Ok(()) => lvar_state.register_sent = true,
+                Err(e) => tracing::warn!("[SimConnect] Failed to register ClearComms client: {}", e),
+            }
+        }
+    } else if response.starts_with(MF_CLIENT_REGISTER_DONE) {
+        match setup_clearcomms_client_data(handle) {
+            Ok(()) => {
+                lvar_state.client_ready = true;
+                // Flush any subscription that arrived before we were ready.
+                if let Some(pending) = lvar_state.pending.take() {
+                    apply_lvar_subscriptions(handle, lvar_state, pending);
+                }
+            }
+            Err(e) => tracing::error!("[SimConnect] ClearComms client setup failed: {}", e),
+        }
     } else {
-        tracing::warn!(
-            "[SimConnect] Unexpected MobiFlight response: {}",
-            response
-        );
+        // Other MobiFlight clients (e.g. the Connector app) share the default
+        // response channel — their traffic is expected and not an error.
+        tracing::debug!("[SimConnect] Ignoring MobiFlight response: {}", response);
     }
 }
 
@@ -490,6 +772,8 @@ pub fn run_simconnect_loop(
     shutdown_event: isize,
     state: Arc<SimStateHandle>,
     version: SimVersion,
+    lvar_rx: std::sync::mpsc::Receiver<LvarCommand>,
+    lvar_wake_event: isize,
 ) {
     // Initialise COM on this dedicated thread — required for SimConnect
     #[cfg(windows)]
@@ -525,7 +809,7 @@ pub fn run_simconnect_loop(
     });
     tracing::info!("[SimConnect] Attempting connection to simulator...");
 
-    match try_connect_and_run(&app, &shutdown_handle, &state) {
+    match try_connect_and_run(&app, &shutdown_handle, &state, &lvar_rx, lvar_wake_event) {
         Ok(()) => {
             tracing::info!("[SimConnect] Connection closed cleanly");
         }
@@ -555,6 +839,8 @@ fn try_connect_and_run(
     app: &tauri::AppHandle,
     shutdown_event: &HANDLE,
     state: &Arc<SimStateHandle>,
+    lvar_rx: &std::sync::mpsc::Receiver<LvarCommand>,
+    lvar_wake_event: isize,
 ) -> Result<(), String> {
     let app_name = CString::new("ClearComms")
         .map_err(|e| format!("Failed to create app name CString: {}", e))?;
@@ -603,9 +889,9 @@ fn try_connect_and_run(
     // Dispatch Loop
     // ─────────────────────────────────────────────────────────────────────────
 
-    let mut ping_state = PingState::default();
-    let mut setup_complete = false;
+    let mut dispatch_state = DispatchState::default();
     let mut quit_received = false;
+    let lvar_wake_handle = HANDLE(lvar_wake_event as *mut std::ffi::c_void);
 
     // Use a finite timeout so the thread can periodically check whether the
     // simulator process is still alive and whether a QUIT message has already
@@ -614,7 +900,7 @@ fn try_connect_and_run(
     const WAIT_TIMEOUT_MS: u32 = 5000;
 
     loop {
-        let handles = [simconnect_event, *shutdown_event];
+        let handles = [simconnect_event, *shutdown_event, lvar_wake_handle];
 
         let wait_result = unsafe {
             WaitForMultipleObjects(&handles, false, WAIT_TIMEOUT_MS)
@@ -640,7 +926,7 @@ fn try_connect_and_run(
                     // handle_message returns false when the dispatch loop should
                     // exit (e.g. SIMCONNECT_RECV_ID_QUIT received).
                     let should_continue = unsafe {
-                        handle_message(app, msg, cb, state, &mut setup_complete, &mut ping_state, handle)
+                        handle_message(app, msg, cb, state, &mut dispatch_state, handle)
                     };
                     if !should_continue {
                         quit_received = true;
@@ -662,6 +948,30 @@ fn try_connect_and_run(
                         );
                     }
                     break;
+                }
+            }
+        } else if result_code == WAIT_OBJECT_0.0 + 2 {
+            // LVar command(s) from the frontend — drain the command queue.
+            while let Ok(command) = lvar_rx.try_recv() {
+                match command {
+                    LvarCommand::Subscribe(names) => unsafe {
+                        apply_lvar_subscriptions(handle, &mut dispatch_state.lvar, names);
+                    },
+                    LvarCommand::Set { name, value } => unsafe {
+                        if dispatch_state.lvar.client_ready {
+                            let command = format!("MF.SimVars.Set.{} (>L:{})", value, name);
+                            if let Err(e) = send_cc_command(handle, &command) {
+                                tracing::warn!("[SimConnect] Failed to set LVar {}: {}", name, e);
+                            }
+                        } else {
+                            // Dropped rather than queued: the UI will resend on
+                            // the next state change if the write still matters.
+                            tracing::debug!(
+                                "[SimConnect] LVar set dropped — client not ready: {}",
+                                name
+                            );
+                        }
+                    },
                 }
             }
         } else if result_code == WAIT_OBJECT_0.0 + 1 {
@@ -721,8 +1031,7 @@ unsafe fn handle_message(
     msg: *mut SIMCONNECT_RECV,
     cb: u32,
     state: &Arc<SimStateHandle>,
-    setup_complete: &mut bool,
-    ping_state: &mut PingState,
+    dispatch_state: &mut DispatchState,
     handle: *mut std::ffi::c_void,
 ) -> bool {
     let msg_id = (*msg).dwID as i32;
@@ -730,7 +1039,7 @@ unsafe fn handle_message(
     match msg_id {
         SIMCONNECT_RECV_ID_OPEN => {
             // Only perform setup once per connection
-            if !*setup_complete {
+            if !dispatch_state.setup_complete {
                 let open_msg = match validate_message::<SIMCONNECT_RECV_OPEN>(msg, cb) {
                     Some(m) => m,
                     None => return true,
@@ -783,13 +1092,13 @@ unsafe fn handle_message(
                 // is called again, causing E_FAIL.
                 std::thread::sleep(std::time::Duration::from_millis(100));
 
-                *setup_complete = true;
+                dispatch_state.setup_complete = true;
 
                 // Send a single ping to confirm the WASM module is present.
                 // The ON_SET subscription will deliver the pong when the module
                 // responds — no repeating timer is needed.
                 unsafe {
-                    if let Err(e) = send_ping(handle, ping_state) {
+                    if let Err(e) = send_ping(handle, &mut dispatch_state.ping) {
                         tracing::warn!("[SimConnect] Failed to send initial MobiFlight ping: {}", e);
                     }
                     // Also request a one-shot read of the current response area.
@@ -839,7 +1148,7 @@ unsafe fn handle_message(
 
                 if needs_update {
                     tracing::info!("[SimConnect] Aircraft title: {}", title);
-                    update_state(state, |s| {
+                    crate::simconnect::update_state_and_emit(app, state, |s| {
                         s.aircraft_title = Some(title);
                     });
                 }
@@ -871,11 +1180,44 @@ unsafe fn handle_message(
 
                 handle_pong_response(
                     app,
+                    handle,
                     payload_ptr as *const std::ffi::c_void,
                     payload_size,
-                    ping_state,
+                    &mut dispatch_state.ping,
+                    &mut dispatch_state.lvar,
                     state,
                 );
+            } else if request_id >= REQUEST_ID_LVAR_BASE
+                && request_id < REQUEST_ID_LVAR_BASE + MAX_LVAR_SUBSCRIPTIONS as u32
+            {
+                // Subscribed LVar value update — a single f32 payload.
+                let index = (request_id - REQUEST_ID_LVAR_BASE) as usize;
+                let recv_data = &*client_data;
+                let payload_ptr = std::ptr::addr_of!(recv_data._base.dwData) as *const u8;
+
+                let header_end = payload_ptr as usize;
+                let msg_start = msg as usize;
+                let payload_size = (cb as usize).saturating_sub(header_end - msg_start);
+                if payload_size < std::mem::size_of::<f32>() {
+                    tracing::warn!("[SimConnect] LVar payload too small: {} bytes", payload_size);
+                    return true;
+                }
+
+                let value = std::ptr::read_unaligned(payload_ptr as *const f32);
+
+                // Map the slot index back to the LVar name for the frontend.
+                if let Some(name) = dispatch_state.lvar.subscribed.get(index) {
+                    tracing::trace!("[SimConnect] LVar {} = {}", name, value);
+                    if let Err(e) = app.emit(
+                        "lvar-value-changed",
+                        LvarValueEvent {
+                            name: name.clone(),
+                            value,
+                        },
+                    ) {
+                        tracing::warn!("[SimConnect] Failed to emit lvar-value-changed: {}", e);
+                    }
+                }
             }
         }
 

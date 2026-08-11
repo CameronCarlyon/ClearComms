@@ -4,11 +4,12 @@
 -->
 <script lang="ts">
   import { createEventDispatcher } from 'svelte';
-  import type { AudioSession, AxisMapping, ButtonMapping } from '$lib/types';
+  import type { AudioSession, AxisMapping, ButtonMapping, SimChannelCategory } from '$lib/types';
   import VolumeSlider from './VolumeSlider.svelte';
   import ButtonRound from './ButtonRound.svelte';
+  import ButtonSimChannel from './ButtonSimChannel.svelte';
   import { formatProcessName, applyDisplayNameOverride } from '$lib/stores/audioStore';
-  
+
   interface Props {
     session: AudioSession;
     axisMapping: AxisMapping | undefined;
@@ -16,6 +17,12 @@
     isEditMode: boolean;
     isBindingAxis: boolean;
     isBindingButton: boolean;
+    /** Category this channel is assigned to, if any */
+    simCategory?: SimChannelCategory | null;
+    /** Categories already taken by other applications */
+    takenSimCategories?: SimChannelCategory[];
+    /** Categories the active aircraft profile supports */
+    supportedSimCategories?: SimChannelCategory[];
     entranceDelayMs?: number;
   }
 
@@ -26,6 +33,9 @@
     isEditMode,
     isBindingAxis,
     isBindingButton,
+    simCategory = null,
+    takenSimCategories = [],
+    supportedSimCategories = [],
     entranceDelayMs = 0
   }: Props = $props();
   
@@ -44,10 +54,17 @@
     removebuttonmapping: { processName: string };
     toggleinversion: { processName: string };
     removeapplication: { processName: string };
+    setsimcategory: { processName: string; category: SimChannelCategory | null };
   }>();
-  
+
   const isInactive = $derived(session.session_id.startsWith('inactive_'));
   const displayName = $derived(applyDisplayNameOverride(session.display_name || formatProcessName(session.process_name), session.process_name));
+
+  // Categories this channel may pick: supported by the aircraft, not taken by
+  // other apps (the channel's own assignment stays selectable).
+  const selectableSimCategories = $derived(
+    supportedSimCategories.filter(c => !takenSimCategories.includes(c) || c === simCategory)
+  );
   
   // Compute display volume: use override during mute/unmute animation, otherwise derive from real volume and mute state
   const displayVolume = $derived(
@@ -57,7 +74,8 @@
   );
   
   let flipAnimation = $state(false);
-  
+  let simChannelExpanded = $state(false);
+
   function handleToggleInversion() {
     flipAnimation = true;
     dispatch('toggleinversion', { processName: session.process_name });
@@ -261,6 +279,14 @@
       {/snippet}
     </ButtonRound>
 
+    <!-- Sim Channel Assignment -->
+    <ButtonSimChannel
+      processName={session.process_name}
+      assigned={simCategory}
+      categories={selectableSimCategories}
+      on:setsimcategory
+    />
+
     <!-- Remove Application Button -->
     <ButtonRound
       variant="action"
@@ -325,7 +351,7 @@
     text-overflow: ellipsis;
     max-width: 50px;
   }
-  
+
   /* Flip animation for reverse axis button */
   .flip-animate {
     animation: flip-vertical 0.4s ease-in-out;

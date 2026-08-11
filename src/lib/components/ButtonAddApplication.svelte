@@ -61,7 +61,6 @@
             processName={session.process_name}
             displayName={applyDisplayNameOverride(session.display_name || formatProcessName(session.process_name), session.process_name)}
             animationDelay={delay + 's'}
-            visible={true}
             on:select={handleSelect}
           />
         </span>

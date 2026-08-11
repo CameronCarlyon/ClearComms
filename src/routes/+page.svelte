@@ -2,15 +2,18 @@
   import { invoke } from "@tauri-apps/api/core";
   import { listen, type UnlistenFn } from "@tauri-apps/api/event";
   import { onMount, onDestroy } from "svelte";
-  import type { 
-    AudioSession, 
-    AxisMapping, 
-    ButtonMapping, 
-    AxisData, 
-    PendingBinding, 
+  import type {
+    AudioSession,
+    AxisMapping,
+    ButtonMapping,
+    AxisData,
+    PendingBinding,
     PendingButtonBinding,
     LiveVolumeState,
-    AnimationSignal
+    AnimationSignal,
+    SimChannelAssignment,
+    SimChannelCategory,
+    LvarValueEvent
   } from "$lib/types";
   import {
     Mixer,
@@ -21,6 +24,14 @@
   import { formatProcessName, applyDisplayNameOverride, SYSTEM_VOLUME_ID, SYSTEM_VOLUME_PROCESS_NAME, SYSTEM_VOLUME_DISPLAY_NAME, isSystemVolume } from "$lib/stores/audioStore";
   import { initTheme, theme, applyTheme } from "$lib/stores/themeStore";
   import { startSimStatusListener, stopSimStatusListener, simStatus } from '$lib/stores/simStore.svelte';
+  import {
+    matchAircraftProfile,
+    getChannelDef,
+    getSupportedCategories,
+    normaliseVolume,
+    denormaliseVolume,
+    type SimChannelDef
+  } from "$lib/data/aircraftProfiles";
 
 
   // ─────────────────────────────────────────────────────────────────────────────
@@ -65,7 +76,74 @@
   let animationSignals = $state<Map<string, AnimationSignal>>(new Map());
   let manuallyControlledSessions = $state<Set<string>>(new Set());
   let pinnedAppsLoaded = $state(false);
-  
+
+  // ─── Sim Channel (LVar) State ───
+  // Applications assigned to generic radio channels (COM1, COM2, …). Each
+  // assignment links the app's volume/mute to the corresponding aircraft LVars
+  // via the MobiFlight WASM module, in both directions.
+  let simAssignments = $state<SimChannelAssignment[]>([]);
+  /** Unlisten handle for the lvar-value-changed Tauri event */
+  let unlistenLvarValue: UnlistenFn | null = null;
+  /** Captain-side audio panel only for now — F/O support may follow later */
+  const SIM_SEAT = 'captain' as const;
+
+  /** Aircraft profile matched from the TITLE SimVar (null = unsupported aircraft) */
+  const activeSimProfile = $derived(matchAircraftProfile(simStatus.aircraftTitle));
+
+  /** All channel categories available for assignment — always shown regardless of aircraft support.
+   * The backend handles per-aircraft LVar mapping; the frontend picker is agnostic. */
+  const supportedSimCategories = $derived(
+    ['COM1', 'COM2', 'COM3', 'HF1', 'HF2', 'CAB', 'PA', 'INT'] as SimChannelCategory[]
+  );
+
+  /** processName → channel definition, for the active profile and assignments */
+  const simChannelByProcess = $derived.by(() => {
+    const map = new Map<string, SimChannelDef>();
+    if (!activeSimProfile) return map;
+    for (const assignment of simAssignments) {
+      const def = getChannelDef(activeSimProfile, SIM_SEAT, assignment.category);
+      if (def) map.set(assignment.processName, def);
+    }
+    return map;
+  });
+
+  /** LVar name → route, used to dispatch inbound lvar-value-changed events */
+  const lvarRouteByName = $derived.by(() => {
+    const map = new Map<string, { processName: string; kind: 'volume' | 'mute' }>();
+    for (const [processName, def] of simChannelByProcess) {
+      map.set(def.volume.lvar, { processName, kind: 'volume' });
+      if (def.mute) map.set(def.mute.lvar, { processName, kind: 'mute' });
+    }
+    return map;
+  });
+
+  // ─── LVar Subscription Orchestration ───
+  // Keeps the backend's subscription set in sync with the active profile and
+  // assignments. The dedupe key is reset whenever the WASM module drops so a
+  // reconnect always re-sends the full set.
+  let lastLvarSubscriptionKey = '';
+  $effect(() => {
+    const wasmReady = simStatus.wasmPresent;
+    if (!wasmReady) {
+      lastLvarSubscriptionKey = '';
+      return;
+    }
+
+    const names: string[] = [];
+    for (const def of simChannelByProcess.values()) {
+      if (!names.includes(def.volume.lvar)) names.push(def.volume.lvar);
+      if (def.mute && !names.includes(def.mute.lvar)) names.push(def.mute.lvar);
+    }
+
+    const key = `${activeSimProfile?.id ?? 'none'}|${names.join(',')}`;
+    if (key === lastLvarSubscriptionKey) return;
+    lastLvarSubscriptionKey = key;
+
+    invoke('subscribe_lvars', { names }).catch((e) => {
+      console.warn('[Sim] Failed to update LVar subscriptions:', e);
+    });
+  });
+
   // Menu expansion states
   let addAppListExpanded = $state(false);
   let settingsMenuExpanded = $state(false);
@@ -457,7 +535,8 @@
         loadMappings(),
         loadButtonMappings(),
         loadPinnedApps(),
-        loadAppFriendlyNames()
+        loadAppFriendlyNames(),
+        loadSimAssignments()
       ]);
 
       await fetchWindowPinnedState();
@@ -572,6 +651,10 @@
     cleanupAllAnimations();
     cleanupAllLiveVolumeStates();
     cleanupAllCaches();
+    for (const entry of simVolumeWrites.values()) {
+      if (entry.timerId !== undefined) clearTimeout(entry.timerId);
+    }
+    simVolumeWrites.clear();
     if (IS_DEV && typeof window !== 'undefined') {
       delete (window as any).clearCommsDebug;
     }
@@ -651,6 +734,16 @@
       unlistenInputAxis = unlisten;
     });
 
+    // Listen for LVar value changes pushed by the SimConnect thread whenever a
+    // subscribed radio channel LVar changes in the simulator.
+    listen<LvarValueEvent>('lvar-value-changed', (event) => {
+      handleLvarValueChanged(event.payload);
+    }).then((unlisten) => {
+      unlistenLvarValue = unlisten;
+    }).catch((e) => {
+      console.error("Failed to subscribe to lvar-value-changed:", e);
+    });
+
     // Listen for audio session push events from the Rust audio COM thread.
     // The backend emits this when it detects topology changes (device add/remove,
     // session start/stop, external volume change) — no frontend polling required.
@@ -658,7 +751,7 @@
     startMemoryMonitoring();
     startMemoryProfiler();
   }
-  
+
   function stopPolling() {
     if (pollingInterval) {
       clearInterval(pollingInterval);
@@ -668,6 +761,11 @@
     if (unlistenInputAxis) {
       unlistenInputAxis();
       unlistenInputAxis = null;
+    }
+    // Clean up the LVar value event listener
+    if (unlistenLvarValue) {
+      unlistenLvarValue();
+      unlistenLvarValue = null;
     }
     isPolling = false;
     pollInFlight = false;
@@ -916,17 +1014,24 @@
     }
   }
 
-  function setSessionVolumeImmediate(sessionId: string, volume: number) {
+  function setSessionVolumeImmediate(sessionId: string, volume: number, fromLvar: boolean = false) {
     if (sessionId.startsWith('inactive_')) return;
-    
+
     const sessionIndex = audioSessions.findIndex(s => s.session_id === sessionId);
     if (sessionIndex !== -1) {
       audioSessions[sessionIndex].volume = volume;
-      // Auto-unmute when volume is adjusted above 0 (e.g. user drags a muted slider)
-      if (volume > 0 && audioSessions[sessionIndex].is_muted) {
+      // Auto-unmute when volume is adjusted above 0 (e.g. user drags a muted slider).
+      // LVar-driven changes skip this: cockpit volume and mute stay independent.
+      if (!fromLvar && volume > 0 && audioSessions[sessionIndex].is_muted) {
         audioSessions[sessionIndex].is_muted = false;
         invokeSetMute(sessionId, false).catch(e => console.error("Error auto-unmuting:", e));
       }
+    }
+
+    // Two-way sim sync: local gestures write through to the channel's volume
+    // LVar (throttled); LVar-driven changes must not write back.
+    if (!fromLvar) {
+      writeSimVolume(sessionId, volume);
     }
   }
 
@@ -1021,14 +1126,14 @@
     resolve?.(false);
   }
 
-  async function animateVolumeTo(sessionId: string, targetVolume: number, durationMs: number = 200): Promise<boolean> {
+  async function animateVolumeTo(sessionId: string, targetVolume: number, durationMs: number = 200, fromLvar: boolean = false): Promise<boolean> {
     if (sessionId.startsWith('inactive_')) return false;
-    
+
     const session = audioSessions.find(s => s.session_id === sessionId);
     if (!session) return false;
 
     cancelVolumeAnimation(sessionId);
-    
+
     const startVolume = session.volume;
     const startTime = Date.now();
     animatingSliders.add(sessionId);
@@ -1045,7 +1150,7 @@
         const eased = 1 - Math.pow(1 - progress, 3);
         const currentVolume = startVolume + (targetVolume - startVolume) * eased;
 
-        setSessionVolumeImmediate(sessionId, currentVolume);
+        setSessionVolumeImmediate(sessionId, currentVolume, fromLvar);
 
         if (progress < 1) {
           signal.frameId = requestAnimationFrame(animate);
@@ -1202,9 +1307,11 @@
   
   async function setSessionVolumeFinal(sessionId: string, volume: number) {
     if (sessionId.startsWith('inactive_')) return;
-    
+
     try {
       await invokeSetVolume(sessionId, volume);
+      // Only called from local gestures, so always write the final value to the sim
+      writeSimVolumeFinal(sessionId, volume);
       await refreshAudioSessions();
     } catch (error) {
       console.error("Error setting volume:", error);
@@ -1212,7 +1319,7 @@
     }
   }
 
-  async function setSessionMute(sessionId: string, muted: boolean) {
+  async function setSessionMute(sessionId: string, muted: boolean, fromLvar: boolean = false) {
     if (sessionId.startsWith('inactive_')) return;
 
     const sessionIndex = audioSessions.findIndex(s => s.session_id === sessionId);
@@ -1224,6 +1331,12 @@
     cancelMuteAnimation(sessionId);
 
     try {
+      // Two-way sim sync: local mute gestures write through to the channel's
+      // mute LVar; LVar-driven changes must not write back.
+      if (!fromLvar) {
+        writeSimMute(sessionId, muted);
+      }
+
       if (muted) {
         // Muting: visually animate slider from current volume to 0, then set mute flag
         const startVolume = session.is_muted ? 0 : session.volume;
@@ -1321,6 +1434,128 @@
 
       animate();
     });
+  }
+
+  // ─────────────────────────────────────────────────────────────────────────────
+  // SIM CHANNEL SYNC (LVar ⇄ application volume/mute)
+  // ─────────────────────────────────────────────────────────────────────────────
+
+  /**
+   * Handle an inbound LVar value change from the simulator (sim → app).
+   * Loop prevention is value-based: an event whose raw value equals what our
+   * current app state maps to is the echo of our own write and is ignored, so
+   * genuine cockpit changes always apply while our own writes never bounce back.
+   */
+  function handleLvarValueChanged(payload: LvarValueEvent) {
+    const route = lvarRouteByName.get(payload.name);
+    if (!route) return;
+
+    const session = audioSessions.find(s => s.process_name === route.processName);
+    if (!session) return; // App not running — nothing to drive
+
+    const def = simChannelByProcess.get(route.processName);
+    if (!def) return;
+
+    if (route.kind === 'volume') {
+      // f32 round-trip means float LVars need an epsilon rather than ===
+      const echoValue = denormaliseVolume(session.volume, def.volume);
+      if (Math.abs(echoValue - payload.value) < 1e-4) return;
+      // The user's drag always wins over inbound cockpit state
+      if (manuallyControlledSessions.has(session.session_id)) return;
+
+      applyLvarVolume(session.session_id, normaliseVolume(payload.value, def.volume));
+    } else if (def.mute) {
+      const muted = payload.value === def.mute.mutedValue ? true
+        : payload.value === def.mute.unmutedValue ? false
+        : null;
+      if (muted === null || muted === session.is_muted) return;
+
+      applyLvarMute(session.session_id, muted);
+    }
+  }
+
+  /** Apply a simulator-driven volume change without writing back to the sim */
+  async function applyLvarVolume(sessionId: string, unit: number) {
+    const completed = await animateVolumeTo(sessionId, unit, 150, true);
+    if (completed && !manuallyControlledSessions.has(sessionId)) {
+      await invokeSetVolume(sessionId, unit).catch((e) => {
+        console.error("[Sim] Error applying LVar-driven volume:", e);
+      });
+    }
+  }
+
+  /** Apply a simulator-driven mute change without writing back to the sim */
+  function applyLvarMute(sessionId: string, muted: boolean) {
+    setSessionMute(sessionId, muted, true).catch((e) => {
+      console.error("[Sim] Error applying LVar-driven mute:", e);
+    });
+  }
+
+  // ─── Write-Through (app → sim) ───
+  // Volume writes are throttled with a trailing send so a slider drag produces
+  // a steady but modest command rate; the final value of a gesture is always
+  // sent immediately via writeSimVolumeFinal. Mute writes are single shots.
+
+  const LVAR_WRITE_INTERVAL_MS = 120;
+  const simVolumeWrites = new Map<string, { timerId?: number; pending?: number }>();
+
+  function sendSimVolume(lvar: string, unit: number, def: SimChannelDef) {
+    invoke('set_sim_lvar', { name: lvar, value: denormaliseVolume(unit, def.volume) })
+      .catch((e) => console.warn(`[Sim] Failed to write ${lvar}:`, e));
+  }
+
+  function writeSimVolume(sessionId: string, unit: number) {
+    const session = audioSessions.find(s => s.session_id === sessionId);
+    if (!session) return;
+    const def = simChannelByProcess.get(session.process_name);
+    if (!def) return;
+
+    const lvar = def.volume.lvar;
+    let entry = simVolumeWrites.get(lvar);
+    if (!entry) {
+      entry = {};
+      simVolumeWrites.set(lvar, entry);
+    }
+    entry.pending = unit;
+    if (entry.timerId !== undefined) return; // trailing send already scheduled
+
+    entry.timerId = window.setTimeout(() => {
+      const current = simVolumeWrites.get(lvar);
+      if (!current) return;
+      current.timerId = undefined;
+      const pending = current.pending;
+      current.pending = undefined;
+      if (pending === undefined) return;
+      sendSimVolume(lvar, pending, def);
+    }, LVAR_WRITE_INTERVAL_MS);
+  }
+
+  /** Send the final value of a volume gesture immediately, cancelling any pending throttled write */
+  function writeSimVolumeFinal(sessionId: string, unit: number) {
+    const session = audioSessions.find(s => s.session_id === sessionId);
+    if (!session) return;
+    const def = simChannelByProcess.get(session.process_name);
+    if (!def) return;
+
+    const lvar = def.volume.lvar;
+    const entry = simVolumeWrites.get(lvar);
+    if (entry) {
+      if (entry.timerId !== undefined) clearTimeout(entry.timerId);
+      entry.timerId = undefined;
+      entry.pending = undefined;
+    }
+    sendSimVolume(lvar, unit, def);
+  }
+
+  function writeSimMute(sessionId: string, muted: boolean) {
+    const session = audioSessions.find(s => s.session_id === sessionId);
+    if (!session) return;
+    const def = simChannelByProcess.get(session.process_name);
+    if (!def?.mute) return;
+
+    const raw = muted ? def.mute.mutedValue : def.mute.unmutedValue;
+    invoke('set_sim_lvar', { name: def.mute.lvar, value: raw })
+      .catch((e) => console.warn(`[Sim] Failed to write ${def.mute!.lvar}:`, e));
   }
 
   // ─────────────────────────────────────────────────────────────────────────────
@@ -1449,18 +1684,23 @@
 
   function removeApplication(processName: string) {
     axisMappings = axisMappings.filter(m => m.processName !== processName);
-    
+
     buttonMappings = buttonMappings.filter(m => m.processName !== processName);
-    
+
+    if (simAssignments.some(a => a.processName === processName)) {
+      simAssignments = simAssignments.filter(a => a.processName !== processName);
+      saveSimAssignments();
+    }
+
     const newPinnedApps = new Set(pinnedApps);
     newPinnedApps.delete(processName);
     pinnedApps = newPinnedApps;
     savePinnedApps();
-    
+
     if (pinnedApps.size === 0) {
       isEditMode = false;
     }
-    
+
     const sessionsToClean = audioSessions.filter(s => s.process_name === processName);
     for (const session of sessionsToClean) {
       animatingSliders.delete(session.session_id);
@@ -1468,9 +1708,21 @@
       cancelVolumeAnimation(session.session_id);
       cancelMuteAnimation(session.session_id);
     }
-    
+
     saveMappings();
     saveButtonMappings();
+  }
+
+  /** Assign (or clear) an application's sim radio channel category */
+  function handleSetSimCategory(e: CustomEvent<{ processName: string; category: SimChannelCategory | null }>) {
+    const { processName, category } = e.detail;
+    simAssignments = simAssignments.filter(a => a.processName !== processName);
+    if (category) {
+      // One app per category: assigning a category already in use moves it here
+      simAssignments = simAssignments.filter(a => a.category !== category);
+      simAssignments = [...simAssignments, { processName, category }];
+    }
+    saveSimAssignments();
   }
 
   async function applyAxisMappings() {
@@ -1666,7 +1918,8 @@
     axisMappings: 'clearcomms_axis_mappings',
     buttonMappings: 'clearcomms_button_mappings',
     pinnedApps: 'clearcomms_pinned_apps',
-    appFriendlyNames: 'clearcomms_app_friendly_names'
+    appFriendlyNames: 'clearcomms_app_friendly_names',
+    simAssignments: 'clearcomms_sim_assignments'
   } as const;
 
   async function saveConfigValue(key: string, value: unknown) {
@@ -1740,6 +1993,23 @@
     void saveConfigValue(PERSIST_KEYS.appFriendlyNames, obj).catch((error) => {
       console.error("Error saving app friendly names:", error);
     });
+  }
+
+  function saveSimAssignments() {
+    void saveConfigValue(PERSIST_KEYS.simAssignments, simAssignments).catch((error) => {
+      console.error("Error saving sim assignments:", error);
+    });
+  }
+
+  async function loadSimAssignments() {
+    try {
+      const saved = await loadConfigValue<SimChannelAssignment[]>(PERSIST_KEYS.simAssignments);
+      if (saved) {
+        simAssignments = saved;
+      }
+    } catch (error) {
+      console.error("Error loading sim assignments:", error);
+    }
   }
 
   async function loadAppFriendlyNames() {
@@ -1904,6 +2174,8 @@
           {availableSessions}
           axisMappings={axisMappings}
           buttonMappings={buttonMappings}
+          {simAssignments}
+          {supportedSimCategories}
           {isEditMode}
           isBindingMode={isBindingMode}
           isButtonBindingMode={isButtonBindingMode}
@@ -1926,6 +2198,7 @@
           on:removebuttonmapping={handleRemoveButtonMapping}
           on:toggleinversion={handleToggleInversion}
           on:removeapplication={handleRemoveApplication}
+          on:setsimcategory={handleSetSimCategory}
           on:select={handleSelectApp}
         />
 

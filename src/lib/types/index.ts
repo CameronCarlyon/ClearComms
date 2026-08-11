@@ -120,3 +120,23 @@ export interface SimStatus {
   /** Detected simulator version: "2020", "2024", or "unknown" */
   simVersion: string;
 }
+
+/** Generic radio channel categories an application channel can be assigned to */
+export type SimChannelCategory = 'COM1' | 'COM2' | 'COM3' | 'HF1' | 'HF2' | 'CAB' | 'PA' | 'INT';
+
+/** Which cockpit seat's audio panel a sim channel assignment follows */
+export type SimSeat = 'captain' | 'firstOfficer';
+
+/** Assignment of an application (keyed by process name) to a radio channel category */
+export interface SimChannelAssignment {
+  processName: string;
+  category: SimChannelCategory;
+}
+
+/** Payload of the `lvar-value-changed` event emitted by the Rust backend */
+export interface LvarValueEvent {
+  /** LVar name (without the "L:" prefix) */
+  name: string;
+  /** Raw LVar value in the aircraft profile's native range */
+  value: number;
+}

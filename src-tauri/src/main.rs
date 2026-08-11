@@ -754,6 +754,11 @@ fn main() {
     let sim_state = Arc::new(Mutex::new(simconnect::state::SimState::default()));
     let sim_state_for_setup = sim_state.clone();
 
+    // Shared LVar command channel — populated by the SimConnect lifecycle
+    // controller while a simulator connection is active.
+    let lvar_command_handle = Arc::new(simconnect::LvarCommandHandle::default());
+    let lvar_command_handle_for_setup = lvar_command_handle.clone();
+
     // Create the mpsc channel that bridges sim_detection events to the
     // SimConnect lifecycle controller.
     let (detection_sender, detection_receiver) = std::sync::mpsc::channel::<sim_detection::SimDetectionEvent>();
@@ -780,6 +785,7 @@ fn main() {
             queue_launch_toast(app);
         }))
         .manage(sim_state)
+        .manage(lvar_command_handle)
         .setup(move |app| {
             // Start the lifecycle controller now that we have the app handle
             if let (Some(receiver), Some(retry_tx)) = (
@@ -789,6 +795,7 @@ fn main() {
                 let sim_session = simconnect::start_lifecycle_controller(
                     app.handle().clone(),
                     sim_state_for_setup.clone(),
+                    lvar_command_handle_for_setup.clone(),
                     receiver,
                     retry_tx,
                 );
@@ -966,6 +973,8 @@ fn main() {
             audio_management::set_system_volume,
             audio_management::set_system_mute,
             simconnect::get_sim_status,
+            simconnect::subscribe_lvars,
+            simconnect::set_sim_lvar,
             update_layout_measurements,
             resize_window_to_content,
             show_main_window,
