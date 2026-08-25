@@ -14,14 +14,18 @@
 //! All SimConnect API calls happen exclusively on this thread.
 //!
 //! ## Threading Model
-//! The dispatch loop uses `WaitForMultipleObjects` with two event handles:
+//! The dispatch loop blocks in `WaitForMultipleObjects` on:
 //! - SimConnect event handle: signalled when messages arrive
 //! - Shutdown event handle: signalled when the app is shutting down
+//! - LVar wake event: signalled when the frontend queues a command
+//! - Simulator process handle: signalled when the simulator exits
 //!
-//! This ensures the thread is truly dormant between messages and shuts down
-//! instantly when requested, with zero CPU usage while idle.
+//! Every reason to wake is therefore an event. Nothing is polled, and LVars are
+//! subscribed with CHANGED so the simulator itself withholds values that have
+//! not moved: while connected and idle this thread does not run at all.
 
 use std::ffi::CString;
+use std::io::Write as _;
 use std::sync::Arc;
 
 use simconnect_sys::*;
@@ -32,7 +36,9 @@ use windows::Win32::System::Com::{CoInitializeEx, CoUninitialize, COINIT_APARTME
 #[cfg(windows)]
 use windows::Win32::Foundation::{CloseHandle, HANDLE, WAIT_OBJECT_0, WAIT_TIMEOUT};
 #[cfg(windows)]
-use windows::Win32::System::Threading::{WaitForMultipleObjects, WaitForSingleObject};
+use windows::Win32::System::Threading::{
+    OpenProcess, WaitForMultipleObjects, WaitForSingleObject, PROCESS_SYNCHRONIZE,
+};
 
 // Raw FFI for CreateEventW since the windows crate path varies by version
 #[cfg(windows)]
@@ -104,6 +110,10 @@ const REQUEST_ID_CC_RESPONSE: u32 = 22;
 /// Ranges are bounded by MAX_LVAR_SUBSCRIPTIONS.
 const DEFINE_ID_LVAR_BASE: u32 = 100;
 const REQUEST_ID_LVAR_BASE: u32 = 200;
+/// One-shot reads used to prime each slot's current value at subscribe time.
+/// Kept clear of REQUEST_ID_LVAR_BASE so the standing subscription and the
+/// prime never share a request id.
+const REQUEST_ID_LVAR_ONCE_BASE: u32 = 400;
 
 /// Raw buffer size for MobiFlight command writes (matches the existing ping
 /// buffer convention; commands are NUL-padded C strings).
@@ -137,9 +147,13 @@ struct DispatchState {
 }
 
 /// Payload emitted to the frontend when a subscribed LVar value changes.
+///
+/// Borrows the name from the subscription list rather than owning it: this is
+/// constructed per delivered value, and the clone it replaces was an allocation
+/// on the hot path for a string that already exists and outlives the emit.
 #[derive(serde::Serialize, Clone)]
-struct LvarValueEvent {
-    name: String,
+struct LvarValueEvent<'a> {
+    name: &'a str,
     value: f32,
 }
 
@@ -379,6 +393,23 @@ unsafe fn write_mf_command(
     let mut buffer = [0u8; MF_COMMAND_BUFFER_SIZE];
     buffer[..bytes.len()].copy_from_slice(bytes);
 
+    write_mf_buffer(handle, area_id, define_id, &mut buffer)
+}
+
+/// Send an already-formatted, NUL-padded command buffer.
+///
+/// Split out so a caller that builds its command in place can avoid the
+/// intermediate `String`: volume writes go out on every throttle tick of a
+/// gesture, and formatting one onto the heap each time is avoidable.
+///
+/// # Safety
+/// Same contract as `write_mf_command`.
+unsafe fn write_mf_buffer(
+    handle: *mut std::ffi::c_void,
+    area_id: u32,
+    define_id: u32,
+    buffer: &mut [u8; MF_COMMAND_BUFFER_SIZE],
+) -> Result<(), String> {
     let result = SimConnect_SetClientData(
         handle,
         area_id,
@@ -516,6 +547,23 @@ unsafe fn setup_clearcomms_client_data(handle: *mut std::ffi::c_void) -> Result<
     Ok(())
 }
 
+/// Map a client-data request id back to its LVar slot. Both the standing
+/// CHANGED subscription and the one-shot prime target the same slot, so either
+/// range resolves to the same index.
+fn lvar_slot_for_request(request_id: u32) -> Option<usize> {
+    let max = MAX_LVAR_SUBSCRIPTIONS as u32;
+
+    if request_id >= REQUEST_ID_LVAR_BASE && request_id < REQUEST_ID_LVAR_BASE + max {
+        Some((request_id - REQUEST_ID_LVAR_BASE) as usize)
+    } else if request_id >= REQUEST_ID_LVAR_ONCE_BASE
+        && request_id < REQUEST_ID_LVAR_ONCE_BASE + max
+    {
+        Some((request_id - REQUEST_ID_LVAR_ONCE_BASE) as usize)
+    } else {
+        None
+    }
+}
+
 /// Log a reply from the WASM module on our dedicated ClearComms response
 /// channel. Purely diagnostic: nothing in the state machine depends on it.
 ///
@@ -608,13 +656,17 @@ unsafe fn apply_lvar_subscriptions(
             continue;
         }
 
+        // CHANGED lets SimConnect drop unchanged values inside the simulator
+        // process. The module rewrites every registered variable on each tick
+        // whether or not it moved, so without this the connection thread is
+        // woken tens of times a second purely to discard identical data.
         let result = SimConnect_RequestClientData(
             handle,
             CLIENT_DATA_ID_CC_LVARS,
             REQUEST_ID_LVAR_BASE + i as u32,
             DEFINE_ID_LVAR_BASE + i as u32,
             SIMCONNECT_CLIENT_DATA_PERIOD_ON_SET as i32,
-            SIMCONNECT_CLIENT_DATA_REQUEST_FLAG_DEFAULT as u32,
+            SIMCONNECT_CLIENT_DATA_REQUEST_FLAG_CHANGED as u32,
             0,
             0,
             0,
@@ -630,6 +682,46 @@ unsafe fn apply_lvar_subscriptions(
 
         if let Err(e) = send_cc_command(handle, &format!("MF.SimVars.Add.(L:{})", name)) {
             tracing::warn!("[SimConnect] Failed to subscribe LVar {}: {}", name, e);
+            continue;
+        }
+
+        // CHANGED only reports movement, so the current level has to be asked
+        // for explicitly: otherwise a channel stays wherever it happened to be
+        // until someone touches the knob. Delivered on its own request id and
+        // folded into the same slot by lvar_slot_for_request.
+        //
+        // Skipped when this slot previously held a different variable. The read
+        // targets an offset in the shared LVars area, and the module may not
+        // have written the newly registered variable there yet: priming then
+        // would apply the previous variable's value to this channel. In that
+        // case the CHANGED subscription delivers the real value on the module's
+        // next write instead, one tick later.
+        let slot_held_another_lvar = lvar_state
+            .subscribed
+            .get(i)
+            .is_some_and(|previous| previous != name);
+
+        if slot_held_another_lvar {
+            continue;
+        }
+
+        let result = SimConnect_RequestClientData(
+            handle,
+            CLIENT_DATA_ID_CC_LVARS,
+            REQUEST_ID_LVAR_ONCE_BASE + i as u32,
+            DEFINE_ID_LVAR_BASE + i as u32,
+            SIMCONNECT_CLIENT_DATA_PERIOD_ONCE as i32,
+            SIMCONNECT_CLIENT_DATA_REQUEST_FLAG_DEFAULT as u32,
+            0,
+            0,
+            0,
+        );
+        if result != 0 {
+            tracing::warn!(
+                "[SimConnect] Initial read failed for LVar {}: {:#010x}",
+                name,
+                result
+            );
         }
     }
 
@@ -1037,11 +1129,13 @@ fn try_connect_and_run(
     const MISSED_SCANS_BEFORE_EXIT: u32 = 2;
     let lvar_wake_handle = HANDLE(lvar_wake_event as *mut std::ffi::c_void);
 
-    // Use a finite timeout so the thread can periodically check whether the
-    // simulator process is still alive and whether a QUIT message has already
-    // been processed.  This prevents infinite hangs when the SimConnect event
-    // handle is orphaned.
-    const WAIT_TIMEOUT_MS: u32 = 5000;
+    // Waiting on the simulator's own process handle makes its exit an event
+    // rather than something to poll for. When the handle is available the loop
+    // needs no periodic work at all, so the timeout is only a long backstop
+    // against an orphaned SimConnect event handle. Without it (OpenProcess can
+    // fail) the loop falls back to the previous scan on a short timeout.
+    const WAIT_TIMEOUT_WATCHED_MS: u32 = 60_000;
+    const WAIT_TIMEOUT_POLLED_MS: u32 = 5_000;
 
     // SimConnect_GetNextDispatch signals an empty message queue by returning
     // E_FAIL: it is the drain loop's normal exit, not an error. A genuinely
@@ -1049,11 +1143,31 @@ fn try_connect_and_run(
     // the timeout branch's health check rather than here.
     const E_FAIL: i32 = 0x80004005_u32 as i32;
 
-    loop {
-        let handles = [simconnect_event, *shutdown_event, lvar_wake_handle];
+    // A SYNCHRONIZE handle is signalled the moment the process exits, so the
+    // simulator going away wakes this loop directly instead of being noticed up
+    // to five seconds later by a process-table snapshot.
+    let sim_process: Option<HANDLE> = crate::sim_detection::scan_for_running_sim_with_pid()
+        .and_then(|(_, pid)| unsafe { OpenProcess(PROCESS_SYNCHRONIZE, false, pid) }.ok());
 
+    if sim_process.is_none() {
+        tracing::debug!(
+            "[SimConnect] Could not open the simulator process: falling back to periodic scans"
+        );
+    }
+
+    let mut handles = vec![simconnect_event, *shutdown_event, lvar_wake_handle];
+    if let Some(process) = sim_process {
+        handles.push(process);
+    }
+    let wait_timeout_ms = if sim_process.is_some() {
+        WAIT_TIMEOUT_WATCHED_MS
+    } else {
+        WAIT_TIMEOUT_POLLED_MS
+    };
+
+    loop {
         let wait_result = unsafe {
-            WaitForMultipleObjects(&handles, false, WAIT_TIMEOUT_MS)
+            WaitForMultipleObjects(&handles, false, wait_timeout_ms)
         };
 
         // WAIT_OBJECT_0 is the base value (0). The windows crate wraps the
@@ -1104,8 +1218,25 @@ fn try_connect_and_run(
                     },
                     LvarCommand::Set { name, value } => unsafe {
                         if dispatch_state.lvar.client_ready {
-                            let command = format!("MF.SimVars.Set.{} (>L:{})", value, name);
-                            if let Err(e) = send_cc_command(handle, &command) {
+                            // Formatted straight into the command buffer, which
+                            // is zero-filled and therefore already NUL-padded.
+                            let mut buffer = [0u8; MF_COMMAND_BUFFER_SIZE];
+                            let formatted = {
+                                let mut cursor = &mut buffer[..];
+                                write!(cursor, "MF.SimVars.Set.{} (>L:{})", value, name)
+                            };
+
+                            if formatted.is_err() {
+                                tracing::warn!(
+                                    "[SimConnect] LVar set command too long: {}",
+                                    name
+                                );
+                            } else if let Err(e) = write_mf_buffer(
+                                handle,
+                                CLIENT_DATA_ID_CC_COMMAND,
+                                DEFINE_ID_CC_COMMAND,
+                                &mut buffer,
+                            ) {
                                 tracing::warn!("[SimConnect] Failed to set LVar {}: {}", name, e);
                             }
                         } else {
@@ -1123,6 +1254,9 @@ fn try_connect_and_run(
             // Shutdown signalled: break cleanly
             tracing::info!("[SimConnect] Shutdown signal received in dispatch loop");
             break;
+        } else if sim_process.is_some() && result_code == WAIT_OBJECT_0.0 + 3 {
+            tracing::info!("[SimConnect] Simulator process exited: closing connection");
+            break;
         } else if result_code == WAIT_TIMEOUT.0 {
             if quit_received {
                 tracing::info!(
@@ -1130,9 +1264,13 @@ fn try_connect_and_run(
                 );
                 break;
             }
-            // Health-check: if the sim process is gone, exit cleanly: but
-            // only once two scans in a row agree.
-            if crate::sim_detection::scan_for_running_sim().is_none() {
+
+            // Only reached when the process handle could not be opened. Two
+            // scans must agree before tearing down, since a single failed
+            // enumeration would otherwise cost a full reconnect.
+            if sim_process.is_none()
+                && crate::sim_detection::scan_for_running_sim().is_none()
+            {
                 missed_sim_scans += 1;
                 if missed_sim_scans >= MISSED_SCANS_BEFORE_EXIT {
                     tracing::info!(
@@ -1165,6 +1303,9 @@ fn try_connect_and_run(
     unsafe {
         SimConnect_Close(handle);
         CloseHandle(simconnect_event).ok();
+        if let Some(process) = sim_process {
+            CloseHandle(process).ok();
+        }
     }
     tracing::info!("[SimConnect] Connection closed");
 
@@ -1235,6 +1376,10 @@ unsafe fn handle_message(
                 crate::simconnect::update_state_and_emit(app, state, |s| {
                     s.connection = ConnectionState::Connected;
                 });
+
+                // A connection was actually established, so the reconnect
+                // backoff starts from scratch next time.
+                crate::simconnect::note_connection_established();
 
                 // Now that OPEN has been received, perform all registrations
                 if let Err(e) = register_simvars_and_client_data(handle) {
@@ -1353,11 +1498,8 @@ unsafe fn handle_message(
                 let payload_size = (cb as usize).saturating_sub(header_end - msg_start);
 
                 handle_cc_response(payload_ptr as *const std::ffi::c_void, payload_size);
-            } else if request_id >= REQUEST_ID_LVAR_BASE
-                && request_id < REQUEST_ID_LVAR_BASE + MAX_LVAR_SUBSCRIPTIONS as u32
-            {
+            } else if let Some(index) = lvar_slot_for_request(request_id) {
                 // Subscribed LVar value update: a single f32 payload.
-                let index = (request_id - REQUEST_ID_LVAR_BASE) as usize;
                 let recv_data = &*client_data;
                 let payload_ptr = std::ptr::addr_of!(recv_data._base.dwData) as *const u8;
 
@@ -1393,10 +1535,7 @@ unsafe fn handle_message(
                     tracing::trace!("[SimConnect] LVar {} = {}", name, value);
                     if let Err(e) = app.emit(
                         "lvar-value-changed",
-                        LvarValueEvent {
-                            name: name.clone(),
-                            value,
-                        },
+                        LvarValueEvent { name, value },
                     ) {
                         tracing::warn!("[SimConnect] Failed to emit lvar-value-changed: {}", e);
                     }

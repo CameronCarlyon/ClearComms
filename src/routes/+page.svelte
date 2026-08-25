@@ -110,6 +110,40 @@
 /** One application channel driven by an inbound LVar update */
   type LvarRoute = { processName: string; kind: 'volume' | 'mute' };
 
+  /**
+   * Sim function definition: the running applications bound to it.
+   *
+   * Built once per change rather than filtered per call. The consumers below run
+   * on every animation frame of a gesture and on every inbound LVar event, and
+   * a filter in that position allocates a fresh array each time.
+   */
+  const sessionsBySimFunction = $derived.by(() => {
+    const map = new Map<SimFunctionDef, AudioSession[]>();
+
+    for (const session of audioSessions) {
+      if (session.session_id.startsWith('inactive_')) continue;
+
+      const def = simFunctionByProcess.get(session.process_name);
+      if (!def) continue;
+
+      const bound = map.get(def);
+      if (bound) bound.push(session);
+      else map.set(def, [session]);
+    }
+    return map;
+  });
+
+  /**
+   * session id: the session. Reads only session_id, so the per-property
+   * tracking that keeps sessionsBySimFunction stable applies here too: a volume
+   * or mute write does not rebuild it.
+   */
+  const sessionById = $derived.by(() => {
+    const map = new Map<string, AudioSession>();
+    for (const session of audioSessions) map.set(session.session_id, session);
+    return map;
+  });
+
   /** LVar name → every route bound to it. A sim function can be shared by any
    *  number of applications, so one LVar drives all of them. */
   const lvarRouteByName = $derived.by(() => {
@@ -170,10 +204,16 @@
     const key = `${activeSimProfile?.id ?? 'none'}|${names.join(',')}`;
     if (key === lastLvarSubscriptionKey) return;
 
-    // Recorded only once the backend has accepted it. Caching the key up front
-    // meant a single transient failure: the command channel is published a
-    // moment after the connection reports ready: left the backend subscribed
-    // to nothing, with no path back until the assignments changed.
+    // A new subscription set means new baselines. The LVar names change with
+    // the aircraft, so entries carried over would let a genuinely-zero level
+    // through as though that variable had already proven itself.
+    lvarsSeenNonZero.clear();
+
+    // The key is recorded only once the backend accepts the set. Caching it up
+    // front meant one transient failure (the command channel is published a
+    // moment after the connection reports ready) left the backend subscribed to
+    // nothing, with no path back until the assignments changed.
+
     invoke('subscribe_lvars', { names })
       .then(() => {
         lastLvarSubscriptionKey = key;
@@ -1266,6 +1306,14 @@
     hardwareVolumeTargets.set(sessionId, targetVolume);
     
     if (!hardwareVolumeAnimations.has(sessionId)) {
+      // Geometric convergence reaches the target in about twenty frames. The
+      // cap exists because this loop calls setSessionVolumeImmediate, which
+      // claims the sim function: were anything ever to stop it converging, the
+      // channel would go deaf to its LVar silently and for good. Bounding it
+      // makes that impossible rather than merely unlikely.
+      const maxFrames = 60;
+      let frame = 0;
+
       const animate = () => {
         const target = hardwareVolumeTargets.get(sessionId);
         if (target === undefined) {
@@ -1284,7 +1332,8 @@
         const diff = target - current;
         const newVolume = current + (diff * HARDWARE_VOLUME_SMOOTHING);
         
-        if (Math.abs(diff) < 0.001) {
+        frame += 1;
+        if (Math.abs(diff) < 0.001 || frame >= maxFrames) {
           setSessionVolumeImmediate(sessionId, target);
           hardwareVolumeAnimations.delete(sessionId);
           hardwareVolumeTargets.delete(sessionId);
@@ -1568,14 +1617,13 @@
   // TEMPORARY: names the filter that swallowed an inbound LVar update, so a
   // dead sim-to-app chain can be diagnosed in one run. Dev builds only.
   function traceLvarDrop(payload: LvarValueEvent, reason: string, detail?: unknown) {
-    if (!IS_DEV) return;
     console.log(`[Sim] LVar dropped (${reason})`, payload.name, payload.value, detail ?? '');
   }
 
   function handleLvarValueChanged(payload: LvarValueEvent) {
     const routes = lvarRouteByName.get(payload.name);
     if (!routes || routes.length === 0) {
-      traceLvarDrop(payload, 'no route: LVar not in the active assignment set');
+      if (IS_DEV) traceLvarDrop(payload, 'no route: LVar not in the active assignment set');
       return;
     }
 
@@ -1589,13 +1637,13 @@
   function applyLvarToRoute(payload: LvarValueEvent, route: LvarRoute) {
     const session = audioSessions.find(s => s.process_name === route.processName);
     if (!session) {
-      traceLvarDrop(payload, 'app not running', { processName: route.processName });
+      if (IS_DEV) traceLvarDrop(payload, 'app not running', { processName: route.processName });
       return;
     }
 
     const def = simFunctionByProcess.get(route.processName);
     if (!def) {
-      traceLvarDrop(payload, 'no function definition', { processName: route.processName });
+      if (IS_DEV) traceLvarDrop(payload, 'no function definition', { processName: route.processName });
       return;
     }
 
@@ -1604,16 +1652,18 @@
     // so mute is covered too: an inbound mute forces displayVolume to 0, which
     // would tear the slider out from under the cursor mid-drag.
     if (manuallyControlledSessions.has(session.session_id)) {
-      traceLvarDrop(payload, 'session under local control', {
-        claimId: manualControlClaims.get(session.session_id),
-      });
+      if (IS_DEV) {
+        traceLvarDrop(payload, 'session under local control', {
+          claimId: manualControlClaims.get(session.session_id),
+        });
+      }
       return;
     }
 
     // One source at a time: while a gesture is driving this sim function, no
     // channel bound to it reads the LVar.
     if (isSimFunctionLocallyDriven(def)) {
-      traceLvarDrop(payload, 'sim function is under local input');
+      if (IS_DEV) traceLvarDrop(payload, 'sim function is under local input');
       return;
     }
 
@@ -1623,7 +1673,7 @@
       if (payload.value !== 0) {
         lvarsSeenNonZero.add(payload.name);
       } else if (!lvarsSeenNonZero.has(payload.name)) {
-        traceLvarDrop(payload, 'LVar has not reported a non-zero value yet');
+        if (IS_DEV) traceLvarDrop(payload, 'LVar has not reported a non-zero value yet');
         return;
       }
 
@@ -1633,17 +1683,14 @@
       // Already where the cockpit is asking us to be: nothing to apply.
       // Compared in the shared orientation so a reversed channel is not read as
       // permanently out of step with the LVar.
-      const currentValue = denormaliseVolume(orientVolume(route.processName, session.volume), def.volume);
+      const currentValue = denormaliseVolume(session.volume, def.volume);
       if (Math.abs(currentValue - payload.value) < epsilon) {
-        traceLvarDrop(payload, 'already at this value', { currentValue, epsilon });
+        if (IS_DEV) traceLvarDrop(payload, 'already at this value', { currentValue, epsilon });
         return;
       }
 
       if (IS_DEV) console.log('[Sim] LVar applied', payload.name, payload.value);
-      applyLvarVolume(
-        session.session_id,
-        orientVolume(route.processName, normaliseVolume(payload.value, def.volume))
-      );
+      applyLvarVolume(session.session_id, normaliseVolume(payload.value, def.volume));
     } else if (def.mute) {
       // Whichever of the two states the reading is nearer to. Exact equality
       // against mutedValue/unmutedValue looked safe for a two-state latch, but
@@ -1654,7 +1701,7 @@
       const muted = toMuted <= toUnmuted;
 
       if (muted === session.is_muted) {
-        traceLvarDrop(payload, 'already in this mute state', { muted });
+        if (IS_DEV) traceLvarDrop(payload, 'already in this mute state', { muted });
         return;
       }
 
@@ -1706,12 +1753,7 @@
   const LVAR_ECHO_WINDOW_MS = 500;
 
   function sendSimVolume(lvar: string, unit: number, def: SimFunctionDef, processName: string) {
-    // processName selects the orientation only; the value written is the
-    // function's, shared by every channel bound to it.
-    // The LVar holds the function's shared orientation, so a reversed channel
-    // writes the mirrored value: otherwise the echo would undo the mirroring
-    // that syncSimFunctionSiblings just applied.
-    const value = denormaliseVolume(orientVolume(processName, unit), def.volume);
+    const value = denormaliseVolume(unit, def.volume);
 
     // Skip a write that would restate the value we just sent. Now that sharing
     // makes other channels follow an echo, a redundant write is not free: it
@@ -1740,7 +1782,7 @@
   }
 
   function writeSimVolume(sessionId: string, unit: number) {
-    const session = audioSessions.find(s => s.session_id === sessionId);
+    const session = sessionById.get(sessionId);
     if (!session) return;
     const def = simFunctionByProcess.get(session.process_name);
     if (!def) return;
@@ -1767,7 +1809,7 @@
 
   /** Send the final value of a volume gesture immediately, cancelling any pending throttled write */
   function writeSimVolumeFinal(sessionId: string, unit: number) {
-    const session = audioSessions.find(s => s.session_id === sessionId);
+    const session = sessionById.get(sessionId);
     if (!session) return;
     const def = simFunctionByProcess.get(session.process_name);
     if (!def) return;
@@ -1780,20 +1822,6 @@
       entry.pending = undefined;
     }
     sendSimVolume(lvar, unit, def, session.process_name);
-  }
-
-  /**
-   * Convert a volume between one channel's own orientation and the shared
-   * orientation of the sim function it is bound to. A channel with Reverse Axis
-   * Direction runs backwards relative to the function, so it mirrors.
-   *
-   * Reversal is self-inverse, so the same helper converts in both directions:
-   * which is what keeps the round trip symmetric: moving either of two shared
-   * channels puts the other in the same place.
-   */
-  function orientVolume(processName: string, unit: number): number {
-    const inverted = axisMappings.find(m => m.processName === processName)?.inverted ?? false;
-    return inverted ? 1 - unit : unit;
   }
 
   /**
@@ -1811,7 +1839,7 @@
 
   /** Record that a gesture is driving the sim function this session is bound to. */
   function markSimFunctionLocalInput(sessionId: string) {
-    const session = audioSessions.find(s => s.session_id === sessionId);
+    const session = sessionById.get(sessionId);
     if (!session) return;
 
     const def = simFunctionByProcess.get(session.process_name);
@@ -1840,8 +1868,10 @@
 
   /** True while a pointer gesture is holding any channel bound to this function. */
   function isSimFunctionHeld(def: SimFunctionDef): boolean {
-    return sessionsForSimFunction(def)
-      .some(s => manuallyControlledSessions.has(s.session_id));
+    const bound = sessionsBySimFunction.get(def);
+    if (!bound) return false;
+
+    return bound.some(s => manuallyControlledSessions.has(s.session_id));
   }
 
   /**
@@ -1851,7 +1881,7 @@
   function isHeldByPointer(sessionId: string): boolean {
     if (manuallyControlledSessions.has(sessionId)) return true;
 
-    const session = audioSessions.find(s => s.session_id === sessionId);
+    const session = sessionById.get(sessionId);
     if (!session) return false;
 
     const def = simFunctionByProcess.get(session.process_name);
@@ -1863,14 +1893,16 @@
    * holds one definition object per category, so two channels share a function
    * exactly when they resolve to the same object: identity is the whole test.
    */
-  function simFunctionSiblings(originSessionId: string): AudioSession[] {
-    const origin = audioSessions.find(s => s.session_id === originSessionId);
-    if (!origin) return [];
-
-    const def = simFunctionByProcess.get(origin.process_name);
+  /**
+   * Every running application bound to the same sim function as this session,
+   * the session itself included. Callers skip the origin inline rather than
+   * filtering, which would allocate a second array on every call.
+   */
+  function simFunctionPeers(session: AudioSession): AudioSession[] {
+    const def = simFunctionByProcess.get(session.process_name);
     if (!def) return [];
 
-    return sessionsForSimFunction(def).filter(s => s.session_id !== originSessionId);
+    return sessionsBySimFunction.get(def) ?? [];
   }
 
   /**
@@ -1892,14 +1924,6 @@
     return true;
   }
 
-  /** Every running application bound to this sim function. */
-  function sessionsForSimFunction(def: SimFunctionDef): AudioSession[] {
-    return audioSessions.filter(s =>
-      !s.session_id.startsWith('inactive_')
-      && simFunctionByProcess.get(s.process_name) === def
-    );
-  }
-
   /**
    * Mirror a local volume change onto the sibling channels, so shared functions
    * move together immediately rather than one LVar round trip apart. The LVar
@@ -1907,32 +1931,28 @@
    * need their app and Windows state.
    */
   function syncSimFunctionSiblings(originSessionId: string, unit: number) {
-    const origin = audioSessions.find(s => s.session_id === originSessionId);
+    const origin = sessionById.get(originSessionId);
     if (!origin) return;
 
-    // Convert into the function's shared orientation once, then back out into
-    // each sibling's own: so a reversed channel lands on the mirrored value.
-    const shared = orientVolume(origin.process_name, unit);
+    for (const session of simFunctionPeers(origin)) {
+      if (session.session_id === originSessionId) continue;
 
-    for (const session of simFunctionSiblings(originSessionId)) {
       // The user's own grip wins: a channel being dragged is never repositioned
       // by a sibling, whatever is driving that sibling.
       if (manuallyControlledSessions.has(session.session_id)) continue;
 
-      const value = orientVolume(session.process_name, shared);
-      session.volume = value;
+      session.volume = unit;
 
-      // The sibling crosses zero on its own level, not the origin's. The shared
-      // mute LVar is written once, by the originating gesture, so this only
-      // brings the sibling's own state into line.
-      applyAutoMute(session, value);
+      // The shared mute LVar is written once, by the originating gesture, so
+      // this only brings the sibling's own state into line.
+      applyAutoMute(session, unit);
 
       // Deliberately no manual-control claim: that flag also suppresses inbound
       // cockpit state, which would leave a shared channel deaf to its own LVar.
       // Routing every sibling write through the same throttle instead records
       // it in liveVolumeState, which is what lets isLocallyDriven recognise the
       // resulting audio push as our own rather than an external change.
-      scheduleLiveVolumeUpdate(session.session_id, value);
+      scheduleLiveVolumeUpdate(session.session_id, unit);
     }
   }
 
@@ -1943,13 +1963,18 @@
    * otherwise loop straight back here.
    */
   function syncSimFunctionMuteSiblings(originSessionId: string, muted: boolean) {
-    for (const session of simFunctionSiblings(originSessionId)) {
+    const origin = sessionById.get(originSessionId);
+    if (!origin) return;
+
+    for (const session of simFunctionPeers(origin)) {
+      if (session.session_id === originSessionId) continue;
+
       void setSessionMute(session.session_id, muted, true);
     }
   }
 
   function writeSimMute(sessionId: string, muted: boolean) {
-    const session = audioSessions.find(s => s.session_id === sessionId);
+    const session = sessionById.get(sessionId);
     if (!session) return;
     const def = simFunctionByProcess.get(session.process_name);
     if (!def?.mute) return;
@@ -2056,20 +2081,34 @@
     const mapping = axisMappings.find(m => m.processName === processName);
     if (!mapping) return;
 
-    mapping.inverted = !mapping.inverted;
+    const inverted = !mapping.inverted;
+
+    // Reverse belongs to the sim function, not to one application: channels
+    // sharing a function share a level, so they have to read their axes the
+    // same way round or they would fight each other on every movement.
+    const def = simFunctionByProcess.get(processName);
+    const sharing = new Set<string>([processName]);
+    for (const session of (def && sessionsBySimFunction.get(def)) ?? []) {
+      sharing.add(session.process_name);
+    }
+
+    for (const m of axisMappings) {
+      if (sharing.has(m.processName)) m.inverted = inverted;
+    }
     axisMappings = [...axisMappings];
     saveMappings();
 
-    // The channel now runs the other way, so its own level mirrors at once
-    // rather than waiting for the next axis movement. Its position within the
-    // sim function is unchanged by the flip: orientVolume cancels out: so the
-    // LVar is deliberately not written and siblings are left where they are.
+    // Reversing flips this channel's current level, and that flip travels
+    // exactly as far as dragging the slider there would: to Windows, to the
+    // sim function's LVar, and to any application sharing that function.
+    // Inversion itself is purely a hardware-axis property from here on; it does
+    // not sit between the channel and its LVar, so the two stay in step.
     const session = audioSessions.find(s => s.process_name === processName);
     if (!session || session.session_id.startsWith('inactive_')) return;
 
     const mirrored = 1 - session.volume;
-    session.volume = mirrored;
-    scheduleLiveVolumeUpdate(session.session_id, mirrored);
+    setSessionVolumeImmediate(session.session_id, mirrored);
+    void setSessionVolumeFinal(session.session_id, mirrored);
   }
 
   function removeMapping(processName: string) {
@@ -2204,15 +2243,18 @@
           // A drag outranks the hardware axis: on this channel, or on any
           // channel sharing its sim function.
           if (session && !isHeldByPointer(session.session_id)) {
-            try {
-              await invokeSetVolume(session.session_id, axisValue);
-              // Auto-mute at the bottom of the axis is handled once the
-              // interpolation settles, in setSessionVolumeImmediate.
-              startHardwareVolumeInterpolation(session.session_id, axisValue);
-              lastHardwareAxisValues.set(mappingKey, axisValue);
-            } catch (error) {
-              console.error(`Error applying mapping for ${mapping.sessionName}:`, error);
-            }
+            // Routed through the same throttled write a drag uses, rather than
+            // calling Windows directly. A direct write leaves no trace in
+            // liveVolumeState, so isLocallyDriven cannot recognise the audio
+            // push it causes: the push is read as an external change and starts
+            // a second animation that fights the interpolation below, both of
+            // them reading and writing the same session.volume.
+            scheduleLiveVolumeUpdate(session.session_id, axisValue);
+
+            // Auto-mute at the bottom of the axis is handled once the
+            // interpolation settles, in setSessionVolumeImmediate.
+            startHardwareVolumeInterpolation(session.session_id, axisValue);
+            lastHardwareAxisValues.set(mappingKey, axisValue);
           }
         }
       }

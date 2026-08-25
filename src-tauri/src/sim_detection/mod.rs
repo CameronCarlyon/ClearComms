@@ -8,7 +8,7 @@
 //! - Periodic Toolhelp32 snapshot every 2 seconds to detect process transitions.
 //! - One-shot process snapshot at startup for already-running detection.
 //! - Events emitted via [`mpsc::Sender<SimDetectionEvent>`].
-//! - Thread sleeps via [`WaitForSingleObject`] between polls — zero CPU while idle.
+//! - Thread sleeps via [`WaitForSingleObject`] between polls: zero CPU while idle.
 //! - No COM, no WMI, no unsafe FFI beyond standard Windows process enumeration.
 
 use std::sync::mpsc::Sender;
@@ -83,6 +83,8 @@ pub fn spawn_sim_detection_thread(
     let shutdown_event_int = shutdown_event as isize;
     let handle = std::thread::Builder::new()
         .name("sim-detection".to_string())
+        // A wait and a process-table walk; nothing recursive or deep.
+        .stack_size(256 * 1024)
         .spawn(move || {
             // RAII guard ensures the event handle is closed even if the thread panics.
             struct EventGuard(isize);
@@ -185,14 +187,14 @@ fn run_polling_loop(
     tracing::info!("[SimDetection] Polling loop started (interval: {} ms)", POLL_INTERVAL_MS);
 
     loop {
-        // Sleep efficiently — the OS blocks this thread, consuming zero CPU
+        // Sleep efficiently: the OS blocks this thread, consuming zero CPU
         match unsafe { WaitForSingleObject(HANDLE(shutdown_handle as *mut std::ffi::c_void), POLL_INTERVAL_MS) } {
             WAIT_OBJECT_0 => {
                 tracing::info!("[SimDetection] Shutdown signal received");
                 break;
             }
             WAIT_TIMEOUT => {
-                // Normal wake — time to poll
+                // Normal wake: time to poll
             }
             _ => {
                 tracing::warn!("[SimDetection] WaitForSingleObject returned unexpected result");
@@ -230,7 +232,7 @@ fn run_polling_loop(
                 let _ = sender.send(SimDetectionEvent::Started(SimVersion::Msfs2020));
                 *state = MsfsState::Running2020;
             }
-            // No change — nothing to do
+            // No change: nothing to do
             _ => {}
         }
     }
@@ -299,8 +301,20 @@ fn handle_process_stop(sender: &Sender<SimDetectionEvent>, state: &mut MsfsState
 // One-shot Process Snapshot
 // ─────────────────────────────────────────────────────────────────────────────
 
+/// The running simulator's version, if any. Prefer [`scan_for_running_sim_with_pid`]
+/// when the process itself needs to be waited on.
 #[cfg(windows)]
 pub fn scan_for_running_sim() -> Option<SimVersion> {
+    scan_for_running_sim_with_pid().map(|(version, _)| version)
+}
+
+/// The running simulator's version and process id.
+///
+/// The pid lets a caller open a SYNCHRONIZE handle and block on the process
+/// itself, which is how the connection thread notices the simulator exiting
+/// without re-scanning the process table on a timer.
+#[cfg(windows)]
+pub fn scan_for_running_sim_with_pid() -> Option<(SimVersion, u32)> {
     unsafe {
         let snapshot = match CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0) {
             Ok(h) => h,
@@ -326,15 +340,15 @@ pub fn scan_for_running_sim() -> Option<SimVersion> {
                 .iter()
                 .position(|&c| c == 0)
                 .unwrap_or(entry.szExeFile.len());
-            let exe_name = String::from_utf16_lossy(&entry.szExeFile[..exe_len]);
+            let exe_name = &entry.szExeFile[..exe_len];
 
-            if exe_name.eq_ignore_ascii_case("FlightSimulator2024.exe") {
-                result = Some(SimVersion::Msfs2024);
+            if utf16_eq_ascii_ignore_case(exe_name, "FlightSimulator2024.exe") {
+                result = Some((SimVersion::Msfs2024, entry.th32ProcessID));
                 break;
             }
-            if exe_name.eq_ignore_ascii_case("FlightSimulator.exe") {
-                result = Some(SimVersion::Msfs2020);
-                // Do not break — prefer 2024 if both are somehow present.
+            if utf16_eq_ascii_ignore_case(exe_name, "FlightSimulator.exe") {
+                result = Some((SimVersion::Msfs2020, entry.th32ProcessID));
+                // Do not break: prefer 2024 if both are somehow present.
             }
 
             if Process32NextW(snapshot, &mut entry).is_err() {
@@ -347,7 +361,26 @@ pub fn scan_for_running_sim() -> Option<SimVersion> {
     }
 }
 
+/// Case-insensitive ASCII comparison against a UTF-16 process name, without
+/// allocating. This runs once per process on the machine per scan, so the
+/// per-entry String it replaces dominated the cost of walking the table.
+#[cfg(windows)]
+fn utf16_eq_ascii_ignore_case(utf16: &[u16], ascii: &str) -> bool {
+    if utf16.len() != ascii.len() {
+        return false;
+    }
+    utf16
+        .iter()
+        .zip(ascii.bytes())
+        .all(|(&wide, byte)| wide < 128 && (wide as u8).eq_ignore_ascii_case(&byte))
+}
+
 #[cfg(not(windows))]
 pub fn scan_for_running_sim() -> Option<SimVersion> {
+    None
+}
+
+#[cfg(not(windows))]
+pub fn scan_for_running_sim_with_pid() -> Option<(SimVersion, u32)> {
     None
 }

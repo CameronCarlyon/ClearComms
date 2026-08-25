@@ -189,8 +189,8 @@ extern "system" {
 /// # Note on state type
 /// `main.rs` manages `Arc<SimStateHandle>` (i.e. `Arc<Mutex<SimState>>`). Tauri
 /// stores managed state by `TypeId`, so the extractor here must use
-/// `State<Arc<SimStateHandle>>`: not `State<SimStateHandle>`: to match the
-/// TypeId of what was actually registered. Rust's auto-deref chain means
+/// `State<Arc<SimStateHandle>>` rather than `State<SimStateHandle>`, so that
+/// it matches the TypeId of what was actually registered. Rust's auto-deref chain means
 /// `state.lock()` still compiles and works:
 ///   `State<Arc<Mutex<SimState>>>` → deref → `Arc<Mutex<SimState>>`
 ///   → deref → `Mutex<SimState>` → `.lock()`.
@@ -263,6 +263,10 @@ pub fn start_lifecycle_controller(
 
     std::thread::Builder::new()
         .name("simconnect-ctrl".to_string())
+        // Blocks on an mpsc receive and spawns; the default reserve is far more
+        // address space than it can use. Reserve only, so this trims virtual
+        // size rather than working set.
+        .stack_size(256 * 1024)
         .spawn(move || {
             tracing::info!("[SimConnect] Lifecycle controller started");
             for event in receiver {
@@ -344,6 +348,35 @@ pub fn shutdown_simconnect_thread(session: &Arc<SimConnectSessionHandle>) {
 /// `SimConnect_Open`. Five seconds gives the simulator enough time to bring its
 /// IPC server up without making the user wait excessively.
 const RETRY_DELAY_MS: u32 = 5_000;
+
+/// Ceiling for the backoff below.
+const RETRY_DELAY_MAX_MS: u32 = 60_000;
+
+/// Consecutive reconnect attempts that never reached a live connection.
+///
+/// Every reconnect re-opens SimConnect, re-registers the MobiFlight client and
+/// rebuilds the SimVar subscription, all of which runs inside the simulator
+/// process. A condition that ends the dispatch loop immediately and repeatably
+/// (an invalid wait handle, say) would otherwise drive that churn every five
+/// seconds indefinitely, so the delay doubles until something connects.
+static CONSECUTIVE_FAILED_ATTEMPTS: std::sync::atomic::AtomicU32 =
+    std::sync::atomic::AtomicU32::new(0);
+
+/// Reset the reconnect backoff. Called once a connection is actually live.
+pub fn note_connection_established() {
+    CONSECUTIVE_FAILED_ATTEMPTS.store(0, std::sync::atomic::Ordering::Relaxed);
+}
+
+/// The delay before the next reconnect, doubling per consecutive failure.
+fn next_retry_delay_ms() -> u32 {
+    let attempts = CONSECUTIVE_FAILED_ATTEMPTS
+        .fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+        .min(8);
+
+    RETRY_DELAY_MS
+        .saturating_mul(1u32 << attempts)
+        .min(RETRY_DELAY_MAX_MS)
+}
 
 /// Spawn the SimConnect connection manager thread if one is not already running.
 ///
@@ -429,6 +462,9 @@ fn spawn_simconnect_thread(
 
     let handle = std::thread::Builder::new()
         .name("simconnect".to_string())
+        // Generous next to what the dispatch loop and SimConnect FFI need,
+        // while still well under the default reserve.
+        .stack_size(512 * 1024)
         .spawn(move || {
             tracing::info!("[SimConnect] Connection manager started");
 
@@ -517,17 +553,18 @@ fn spawn_simconnect_thread(
                 let sim_still_running = crate::sim_detection::scan_for_running_sim().is_some();
 
                 if sim_still_running {
+                    let delay_ms = next_retry_delay_ms();
                     tracing::info!(
                         "[SimConnect] Connection ended but MSFS still running: \
                          retrying in {}s via detection channel",
-                        RETRY_DELAY_MS / 1000
+                        delay_ms / 1000
                     );
                     // Interruptible sleep: wakes immediately if shutdown is signalled.
                     // We still own the shutdown event here, so WaitForSingleObject works.
                     let wait_result = unsafe {
                         WaitForSingleObject(
                             HANDLE(shutdown_event_int as *mut std::ffi::c_void),
-                            RETRY_DELAY_MS,
+                            delay_ms,
                         )
                     };
                     if wait_result != WAIT_OBJECT_0 {
