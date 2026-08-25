@@ -19,17 +19,25 @@
     dragmove: { sessionId: string; volume: number };
     dragend: { sessionId: string; volume: number };
     trackclick: { sessionId: string; volume: number };
+    dragcancel: { sessionId: string };
     wheel: { sessionId: string; volume: number };
   }>();
   
   let isDragging = $state(false);
   let wasTrackClick = $state(false);
+  /** False between pointerdown and whichever event ends the gesture. */
+  let gestureEnded = $state(true);
   let startVolume = $state(0);
   
   function handlePointerDown(e: PointerEvent) {
+    // A deactivated channel is not held: the application is not running, so
+    // there is nothing to take control of.
+    if (disabled) return;
+
     const slider = e.currentTarget as HTMLInputElement;
     isDragging = false;
     wasTrackClick = false;
+    gestureEnded = false;
     startVolume = volume;
     
     dispatch('dragstart', { sessionId });
@@ -76,10 +84,17 @@
     if (isDragging) {
       const finalValue = parseFloat(slider.value);
       dispatch('dragend', { sessionId, volume: finalValue });
+    } else {
+      // Every other way a press can end: a track click, whose animation has
+      // already applied the value, or a press that changed nothing at all.
+      // pointerdown always claims control, so the release has to happen here:
+      // this is the moment the button actually comes up.
+      dispatch('dragcancel', { sessionId });
     }
     
     isDragging = false;
     wasTrackClick = false;
+    gestureEnded = true;
     
     if (slider.hasPointerCapture?.(e.pointerId)) {
       try {
@@ -90,6 +105,27 @@
     }
   }
   
+  function handlePointerCancel() {
+    // The gesture was interrupted: capture lost, or the window hidden mid-press.
+    // No pointerup will follow, so tell the parent to drop its claim itself.
+    if (gestureEnded) return;
+
+    isDragging = false;
+    wasTrackClick = false;
+    gestureEnded = true;
+    dispatch('dragcancel', { sessionId });
+  }
+
+  /**
+   * Last resort. A held claim has no watchdog, so the gesture must always be
+   * seen to end; losing pointer capture without a pointerup or pointercancel
+   * would otherwise leave the channel deaf to the simulator indefinitely.
+   */
+  function handleLostPointerCapture() {
+    if (gestureEnded) return;
+    handlePointerCancel();
+  }
+
   function handleWheel(e: WheelEvent) {
     e.preventDefault();
     const delta = e.deltaY > 0 ? -0.05 : 0.05;
@@ -117,6 +153,8 @@
     onpointermove={handlePointerMove}
     oninput={handleInput}
     onpointerup={handlePointerUp}
+    onpointercancel={handlePointerCancel}
+    onlostpointercapture={handleLostPointerCapture}
     onwheel={handleWheel}
   />
 </div>

@@ -204,8 +204,8 @@
         bind:expanded={closeMenuExpanded}
         class={closeMenuExpanded ? 'dock-expandable-open' : ''}
         anchor="right"
-        ariaLabel={closeMenuExpanded ? "Cancel" : "Close application"}
-        title={closeMenuExpanded ? "Cancel" : "Quit"}
+        ariaLabel={closeMenuExpanded ? "Close quit menu" : "Close application"}
+        title={closeMenuExpanded ? "Close" : "Quit"}
       >
       {#snippet icon()}
         <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 640 640" width="24" height="24" fill="currentColor">

@@ -10,50 +10,31 @@
     displayName?: string;
     danger?: boolean;
     warning?: boolean;
+    /** Marks this option as the current selection */
+    selected?: boolean;
     ariaLabel?: string;
     fullWidth?: boolean;
     class?: string;
-    /** CSS animation delay in seconds for sequential entrance animation. */
-    animationDelay?: string;
   }
-  
+
   let {
     processName,
     displayName,
     danger = false,
     warning = false,
+    selected = false,
     ariaLabel,
     fullWidth = false,
-    class: className = '',
-    animationDelay = '0s'
+    class: className = ''
   }: Props = $props();
-  
+
   const dispatch = createEventDispatcher<{
     select: { processName: string | undefined };
   }>();
-  
+
   function handleClick(e: MouseEvent) {
     e.stopPropagation();
     dispatch('select', { processName });
-  }
-
-  /** Action to trigger a fade-in transition after mount.
-   *  Uses CSS transition by setting opacity after a reflow. */
-  function fadeIn(node: HTMLElement, delaySec: string) {
-    // Start invisible
-    node.style.opacity = '0';
-    // Force reflow
-    void node.offsetHeight;
-    // Set the transition with the specified delay
-    node.style.transition = `opacity 0.25s ease ${delaySec}`;
-    // Trigger the transition
-    node.style.opacity = '1';
-    return {
-      destroy() {
-        node.style.transition = '';
-        node.style.opacity = '';
-      }
-    };
   }
 </script>
 
@@ -61,14 +42,21 @@
   class="list-option {className}"
   class:danger
   class:warning
+  class:selected
   class:full-width={fullWidth}
   role="option"
-  aria-selected="false"
+  aria-selected={selected}
   onclick={handleClick}
-  aria-label={ariaLabel || (displayName ? `Select ${displayName}` : '')}
-  use:fadeIn={animationDelay}
+  aria-label={ariaLabel || (displayName ? `${selected ? 'Clear' : 'Select'} ${displayName}` : '')}
 >
   {displayName || ''}
+  {#if selected}
+    <!-- Revealed on hover in place of the label: choosing the current
+         selection clears it. -->
+    <svg class="list-option__clear" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 640 640" width="20" height="20" aria-hidden="true">
+      <path d="M183.1 137.4C170.6 124.9 150.3 124.9 137.8 137.4C125.3 149.9 125.3 170.2 137.8 182.7L275.2 320L137.9 457.4C125.4 469.9 125.4 490.2 137.9 502.7C150.4 515.2 170.7 515.2 183.2 502.7L320.5 365.3L457.9 502.6C470.4 515.1 490.7 515.1 503.2 502.6C515.7 490.1 515.7 469.8 503.2 457.3L365.8 320L503.1 182.6C515.6 170.1 515.6 149.8 503.1 137.3C490.6 124.8 470.3 124.8 457.8 137.3L320.5 274.7L183.1 137.4z"/>
+    </svg>
+  {/if}
 </button>
 
 <style>
@@ -90,7 +78,7 @@
     justify-content: center;
     cursor: pointer;
     transform-origin: center;
-    transition: background 0.3s ease, box-shadow 0.2s ease, transform 0.12s ease;
+    transition: background 0.3s ease, color 0.2s ease, box-shadow 0.2s ease, transform 0.12s ease;
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
@@ -128,6 +116,49 @@
     background: #ff8c00 !important;
     color: white !important;
     box-shadow: 0 0 80px rgba(255, 140, 0, 0.5);
+  }
+
+  /* Selected state: solid fill with inverted text, matching the collapsed
+     ButtonSimFunction trigger and ButtonRound's .btn-enabled. The :hover and
+     :active pairs are spelled out because those base rules set their own
+     background and colour at equal or higher specificity, which would
+     otherwise wash out the fill. */
+  .list-option.selected {
+    position: relative;
+    background: var(--text-primary);
+    color: var(--bg-primary);
+  }
+
+  .list-option.selected:active {
+    background: var(--text-primary);
+    color: var(--bg-primary);
+    transform: scale(0.97);
+  }
+
+  /* Hovering the current selection offers to clear it, so the label gives way
+     to the close icon. Only the label's ink is hidden: it keeps its box, so
+     the row neither reflows nor changes width. */
+  .list-option.selected:hover,
+  .list-option.selected:hover:active {
+    background: var(--text-primary);
+    color: transparent;
+  }
+
+  /* Sits over the hidden label rather than beside it, so the icon lands in the
+     centre of the row. Its fill is set explicitly because currentColor is
+     transparent while hovering. */
+  .list-option__clear {
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+    opacity: 0;
+    transition: opacity 0.2s ease;
+    fill: var(--bg-primary);
+  }
+
+  .list-option.selected:hover .list-option__clear {
+    opacity: 1;
   }
 
 </style>

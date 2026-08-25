@@ -4,10 +4,10 @@
 -->
 <script lang="ts">
   import { createEventDispatcher } from 'svelte';
-  import type { AudioSession, AxisMapping, ButtonMapping, SimChannelCategory } from '$lib/types';
+  import type { AudioSession, AxisMapping, ButtonMapping, SimFunctionCategory } from '$lib/types';
   import VolumeSlider from './VolumeSlider.svelte';
   import ButtonRound from './ButtonRound.svelte';
-  import ButtonSimChannel from './ButtonSimChannel.svelte';
+  import ButtonSimFunction from './ButtonSimFunction.svelte';
   import { formatProcessName, applyDisplayNameOverride } from '$lib/stores/audioStore';
 
   interface Props {
@@ -18,11 +18,9 @@
     isBindingAxis: boolean;
     isBindingButton: boolean;
     /** Category this channel is assigned to, if any */
-    simCategory?: SimChannelCategory | null;
-    /** Categories already taken by other applications */
-    takenSimCategories?: SimChannelCategory[];
+    simCategory?: SimFunctionCategory | null;
     /** Categories the active aircraft profile supports */
-    supportedSimCategories?: SimChannelCategory[];
+    supportedSimCategories?: SimFunctionCategory[];
     entranceDelayMs?: number;
   }
 
@@ -34,7 +32,6 @@
     isBindingAxis,
     isBindingButton,
     simCategory = null,
-    takenSimCategories = [],
     supportedSimCategories = [],
     entranceDelayMs = 0
   }: Props = $props();
@@ -44,6 +41,7 @@
     volumedragmove: { sessionId: string; volume: number };
     volumedragend: { sessionId: string; volume: number };
     volumetrackclick: { sessionId: string; volume: number };
+    volumedragcancel: { sessionId: string };
     volumewheel: { sessionId: string; volume: number };
     mutetoggle: { sessionId: string; muted: boolean };
     startaxisbinding: { session: AudioSession };
@@ -54,17 +52,12 @@
     removebuttonmapping: { processName: string };
     toggleinversion: { processName: string };
     removeapplication: { processName: string };
-    setsimcategory: { processName: string; category: SimChannelCategory | null };
+    setsimcategory: { processName: string; category: SimFunctionCategory | null };
   }>();
 
   const isInactive = $derived(session.session_id.startsWith('inactive_'));
   const displayName = $derived(applyDisplayNameOverride(session.display_name || formatProcessName(session.process_name), session.process_name));
 
-  // Categories this channel may pick: supported by the aircraft, not taken by
-  // other apps (the channel's own assignment stays selectable).
-  const selectableSimCategories = $derived(
-    supportedSimCategories.filter(c => !takenSimCategories.includes(c) || c === simCategory)
-  );
   
   // Compute display volume: use override during mute/unmute animation, otherwise derive from real volume and mute state
   const displayVolume = $derived(
@@ -74,7 +67,13 @@
   );
   
   let flipAnimation = $state(false);
-  let simChannelExpanded = $state(false);
+  let simFunctionExpanded = $state(false);
+
+  // Leaving edit mode unmounts the sim function button, so reset its state:
+  // otherwise the other controls would stay collapsed with nothing to reopen.
+  $effect(() => {
+    if (!isEditMode) simFunctionExpanded = false;
+  });
 
   function handleToggleInversion() {
     flipAnimation = true;
@@ -88,24 +87,29 @@
   class:has-mapping={!!axisMapping || !!buttonMapping} 
   class:inactive={isInactive} 
   class:inactive-edit-mode={isInactive && isEditMode}
+  class:menu-expanded={simFunctionExpanded}
   style={`--channel-entrance-delay: ${entranceDelayMs}ms`}
-  role="group" 
+  role="group"
   aria-label="Audio controls for {session.display_name}"
 >
   <!-- Volume Slider -->
-  <VolumeSlider
-    volume={displayVolume}
-    sessionId={session.session_id}
-    displayName={session.display_name}
-    disabled={isInactive}
-    on:dragstart={(e) => dispatch('volumedragstart', e.detail)}
-    on:dragmove={(e) => dispatch('volumedragmove', e.detail)}
-    on:dragend={(e) => dispatch('volumedragend', e.detail)}
-    on:trackclick={(e) => dispatch('volumetrackclick', e.detail)}
-    on:wheel={(e) => dispatch('volumewheel', e.detail)}
-  />
+  <div class="channel-item channel-item--slider" class:hidden={simFunctionExpanded}>
+    <VolumeSlider
+      volume={displayVolume}
+      sessionId={session.session_id}
+      displayName={session.display_name}
+      disabled={isInactive}
+      on:dragstart={(e) => dispatch('volumedragstart', e.detail)}
+      on:dragmove={(e) => dispatch('volumedragmove', e.detail)}
+      on:dragend={(e) => dispatch('volumedragend', e.detail)}
+      on:trackclick={(e) => dispatch('volumetrackclick', e.detail)}
+      on:dragcancel={(e) => dispatch('volumedragcancel', e.detail)}
+      on:wheel={(e) => dispatch('volumewheel', e.detail)}
+    />
+  </div>
 
   <!-- Mute Button / Button Binding Control -->
+  <div class="channel-item" class:hidden={simFunctionExpanded}>
   {#if isEditMode}
     {#if buttonMapping}
       <!-- Button mapping badge - shows bound button with remove on hover -->
@@ -196,9 +200,11 @@
       {/snippet}
     </ButtonRound>
   {/if}
+  </div>
 
   <!-- Axis Binding Control (Edit Mode Only) -->
   {#if isEditMode}
+    <div class="channel-item" class:hidden={simFunctionExpanded}>
     {#if axisMapping}
       <!-- Axis mapping badge - shows bound axis with remove on hover -->
       <ButtonRound
@@ -258,14 +264,25 @@
         {/snippet}
       </ButtonRound>
     {/if}
-    
+    </div>
+
+    <!-- Sim Function Assignment -->
+    <ButtonSimFunction
+      processName={session.process_name}
+      assigned={simCategory}
+      categories={supportedSimCategories}
+      bind:expanded={simFunctionExpanded}
+      on:setsimcategory
+    />
+
     <!-- Axis Inversion Toggle -->
+    <div class="channel-item" class:hidden={simFunctionExpanded}>
     <ButtonRound
       variant="toggle"
       active={axisMapping?.inverted ?? false}
       disabled={!axisMapping}
       alwaysEnabled={!!axisMapping}
-      ariaLabel={axisMapping 
+      ariaLabel={axisMapping
         ? `${axisMapping.inverted ? 'Disable' : 'Enable'} axis inversion for ${session.display_name}`
         : `No axis binding for ${session.display_name}`}
       title={axisMapping ? 'Reverse Axis Direction' : 'Bind an axis to enable inversion'}
@@ -278,16 +295,10 @@
         </svg>
       {/snippet}
     </ButtonRound>
-
-    <!-- Sim Channel Assignment -->
-    <ButtonSimChannel
-      processName={session.process_name}
-      assigned={simCategory}
-      categories={selectableSimCategories}
-      on:setsimcategory
-    />
+    </div>
 
     <!-- Remove Application Button -->
+    <div class="channel-item" class:hidden={simFunctionExpanded}>
     <ButtonRound
       variant="action"
       danger={true}
@@ -302,10 +313,15 @@
         </svg>
       {/snippet}
     </ButtonRound>
+    </div>
   {/if}
 
   <!-- Application Name -->
-  <span class="app-name" title={session.display_name}>{displayName}</span>
+  <span
+    class="app-name channel-item"
+    class:hidden={simFunctionExpanded}
+    title={session.display_name}
+  >{displayName}</span>
 </div>
 
 <style>
@@ -340,6 +356,50 @@
     opacity: 1;
   }
 
+  /* ── Sim function menu expansion ─────────────────────────────────────────
+     Mirrors the dock: the container's gap collapses to zero and every sibling
+     control shrinks out along the main axis, leaving the expanded menu the
+     full height of the channel. This is a column rather than a row, so the
+     items collapse in height where the dock's collapse in width.
+
+     Each control is wrapped in its own .channel-item so the collapse never
+     touches the inner component's own transitions (ButtonRound animates its
+     border and box-shadow on hover). */
+  .application-channel.menu-expanded {
+    gap: 0;
+  }
+
+  /* The base height must be an explicit px value, exactly as the dock's
+     wrappers are, so the collapse to zero interpolates. Left as `auto` the
+     control would snap out instantly while only the scale animated. */
+  .channel-item {
+    height: 46px;
+    flex: 0 0 auto;
+    transition:
+      transform 0.3s ease,
+      height 0.3s ease,
+      flex 0.3s ease;
+  }
+
+  /* The slider is the flexible element that fills the leftover space, so the
+     wrapper has to carry that role in its place. Its collapse is driven by
+     flex rather than a fixed height. */
+  .channel-item--slider {
+    display: flex;
+    flex-direction: column;
+    width: 100%;
+    height: auto;
+    flex: 1 1 auto;
+    min-height: 0;
+  }
+
+  .channel-item.hidden {
+    height: 0 !important;
+    flex: 0 0 0 !important;
+    transform: scale(0) !important;
+    pointer-events: none;
+  }
+
   .app-name {
     text-align: center;
     font-size: 0.8rem;
@@ -350,6 +410,11 @@
     overflow: clip;
     text-overflow: ellipsis;
     max-width: 50px;
+    /* Explicit height: matches the natural line box, and gives the collapse
+       above something to interpolate from. Declared after .channel-item so it
+       wins the 46px control height. */
+    line-height: 1.3;
+    height: 1.3em;
   }
 
   /* Flip animation for reverse axis button */

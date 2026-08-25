@@ -132,7 +132,7 @@ fn ensure_animation_thread() -> std::result::Result<std::sync::mpsc::Sender<Anim
     let mut lock = ANIMATION_SENDER.lock().map_err(|e| format!("Animation lock poisoned: {}", e))?;
     
     if let Some(ref sender) = *lock {
-        // Thread already running — return a clone of the sender
+        // Thread already running: return a clone of the sender
         return Ok(sender.clone());
     }
     
@@ -337,7 +337,7 @@ fn resize_window_to_content(app: tauri::AppHandle, session_count: usize) -> Resu
 ///
 /// Pre-computes the bottom-right anchor point from the display work area, then
 /// derives the window position directly from the interpolated width each frame.
-/// This eliminates the visual stutter caused by separate size/position updates —
+/// This eliminates the visual stutter caused by separate size/position updates:
 /// the right edge and bottom edge of the window remain perfectly fixed throughout
 /// the entire animation.
 ///
@@ -408,14 +408,14 @@ fn animate_window_resize(
         let x = (anchor_right - current_width as i32).max(clamp_left);
         let y = (anchor_bottom - physical_window_height as i32).max(clamp_top);
 
-        // Atomic move + resize in a single Win32 call — no in-between frame flicker
+        // Atomic move + resize in a single Win32 call: no in-between frame flicker
         set_window_pos_and_size(&window, x, y, current_width, physical_window_height);
 
         if progress >= 1.0 {
             break;
         }
 
-        // Check if a newer animation target has arrived — if so, abort this animation
+        // Check if a newer animation target has arrived: if so, abort this animation
         // so the caller loop can pick up the new target
         if rx.try_recv().is_ok() {
             tracing::debug!("[Anim] Cancelled in-progress animation for newer target");
@@ -623,7 +623,7 @@ pub fn perform_graceful_quit(app: &tauri::AppHandle) {
     }
     
     // Signal the sim detection thread to shut down and join it.
-    // This is critical — without joining, the thread may become orphaned
+    // This is critical: without joining, the thread may become orphaned
     // when app.exit(0) terminates the process.
     let shutdown_event = SIM_DETECTION_SHUTDOWN_EVENT.load(Ordering::Relaxed);
     if shutdown_event != 0 {
@@ -653,7 +653,7 @@ pub fn restart_application_internal(app: &tauri::AppHandle) -> Result<(), String
             simconnect::shutdown_simconnect_thread(&session);
         }
 
-        // Signal the sim detection thread to shut down (dev mode — no join, as restart continues)
+        // Signal the sim detection thread to shut down (dev mode: no join, as restart continues)
         let shutdown_event = SIM_DETECTION_SHUTDOWN_EVENT.load(Ordering::Relaxed);
         if shutdown_event != 0 {
             if let Ok(mut thread_guard) = SIM_DETECTION_THREAD.lock() {
@@ -690,7 +690,7 @@ pub fn restart_application_internal(app: &tauri::AppHandle) -> Result<(), String
         simconnect::shutdown_simconnect_thread(&session);
     }
 
-    // Signal the sim detection thread to shut down and join it (release mode — clean restart)
+    // Signal the sim detection thread to shut down and join it (release mode: clean restart)
     let shutdown_event = SIM_DETECTION_SHUTDOWN_EVENT.load(Ordering::Relaxed);
     if shutdown_event != 0 {
         if let Ok(mut thread_guard) = SIM_DETECTION_THREAD.lock() {
@@ -741,10 +741,30 @@ async fn open_url(url: String) -> Result<(), String> {
 }
 
 fn main() {
+    // Debug builds log to stdout through a non-blocking writer: the previous
+    // blocking writer serialised every thread behind one console write, and a
+    // chatty background thread could stall the UI thread for as long as the
+    // terminal took to render. The guard must outlive the app: dropping it
+    // flushes the buffer and stops the writer thread.
+    //
+    // Verbosity comes from RUST_LOG when set, e.g.
+    //   RUST_LOG=ClearComms=debug,ClearComms::simconnect=info
     #[cfg(debug_assertions)]
-    tracing_subscriber::fmt()
-        .with_max_level(tracing::Level::DEBUG)
-        .init();
+    let _log_guard = {
+        let (writer, guard) = tracing_appender::non_blocking(std::io::stdout());
+        tracing_subscriber::fmt()
+            .with_env_filter(
+                tracing_subscriber::EnvFilter::try_from_default_env().unwrap_or_else(|_| {
+                    // Global WARN keeps dependency diagnostics that matter:
+                    // tao's event-loop starvation warnings in particular:
+                    // while unmatched targets stay quiet.
+                    tracing_subscriber::EnvFilter::new("warn,ClearComms=debug")
+                }),
+            )
+            .with_writer(writer)
+            .init();
+        guard
+    };
 
     // Track when window was last hidden - used to detect if tray click caused focus loss
     let last_hidden: Arc<Mutex<Instant>> = Arc::new(Mutex::new(Instant::now() - Duration::from_secs(10)));
@@ -754,7 +774,7 @@ fn main() {
     let sim_state = Arc::new(Mutex::new(simconnect::state::SimState::default()));
     let sim_state_for_setup = sim_state.clone();
 
-    // Shared LVar command channel — populated by the SimConnect lifecycle
+    // Shared LVar command channel: populated by the SimConnect lifecycle
     // controller while a simulator connection is active.
     let lvar_command_handle = Arc::new(simconnect::LvarCommandHandle::default());
     let lvar_command_handle_for_setup = lvar_command_handle.clone();

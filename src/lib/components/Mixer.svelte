@@ -4,7 +4,7 @@
 -->
 <script lang="ts">
   import { createEventDispatcher } from 'svelte';
-  import type { AudioSession, AxisMapping, ButtonMapping, SimChannelAssignment, SimChannelCategory } from '$lib/types';
+  import type { AudioSession, AxisMapping, ButtonMapping, SimFunctionAssignment, SimFunctionCategory } from '$lib/types';
   import ApplicationChannel from './ApplicationChannel.svelte';
   import ButtonAddApplication from './ButtonAddApplication.svelte';
 
@@ -13,8 +13,8 @@
     availableSessions: AudioSession[];
     axisMappings: AxisMapping[];
     buttonMappings: ButtonMapping[];
-    simAssignments: SimChannelAssignment[];
-    supportedSimCategories: SimChannelCategory[];
+    simAssignments: SimFunctionAssignment[];
+    supportedSimCategories: SimFunctionCategory[];
     isEditMode: boolean;
     isBindingMode: boolean;
     isButtonBindingMode: boolean;
@@ -59,7 +59,7 @@
     removebuttonmapping: { processName: string };
     toggleinversion: { processName: string };
     removeapplication: { processName: string };
-    setsimcategory: { processName: string; category: SimChannelCategory | null };
+    setsimcategory: { processName: string; category: SimFunctionCategory | null };
     select: { processName: string };
   }>();
 
@@ -96,7 +96,6 @@
       {@const mapping = axisMappings.find(m => m.processName === session.process_name)}
       {@const buttonMapping = buttonMappings.find(m => m.processName === session.process_name)}
       {@const simCategory = simAssignments.find(a => a.processName === session.process_name)?.category ?? null}
-      {@const takenSimCategories = simAssignments.filter(a => a.processName !== session.process_name).map(a => a.category)}
       {@const entranceDelayMs = ((totalAnimatedColumns - 1 - index) * 45) + modeRetriggerOffsetMs}
 
       {#key `${session.session_id}-${isEditMode ? 'edit' : 'standard'}`}
@@ -105,7 +104,6 @@
           axisMapping={mapping}
           {buttonMapping}
           {simCategory}
-          {takenSimCategories}
           {supportedSimCategories}
           {isEditMode}
           isBindingAxis={isBindingMode && pendingBinding?.sessionId === session.session_id}

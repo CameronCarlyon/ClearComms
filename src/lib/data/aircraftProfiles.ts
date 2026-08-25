@@ -1,21 +1,15 @@
 /**
  * Aircraft Profile Library
  *
- * A curated, hand-maintained registry mapping generic radio channel categories
+ * A registry mapping generic generic radio channels
  * (COM1, COM2, COM3, HF1, HF2, CAB, PA, INT) to the aircraft-specific LVars
  * that drive them, for each supported aircraft.
- *
- * Source data is verified against the MobiFlight HubHop preset database
- * (https://hubhop.mobiflight.com). LVars that could not be verified are
- * deliberately omitted (e.g. a missing mute definition) rather than guessed —
- * subscribing to a non-existent LVar returns a constant 0, which would be
- * misinterpreted as "muted" and would falsely mute the linked application.
  *
  * The Rust backend holds no aircraft knowledge: the frontend resolves the
  * active profile from the TITLE SimVar and sends the backend a flat list of
  * LVar names to subscribe to.
  */
-import type { SimChannelCategory, SimSeat } from '$lib/types';
+import type { SimFunctionCategory, SimSeat } from '$lib/types';
 
 /** A readable/writable volume knob LVar with its native value range */
 export interface VolumeEndpoint {
@@ -30,27 +24,27 @@ export interface VolumeEndpoint {
  */
 export interface MuteEndpoint {
   lvar: string;
-  /** Raw LVar value when the channel is muted (receive switch pushed in/off) */
+  /** Raw LVar value when the function is muted (receive switch pushed in/off) */
   mutedValue: number;
-  /** Raw LVar value when the channel is unmuted (receive switch pulled out/on) */
+  /** Raw LVar value when the function is unmuted (receive switch pulled out/on) */
   unmutedValue: number;
 }
 
-/** The volume and (optional) mute endpoints for one channel category */
-export interface SimChannelDef {
+/** The volume and (optional) mute endpoints for one function category */
+export interface SimFunctionDef {
   volume: VolumeEndpoint;
   mute?: MuteEndpoint;
 }
 
-/** Channel definitions for one seat — categories may be absent if unsupported */
-export type SeatChannels = Partial<Record<SimChannelCategory, SimChannelDef>>;
+/** Function definitions for one seat: categories may be absent if unsupported */
+export type SeatFunctions = Partial<Record<SimFunctionCategory, SimFunctionDef>>;
 
 export interface AircraftProfile {
   id: string;
   name: string;
   /** Case-insensitive regex patterns tested against the simulator TITLE SimVar */
   titlePatterns: string[];
-  seats: Record<SimSeat, SeatChannels>;
+  seats: Record<SimSeat, SeatFunctions>;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -162,14 +156,14 @@ export const AIRCRAFT_PROFILES: AircraftProfile[] = [
   INIBUILDS_A350,
 ];
 
-/** All channel categories in display order (for pickers) */
-export const SIM_CHANNEL_CATEGORIES: SimChannelCategory[] = [
+/** All function categories in display order (for pickers) */
+export const SIM_FUNCTION_CATEGORIES: SimFunctionCategory[] = [
   'COM1', 'COM2', 'COM3', 'HF1', 'HF2', 'CAB', 'PA', 'INT',
 ];
 
 /**
  * Match an aircraft TITLE SimVar string to a profile. Returns null when the
- * aircraft is unsupported (sim channel features are then unavailable).
+ * aircraft is unsupported (sim function features are then unavailable).
  */
 export function matchAircraftProfile(title: string | null): AircraftProfile | null {
   if (!title) return null;
@@ -185,18 +179,18 @@ export function getProfileById(id: string): AircraftProfile | null {
   return AIRCRAFT_PROFILES.find(p => p.id === id) ?? null;
 }
 
-/** Resolve the channel definition for a profile/seat/category combination */
-export function getChannelDef(
+/** Resolve the function definition for a profile/seat/category combination */
+export function getFunctionDef(
   profile: AircraftProfile,
   seat: SimSeat,
-  category: SimChannelCategory,
-): SimChannelDef | null {
+  category: SimFunctionCategory,
+): SimFunctionDef | null {
   return profile.seats[seat][category] ?? null;
 }
 
 /** Categories the profile actually supports for the given seat, in display order */
-export function getSupportedCategories(profile: AircraftProfile, seat: SimSeat): SimChannelCategory[] {
-  return SIM_CHANNEL_CATEGORIES.filter(c => profile.seats[seat][c] !== undefined);
+export function getSupportedCategories(profile: AircraftProfile, seat: SimSeat): SimFunctionCategory[] {
+  return SIM_FUNCTION_CATEGORIES.filter(c => profile.seats[seat][c] !== undefined);
 }
 
 /** Map a raw LVar value to a normalised 0–1 unit volume */

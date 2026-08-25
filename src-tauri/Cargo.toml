@@ -27,6 +27,7 @@ window-vibrancy = "0.5"
 image = { version = "0.25", default-features = false, features = ["png"] }
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+tracing-appender = "0.2"
 base64 = "0.22"
 simconnect-sdk = { version = "0.2", features = ["derive"] }
 simconnect-sys = { version = "0.24.3", features = ["static"] }

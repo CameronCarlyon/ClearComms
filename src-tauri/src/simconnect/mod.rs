@@ -97,7 +97,7 @@ fn validate_lvar_name(name: &str) -> Result<(), String> {
 /// The mutex is deliberately held across `SetEvent`. The connection thread
 /// closes the wake event handle only while holding this same lock, so keeping it
 /// for the duration of the signal makes it impossible to `SetEvent` a handle
-/// that has just been closed — and possibly already recycled by Windows for an
+/// that has just been closed: and possibly already recycled by Windows for an
 /// unrelated kernel object elsewhere in the process. Both operations inside the
 /// lock are non-blocking (an unbounded channel send and one fast syscall), so
 /// there is no contention risk.
@@ -189,7 +189,7 @@ extern "system" {
 /// # Note on state type
 /// `main.rs` manages `Arc<SimStateHandle>` (i.e. `Arc<Mutex<SimState>>`). Tauri
 /// stores managed state by `TypeId`, so the extractor here must use
-/// `State<Arc<SimStateHandle>>` — not `State<SimStateHandle>` — to match the
+/// `State<Arc<SimStateHandle>>`: not `State<SimStateHandle>`: to match the
 /// TypeId of what was actually registered. Rust's auto-deref chain means
 /// `state.lock()` still compiles and works:
 ///   `State<Arc<Mutex<SimState>>>` → deref → `Arc<Mutex<SimState>>`
@@ -351,7 +351,7 @@ const RETRY_DELAY_MS: u32 = 5_000;
 /// logic: if the connection attempt fails AND MSFS is still in the process list,
 /// it re-injects a `SimDetectionEvent::Started` into the detection channel after
 /// a short delay. The lifecycle controller then processes it as a fresh start,
-/// creating a new connection attempt — keeping retry behaviour entirely within
+/// creating a new connection attempt: keeping retry behaviour entirely within
 /// the event-driven architecture.
 ///
 /// The delay is implemented with `WaitForSingleObject` on the shutdown event so
@@ -368,7 +368,7 @@ fn spawn_simconnect_thread(
         Ok(l) => l,
         Err(e) => {
             tracing::error!(
-                "[SimConnect] Session mutex poisoned — cannot spawn thread: {}",
+                "[SimConnect] Session mutex poisoned: cannot spawn thread: {}",
                 e
             );
             return;
@@ -411,7 +411,7 @@ fn spawn_simconnect_thread(
             });
         }
         Err(e) => {
-            tracing::error!("[SimConnect] LVar command handle poisoned — cannot spawn: {}", e);
+            tracing::error!("[SimConnect] LVar command handle poisoned: cannot spawn: {}", e);
             unsafe {
                 CloseHandle(HANDLE(shutdown_event)).ok();
                 CloseHandle(HANDLE(lvar_wake_event)).ok();
@@ -473,15 +473,16 @@ fn spawn_simconnect_thread(
             // ── Post-exit: decide whether to schedule a retry ──────────────
             //
             // A retry is needed when:
-            //   1. The connection was never established — `last_error` is set.
-            //   2. The shutdown event was not signalled — the sim is still running.
-            //   3. MSFS is still in the process list (confirms the sim didn't exit
+            //   1. The shutdown event was not signalled: neither the app nor the
+            //      detection module asked this thread to stop.
+            //   2. MSFS is still in the process list (confirms the sim didn't exit
             //      between the connection attempt and this check, which would cause
             //      an infinite retry loop).
-            let connection_failed = state_for_thread
-                .lock()
-                .map(|s| s.last_error.is_some())
-                .unwrap_or(false);
+            //
+            // Deliberately not conditioned on the attempt having errored. A clean
+            // exit can leave the sim running too: a spurious process scan, or an
+            // unexpected wait result: and treating that as final left the app with
+            // no SimConnect thread and no way back.
 
             let shutdown_signalled = unsafe {
                 WaitForSingleObject(
@@ -509,19 +510,19 @@ fn spawn_simconnect_thread(
                 }
             }
 
-            if connection_failed && !shutdown_signalled {
+            if !shutdown_signalled {
                 // Verify MSFS is still running before scheduling the retry.
                 // This prevents a chain of spurious retries if MSFS exited in the
-                // narrow window between the failed open and this check.
+                // narrow window between the connection ending and this check.
                 let sim_still_running = crate::sim_detection::scan_for_running_sim().is_some();
 
                 if sim_still_running {
                     tracing::info!(
-                        "[SimConnect] Connection failed but MSFS still running — \
+                        "[SimConnect] Connection ended but MSFS still running: \
                          retrying in {}s via detection channel",
                         RETRY_DELAY_MS / 1000
                     );
-                    // Interruptible sleep — wakes immediately if shutdown is signalled.
+                    // Interruptible sleep: wakes immediately if shutdown is signalled.
                     // We still own the shutdown event here, so WaitForSingleObject works.
                     let wait_result = unsafe {
                         WaitForSingleObject(
@@ -533,11 +534,11 @@ fn spawn_simconnect_thread(
                         let _ = retry_sender_for_thread.send(SimDetectionEvent::Started(version));
                         tracing::info!("[SimConnect] Retry event sent to lifecycle controller");
                     } else {
-                        tracing::info!("[SimConnect] Shutdown signalled during retry delay — aborting retry");
+                        tracing::info!("[SimConnect] Shutdown signalled during retry delay: aborting retry");
                     }
                 } else {
                     tracing::info!(
-                        "[SimConnect] Connection failed and MSFS no longer running — \
+                        "[SimConnect] Connection ended and MSFS no longer running: \
                          not scheduling retry"
                     );
                 }
@@ -585,7 +586,7 @@ fn stop_simconnect_thread(
                     "[SimConnect] Session mutex poisoned during stop: {}",
                     e
                 );
-                // Poisoned mutex — we cannot safely access the data, so
+                // Poisoned mutex: we cannot safely access the data, so
                 // simply drop the guard and proceed without a session.
                 // The event handle may leak, but crashing is worse.
                 return;
@@ -595,7 +596,7 @@ fn stop_simconnect_thread(
     };
 
     if let Some(sess) = sess {
-        // Signal shutdown — this also wakes any WaitForSingleObject inside the
+        // Signal shutdown: this also wakes any WaitForSingleObject inside the
         // connection manager so it exits its retry delay immediately.
         unsafe {
             SetEvent(HANDLE(sess.shutdown_event as *mut std::ffi::c_void)).ok();

@@ -121,16 +121,16 @@ export interface SimStatus {
   simVersion: string;
 }
 
-/** Generic radio channel categories an application channel can be assigned to */
-export type SimChannelCategory = 'COM1' | 'COM2' | 'COM3' | 'HF1' | 'HF2' | 'CAB' | 'PA' | 'INT';
+/** Generic simulator function categories an application channel can be assigned to */
+export type SimFunctionCategory = 'COM1' | 'COM2' | 'COM3' | 'HF1' | 'HF2' | 'CAB' | 'PA' | 'INT';
 
-/** Which cockpit seat's audio panel a sim channel assignment follows */
+/** Which cockpit seat's audio panel a sim function assignment follows */
 export type SimSeat = 'captain' | 'firstOfficer';
 
-/** Assignment of an application (keyed by process name) to a radio channel category */
-export interface SimChannelAssignment {
+/** Assignment of an application (keyed by process name) to a simulator function category */
+export interface SimFunctionAssignment {
   processName: string;
-  category: SimChannelCategory;
+  category: SimFunctionCategory;
 }
 
 /** Payload of the `lvar-value-changed` event emitted by the Rust backend */

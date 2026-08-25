@@ -8,6 +8,7 @@
   import ButtonExpandable from './ButtonExpandable.svelte';
   import ListOption from './ListOption.svelte';
   import { formatProcessName, applyDisplayNameOverride } from '$lib/stores/audioStore';
+  import { registerMixerMenu } from '$lib/stores/mixerMenuStore.svelte';
 
   interface Props {
     expanded: boolean;
@@ -20,6 +21,10 @@
     availableSessions,
     onboarding = false
   }: Props = $props();
+
+  // Only one mixer menu may be open at a time: opening this one collapses any
+  // channel's simulator function menu.
+  registerMixerMenu(() => expanded, () => { expanded = false; });
 
   const dispatch = createEventDispatcher<{
     select: { processName: string };
@@ -56,11 +61,10 @@
     {#key animationKey}
       {#each availableSessions as session, i}
         {@const delay = (0.2 + i * 0.05).toFixed(2)}
-        <span class="expandable__item">
+        <span class="expandable__item" style="animation-delay: {delay}s">
           <ListOption
             processName={session.process_name}
             displayName={applyDisplayNameOverride(session.display_name || formatProcessName(session.process_name), session.process_name)}
-            animationDelay={delay + 's'}
             on:select={handleSelect}
           />
         </span>
