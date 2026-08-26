@@ -108,3 +108,35 @@ export interface DisplayInfo {
   /** Maximum permissible window height in physical pixels */
   maxWindowHeight: number;
 }
+
+/** Simulator connection status returned from the Rust backend */
+export interface SimStatus {
+  /** True when SimConnect is open and dispatching */
+  connected: boolean;
+  /** True when the MobiFlight WASM module responded to the last ping */
+  wasmPresent: boolean;
+  /** Currently loaded aircraft title, if known */
+  aircraftTitle: string | null;
+  /** Detected simulator version: "2020", "2024", or "unknown" */
+  simVersion: string;
+}
+
+/** Generic simulator function categories an application channel can be assigned to */
+export type SimFunctionCategory = 'COM1' | 'COM2' | 'COM3' | 'HF1' | 'HF2' | 'CAB' | 'PA' | 'INT';
+
+/** Which cockpit seat's audio panel a sim function assignment follows */
+export type SimSeat = 'captain' | 'firstOfficer';
+
+/** Assignment of an application (keyed by process name) to a simulator function category */
+export interface SimFunctionAssignment {
+  processName: string;
+  category: SimFunctionCategory;
+}
+
+/** Payload of the `lvar-value-changed` event emitted by the Rust backend */
+export interface LvarValueEvent {
+  /** LVar name (without the "L:" prefix) */
+  name: string;
+  /** Raw LVar value in the aircraft profile's native range */
+  value: number;
+}

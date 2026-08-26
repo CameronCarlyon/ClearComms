@@ -7,9 +7,11 @@
 export { default as VolumeSlider } from './VolumeSlider.svelte';
 export { default as ButtonRound } from './ButtonRound.svelte';
 export { default as ButtonPill } from './ButtonPill.svelte';
+export { default as ButtonSimFunction } from './ButtonSimFunction.svelte';
 export { default as ListOption } from './ListOption.svelte';
 export { default as OptionToggle } from './OptionToggle.svelte';
 export { default as SettingsOption } from './SettingsOption.svelte';
+export { default as Dropdown } from './Dropdown.svelte';
 
 // Composite components
 export { default as ApplicationChannel } from './ApplicationChannel.svelte';

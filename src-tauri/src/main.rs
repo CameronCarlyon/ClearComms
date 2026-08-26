@@ -15,7 +15,7 @@
 //!
 //! - [`audio_management`] - Windows Core Audio API integration
 //! - [`hardware_input`] - RawInput/HID device polling
-//! - [`lvar_input`] - Flight Simulator LVar integration
+//! - [`simconnect`] - Flight Simulator SimConnect integration
 //! - [`native_menu`] - Windows system tray context menu
 //! - [`window_utils`] - Window positioning utilities
 
@@ -23,7 +23,7 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 use std::sync::{Arc, Mutex, LazyLock};
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicIsize, Ordering};
 use std::time::{Duration, Instant};
 use std::path::PathBuf;
 use std::fs;
@@ -38,6 +38,8 @@ mod native_menu;
 mod window_utils;
 mod toast_manager;
 mod theme;
+mod simconnect;
+mod sim_detection;
 
 use window_utils::{position_window_bottom_right, get_display_info_for_window, set_window_pos_and_size};
 
@@ -56,7 +58,15 @@ static PIN_STATE: AtomicBool = AtomicBool::new(false);
 /// Set to `true` during app shutdown so the thread exits cleanly.
 static THEME_MONITOR_SHUTDOWN: AtomicBool = AtomicBool::new(false);
 
+// ─────────────────────────────────────────────────────────────────────────────
+// Sim Detection Shutdown Handles
+// ─────────────────────────────────────────────────────────────────────────────
 
+/// Shutdown event handle for the sim detection thread (stored as isize).
+static SIM_DETECTION_SHUTDOWN_EVENT: AtomicIsize = AtomicIsize::new(0);
+
+/// JoinHandle for the sim detection thread. Stored so we can join it during shutdown.
+static SIM_DETECTION_THREAD: Mutex<Option<std::thread::JoinHandle<()>>> = Mutex::new(None);
 /// Update the tracked pin state. Call this whenever the pin state changes.
 pub fn set_pin_state(pinned: bool) {
     PIN_STATE.store(pinned, Ordering::Relaxed);
@@ -122,7 +132,7 @@ fn ensure_animation_thread() -> std::result::Result<std::sync::mpsc::Sender<Anim
     let mut lock = ANIMATION_SENDER.lock().map_err(|e| format!("Animation lock poisoned: {}", e))?;
     
     if let Some(ref sender) = *lock {
-        // Thread already running — return a clone of the sender
+        // Thread already running: return a clone of the sender
         return Ok(sender.clone());
     }
     
@@ -327,7 +337,7 @@ fn resize_window_to_content(app: tauri::AppHandle, session_count: usize) -> Resu
 ///
 /// Pre-computes the bottom-right anchor point from the display work area, then
 /// derives the window position directly from the interpolated width each frame.
-/// This eliminates the visual stutter caused by separate size/position updates —
+/// This eliminates the visual stutter caused by separate size/position updates:
 /// the right edge and bottom edge of the window remain perfectly fixed throughout
 /// the entire animation.
 ///
@@ -398,14 +408,14 @@ fn animate_window_resize(
         let x = (anchor_right - current_width as i32).max(clamp_left);
         let y = (anchor_bottom - physical_window_height as i32).max(clamp_top);
 
-        // Atomic move + resize in a single Win32 call — no in-between frame flicker
+        // Atomic move + resize in a single Win32 call: no in-between frame flicker
         set_window_pos_and_size(&window, x, y, current_width, physical_window_height);
 
         if progress >= 1.0 {
             break;
         }
 
-        // Check if a newer animation target has arrived — if so, abort this animation
+        // Check if a newer animation target has arrived: if so, abort this animation
         // so the caller loop can pick up the new target
         if rx.try_recv().is_ok() {
             tracing::debug!("[Anim] Cancelled in-progress animation for newer target");
@@ -606,6 +616,24 @@ pub fn perform_graceful_quit(app: &tauri::AppHandle) {
     THEME_MONITOR_SHUTDOWN.store(true, Ordering::Relaxed);
     audio_management::shutdown_audio_thread();
     hardware_input::shutdown_input_thread();
+    
+    // Signal the SimConnect lifecycle controller to shut down the thread.
+    if let Some(session) = app.try_state::<std::sync::Arc<std::sync::Mutex<Option<simconnect::SimConnectSession>>>>() {
+        simconnect::shutdown_simconnect_thread(&session);
+    }
+    
+    // Signal the sim detection thread to shut down and join it.
+    // This is critical: without joining, the thread may become orphaned
+    // when app.exit(0) terminates the process.
+    let shutdown_event = SIM_DETECTION_SHUTDOWN_EVENT.load(Ordering::Relaxed);
+    if shutdown_event != 0 {
+        if let Ok(mut thread_guard) = SIM_DETECTION_THREAD.lock() {
+            if let Some(thread) = thread_guard.take() {
+                sim_detection::shutdown_sim_detection_thread(shutdown_event, Some(thread));
+            }
+        }
+    }
+    
     app.exit(0);
 }
 
@@ -620,6 +648,20 @@ pub fn restart_application_internal(app: &tauri::AppHandle) -> Result<(), String
     if tauri::is_dev() {
         audio_management::shutdown_audio_thread();
         hardware_input::shutdown_input_thread();
+        // Signal the SimConnect lifecycle controller to shut down the thread.
+        if let Some(session) = app.try_state::<std::sync::Arc<std::sync::Mutex<Option<simconnect::SimConnectSession>>>>() {
+            simconnect::shutdown_simconnect_thread(&session);
+        }
+
+        // Signal the sim detection thread to shut down (dev mode: no join, as restart continues)
+        let shutdown_event = SIM_DETECTION_SHUTDOWN_EVENT.load(Ordering::Relaxed);
+        if shutdown_event != 0 {
+            if let Ok(mut thread_guard) = SIM_DETECTION_THREAD.lock() {
+                if let Some(_thread) = thread_guard.take() {
+                    sim_detection::signal_shutdown(shutdown_event);
+                }
+            }
+        }
 
         if let Some(toast) = app.get_webview_window("toast") {
             let _ = toast.close();
@@ -643,6 +685,21 @@ pub fn restart_application_internal(app: &tauri::AppHandle) -> Result<(), String
     THEME_MONITOR_SHUTDOWN.store(true, Ordering::Relaxed);
     audio_management::shutdown_audio_thread();
     hardware_input::shutdown_input_thread();
+    // Signal the SimConnect lifecycle controller to shut down the thread.
+    if let Some(session) = app.try_state::<std::sync::Arc<std::sync::Mutex<Option<simconnect::SimConnectSession>>>>() {
+        simconnect::shutdown_simconnect_thread(&session);
+    }
+
+    // Signal the sim detection thread to shut down and join it (release mode: clean restart)
+    let shutdown_event = SIM_DETECTION_SHUTDOWN_EVENT.load(Ordering::Relaxed);
+    if shutdown_event != 0 {
+        if let Ok(mut thread_guard) = SIM_DETECTION_THREAD.lock() {
+            if let Some(thread) = thread_guard.take() {
+                sim_detection::shutdown_sim_detection_thread(shutdown_event, Some(thread));
+            }
+        }
+    }
+
     app.request_restart();
     Ok(())
 }
@@ -684,22 +741,87 @@ async fn open_url(url: String) -> Result<(), String> {
 }
 
 fn main() {
+    // Debug builds log to stdout through a non-blocking writer: the previous
+    // blocking writer serialised every thread behind one console write, and a
+    // chatty background thread could stall the UI thread for as long as the
+    // terminal took to render. The guard must outlive the app: dropping it
+    // flushes the buffer and stops the writer thread.
+    //
+    // Verbosity comes from RUST_LOG when set, e.g.
+    //   RUST_LOG=ClearComms=debug,ClearComms::simconnect=info
     #[cfg(debug_assertions)]
-    tracing_subscriber::fmt()
-        .with_max_level(tracing::Level::DEBUG)
-        .init();
+    let _log_guard = {
+        let (writer, guard) = tracing_appender::non_blocking(std::io::stdout());
+        tracing_subscriber::fmt()
+            .with_env_filter(
+                tracing_subscriber::EnvFilter::try_from_default_env().unwrap_or_else(|_| {
+                    // Global WARN keeps dependency diagnostics that matter:
+                    // tao's event-loop starvation warnings in particular:
+                    // while unmatched targets stay quiet.
+                    tracing_subscriber::EnvFilter::new("warn,ClearComms=debug")
+                }),
+            )
+            .with_writer(writer)
+            .init();
+        guard
+    };
 
     // Track when window was last hidden - used to detect if tray click caused focus loss
     let last_hidden: Arc<Mutex<Instant>> = Arc::new(Mutex::new(Instant::now() - Duration::from_secs(10)));
     let last_hidden_for_setup = last_hidden.clone();
     let last_hidden_for_events = last_hidden.clone();
 
+    let sim_state = Arc::new(Mutex::new(simconnect::state::SimState::default()));
+    let sim_state_for_setup = sim_state.clone();
+
+    // Shared LVar command channel: populated by the SimConnect lifecycle
+    // controller while a simulator connection is active.
+    let lvar_command_handle = Arc::new(simconnect::LvarCommandHandle::default());
+    let lvar_command_handle_for_setup = lvar_command_handle.clone();
+
+    // Create the mpsc channel that bridges sim_detection events to the
+    // SimConnect lifecycle controller.
+    let (detection_sender, detection_receiver) = std::sync::mpsc::channel::<sim_detection::SimDetectionEvent>();
+
+    // Clone the sender before handing ownership to the detection thread so the
+    // SimConnect connection manager can re-inject `Started` events when a
+    // connection attempt fails but MSFS is still running.
+    let retry_sender = detection_sender.clone();
+
+    // Wrap the detection_receiver in an Arc<Mutex> so it can be moved into the setup closure
+    let detection_receiver_for_setup = Arc::new(Mutex::new(Some(detection_receiver)));
+    let retry_sender_for_setup = Arc::new(Mutex::new(Some(retry_sender)));
+
+    // Spawn the sim detection thread (Toolhelp32 process snapshot polling).
+    let (detection_shutdown_event, detection_thread) = sim_detection::spawn_sim_detection_thread(detection_sender);
+    SIM_DETECTION_SHUTDOWN_EVENT.store(detection_shutdown_event, Ordering::Relaxed);
+    if let Ok(mut thread_guard) = SIM_DETECTION_THREAD.lock() {
+        *thread_guard = Some(detection_thread);
+    }
+
     tauri::Builder::default()
         .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
             // When a second instance is launched, show the launch toast in the existing instance
             queue_launch_toast(app);
         }))
+        .manage(sim_state)
+        .manage(lvar_command_handle)
         .setup(move |app| {
+            // Start the lifecycle controller now that we have the app handle
+            if let (Some(receiver), Some(retry_tx)) = (
+                detection_receiver_for_setup.lock().unwrap().take(),
+                retry_sender_for_setup.lock().unwrap().take(),
+            ) {
+                let sim_session = simconnect::start_lifecycle_controller(
+                    app.handle().clone(),
+                    sim_state_for_setup.clone(),
+                    lvar_command_handle_for_setup.clone(),
+                    receiver,
+                    retry_tx,
+                );
+                app.manage(sim_session);
+            }
+            
             // Get main window and position it
             if let Some(window) = app.get_webview_window("main") {
                 // Apply Windows Acrylic effect and rounded corners
@@ -865,12 +987,14 @@ fn main() {
             audio_management::get_audio_sessions,
             audio_management::set_session_volume,
             audio_management::set_session_mute,
-            audio_management::check_default_device_changed,
             audio_management::cleanup_audio_manager,
             audio_management::get_system_volume,
             audio_management::get_system_mute,
             audio_management::set_system_volume,
             audio_management::set_system_mute,
+            simconnect::get_sim_status,
+            simconnect::subscribe_lvars,
+            simconnect::set_sim_lvar,
             update_layout_measurements,
             resize_window_to_content,
             show_main_window,

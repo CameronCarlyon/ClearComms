@@ -4,3 +4,5 @@
  */
 export * from './audioStore';
 export * from './themeStore';
+export * from './simStore.svelte';
+export * from './mixerMenuStore.svelte';

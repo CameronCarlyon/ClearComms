@@ -4,7 +4,7 @@
 -->
 <script lang="ts">
   import { invoke } from '@tauri-apps/api/core';
-  
+
   async function handleLinkClick(e: MouseEvent) {
     e.preventDefault();
     await invoke('open_url', { url: 'https://cameroncarlyon.com' });
@@ -13,10 +13,10 @@
 
 <footer>
   <p>
-    Crafted by <a 
-      href="https://cameroncarlyon.com" 
-      onclick={handleLinkClick} 
-      class="hyperlink" 
+    Crafted by <a
+      href="https://cameroncarlyon.com"
+      onclick={handleLinkClick}
+      class="hyperlink"
       aria-label="Visit Cameron Carlyon's website (opens in external browser)"
     >Cameron Carlyon</a>
   </p>
@@ -30,6 +30,7 @@
     align-items: center;
     color: var(--text-muted);
     z-index: 2;
+    gap: 0.25rem;
   }
 
   footer p {

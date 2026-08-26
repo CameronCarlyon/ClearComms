@@ -4,7 +4,7 @@
 -->
 <script lang="ts">
   import { createEventDispatcher } from 'svelte';
-  import type { AudioSession, AxisMapping, ButtonMapping } from '$lib/types';
+  import type { AudioSession, AxisMapping, ButtonMapping, SimFunctionAssignment, SimFunctionCategory } from '$lib/types';
   import ApplicationChannel from './ApplicationChannel.svelte';
   import ButtonAddApplication from './ButtonAddApplication.svelte';
 
@@ -13,6 +13,8 @@
     availableSessions: AudioSession[];
     axisMappings: AxisMapping[];
     buttonMappings: ButtonMapping[];
+    simAssignments: SimFunctionAssignment[];
+    supportedSimCategories: SimFunctionCategory[];
     isEditMode: boolean;
     isBindingMode: boolean;
     isButtonBindingMode: boolean;
@@ -28,6 +30,8 @@
     availableSessions,
     axisMappings,
     buttonMappings,
+    simAssignments,
+    supportedSimCategories,
     isEditMode,
     isBindingMode,
     isButtonBindingMode,
@@ -55,6 +59,7 @@
     removebuttonmapping: { processName: string };
     toggleinversion: { processName: string };
     removeapplication: { processName: string };
+    setsimcategory: { processName: string; category: SimFunctionCategory | null };
     select: { processName: string };
   }>();
 
@@ -90,6 +95,7 @@
     {#each boundSessions as session, index (session.session_id)}
       {@const mapping = axisMappings.find(m => m.processName === session.process_name)}
       {@const buttonMapping = buttonMappings.find(m => m.processName === session.process_name)}
+      {@const simCategory = simAssignments.find(a => a.processName === session.process_name)?.category ?? null}
       {@const entranceDelayMs = ((totalAnimatedColumns - 1 - index) * 45) + modeRetriggerOffsetMs}
 
       {#key `${session.session_id}-${isEditMode ? 'edit' : 'standard'}`}
@@ -97,6 +103,8 @@
           {session}
           axisMapping={mapping}
           {buttonMapping}
+          {simCategory}
+          {supportedSimCategories}
           {isEditMode}
           isBindingAxis={isBindingMode && pendingBinding?.sessionId === session.session_id}
           isBindingButton={isButtonBindingMode && pendingButtonBinding?.sessionId === session.session_id}
@@ -115,6 +123,7 @@
           on:removebuttonmapping
           on:toggleinversion
           on:removeapplication
+          on:setsimcategory
         />
       {/key}
     {/each}

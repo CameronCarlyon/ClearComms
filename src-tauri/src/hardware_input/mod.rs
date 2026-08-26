@@ -34,7 +34,7 @@ const INITIAL_HID_DEVICE_CAPACITY: usize = 32;
 const DEVICE_REENUMERATION_INTERVAL: Duration = Duration::from_secs(2);
 
 /// Axis and button data from a hardware device
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct AxisData {
     pub device_handle: String,
     pub device_name: String,
@@ -372,17 +372,47 @@ impl HidInputManager {
 
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
+use std::sync::mpsc;
 
 /// Interval between input polling iterations
 const POLL_INTERVAL: Duration = Duration::from_millis(50);
 
-/// Global shutdown flag for the input polling thread
-static INPUT_SHUTDOWN: Mutex<Option<Arc<AtomicBool>>> = Mutex::new(None);
+/// Longest the polling thread sleeps before re-checking the shutdown flag.
+/// Keeps quit responsive even during the idle (no devices) 1-second interval.
+const SHUTDOWN_CHECK_SLICE: Duration = Duration::from_millis(50);
+
+/// Maximum time shutdown waits for the polling thread to exit before giving up
+/// and letting the process continue without joining it.
+const THREAD_SHUTDOWN_TIMEOUT: Duration = Duration::from_secs(2);
+
+/// Handles for the dedicated input polling thread.
+struct InputThread {
+    shutdown: Arc<AtomicBool>,
+    join_handle: Option<std::thread::JoinHandle<()>>,
+    /// Signalled by the polling thread immediately before it returns.
+    done_rx: mpsc::Receiver<()>,
+}
+
+/// Global handle to the input polling thread.
+static INPUT_THREAD: Mutex<Option<InputThread>> = Mutex::new(None);
 
 /// Initialise input system, enumerate devices, and start the dedicated polling thread.
 /// The polling thread emits "input-axis-data" Tauri events at ~50ms intervals.
 #[tauri::command]
 pub fn init_input(app: tauri::AppHandle) -> Result<String, String> {
+    // Stop any thread from a previous init (e.g. a dev-mode reload) before
+    // starting a new one. Without this the old thread is orphaned: its handle is
+    // replaced, so nothing can ever signal or join it, and it keeps emitting
+    // duplicate events until the process dies.
+    let already_running = INPUT_THREAD
+        .lock()
+        .map(|lock| lock.is_some())
+        .unwrap_or(false);
+    if already_running {
+        tracing::info!("[Input] Polling thread already running — stopping it before re-init");
+        shutdown_input_thread();
+    }
+
     tracing::info!("[Input] Initialising HID input manager...");
     let mut manager = HidInputManager::new()?;
 
@@ -400,19 +430,18 @@ pub fn init_input(app: tauri::AppHandle) -> Result<String, String> {
 
     // Create shutdown flag
     let shutdown = Arc::new(AtomicBool::new(false));
-    {
-        let mut lock = INPUT_SHUTDOWN
-            .lock()
-            .map_err(|e| format!("Failed to lock shutdown flag: {}", e))?;
-        *lock = Some(shutdown.clone());
-    }
+    let (done_tx, done_rx) = mpsc::channel::<()>();
 
     // Spawn the dedicated polling thread — all joystick/HID calls happen here
     let shutdown_flag = shutdown.clone();
-    std::thread::Builder::new()
+    let join_handle = std::thread::Builder::new()
         .name("input-poll".to_string())
         .spawn(move || {
             tracing::info!("[Input] Dedicated input polling thread running");
+
+            // Last axis/button values emitted to the frontend. Only emit when data has
+            // changed to avoid flooding the JS event queue when no controls are moving.
+            let mut last_emitted_data: Vec<AxisData> = Vec::new();
 
             loop {
                 if shutdown_flag.load(Ordering::Relaxed) {
@@ -428,9 +457,14 @@ pub fn init_input(app: tauri::AppHandle) -> Result<String, String> {
                 // Read all axis/button values
                 match manager.read_all_axes() {
                     Ok(data) => {
-                        // Emit to the frontend via Tauri event
-                        if let Err(e) = app.emit("input-axis-data", &data) {
-                            tracing::warn!("[Input] Failed to emit axis data: {}", e);
+                        // Only emit when values have actually changed — avoids sending a
+                        // Tauri event (and triggering JS processing) on every tick when
+                        // the user is not interacting with any hardware control.
+                        if data != last_emitted_data {
+                            if let Err(e) = app.emit("input-axis-data", &data) {
+                                tracing::warn!("[Input] Failed to emit axis data: {}", e);
+                            }
+                            last_emitted_data = data;
                         }
                     }
                     Err(e) => {
@@ -438,13 +472,46 @@ pub fn init_input(app: tauri::AppHandle) -> Result<String, String> {
                     }
                 }
 
-                std::thread::sleep(POLL_INTERVAL);
+                // Sleep for longer when no devices are connected to reduce idle wakeups.
+                // The hot-plug check interval (DEVICE_REENUMERATION_INTERVAL = 2 s) still
+                // governs how quickly we detect newly connected hardware.
+                let sleep_duration = if manager.get_devices().is_empty() {
+                    Duration::from_secs(1)
+                } else {
+                    POLL_INTERVAL
+                };
+
+                // Sleep in short slices rather than one long block, so a quit
+                // request is noticed promptly. The process must not call
+                // ExitProcess while this thread is suspended inside a winmm or
+                // HID call.
+                let mut remaining = sleep_duration;
+                while !remaining.is_zero() {
+                    if shutdown_flag.load(Ordering::Relaxed) {
+                        break;
+                    }
+                    let slice = remaining.min(SHUTDOWN_CHECK_SLICE);
+                    std::thread::sleep(slice);
+                    remaining -= slice;
+                }
             }
 
             manager.cleanup();
             tracing::info!("[Input] Dedicated input polling thread exited");
+            let _ = done_tx.send(());
         })
         .map_err(|e| format!("Failed to spawn input polling thread: {}", e))?;
+
+    {
+        let mut lock = INPUT_THREAD
+            .lock()
+            .map_err(|e| format!("Failed to lock input thread handle: {}", e))?;
+        *lock = Some(InputThread {
+            shutdown,
+            join_handle: Some(join_handle),
+            done_rx,
+        });
+    }
 
     Ok(format!("Input initialised successfully ({} controllers found)", device_count))
 }
@@ -452,13 +519,13 @@ pub fn init_input(app: tauri::AppHandle) -> Result<String, String> {
 /// Get the current status of input system
 #[tauri::command]
 pub fn get_input_status() -> Result<String, String> {
-    let lock = INPUT_SHUTDOWN
+    let lock = INPUT_THREAD
         .lock()
-        .map_err(|e| format!("Failed to lock shutdown flag: {}", e))?;
-    
+        .map_err(|e| format!("Failed to lock input thread handle: {}", e))?;
+
     match lock.as_ref() {
-        Some(flag) => {
-            if flag.load(Ordering::Relaxed) {
+        Some(thread) => {
+            if thread.shutdown.load(Ordering::Relaxed) {
                 Ok("Input shut down".to_string())
             } else {
                 Ok("Input active (polling thread running)".to_string())
@@ -475,13 +542,37 @@ pub fn cleanup_input_manager() -> Result<String, String> {
     Ok("Input manager cleaned up successfully".to_string())
 }
 
-/// Signal the input polling thread to shut down.
-/// Called during app shutdown.
+/// Signal the input polling thread to shut down and wait for it to exit.
+///
+/// Called during app shutdown. The join matters because `app.exit(0)` calls
+/// `ExitProcess`, which suspends every other thread at an arbitrary point —
+/// including inside a winmm or hidapi call. The wait is bounded so a wedged
+/// device driver can never hang the quit sequence.
 pub fn shutdown_input_thread() {
-    if let Ok(lock) = INPUT_SHUTDOWN.lock() {
-        if let Some(flag) = lock.as_ref() {
-            flag.store(true, Ordering::Relaxed);
-            tracing::info!("[Input] Shutdown signal sent to input polling thread");
+    let Ok(mut lock) = INPUT_THREAD.lock() else {
+        return;
+    };
+    let Some(mut thread) = lock.take() else {
+        return;
+    };
+
+    thread.shutdown.store(true, Ordering::Relaxed);
+    tracing::info!("[Input] Shutdown signal sent to input polling thread");
+
+    match thread.done_rx.recv_timeout(THREAD_SHUTDOWN_TIMEOUT) {
+        Ok(()) | Err(mpsc::RecvTimeoutError::Disconnected) => {
+            if let Some(handle) = thread.join_handle.take() {
+                if let Err(e) = handle.join() {
+                    tracing::error!("[Input] Failed to join input polling thread: {:?}", e);
+                }
+            }
+            tracing::info!("[Input] Input polling thread joined");
+        }
+        Err(mpsc::RecvTimeoutError::Timeout) => {
+            tracing::warn!(
+                "[Input] Input polling thread did not exit within {:?} — not joining",
+                THREAD_SHUTDOWN_TIMEOUT
+            );
         }
     }
 }
