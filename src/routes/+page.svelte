@@ -1610,22 +1610,13 @@
 
   /**
    * Handle an inbound LVar value change from the simulator (sim → app).
-   * Loop prevention is value-based: an event whose raw value equals what our
-   * current app state maps to is the echo of our own write and is ignored, so
-   * genuine cockpit changes always apply while our own writes never bounce back.
+   * Our own writes do not bounce back because local input owns the sim function
+   * while a gesture lasts, so nothing bound to it reads the LVar until the
+   * movement settles.
    */
-  // TEMPORARY: names the filter that swallowed an inbound LVar update, so a
-  // dead sim-to-app chain can be diagnosed in one run. Dev builds only.
-  function traceLvarDrop(payload: LvarValueEvent, reason: string, detail?: unknown) {
-    console.log(`[Sim] LVar dropped (${reason})`, payload.name, payload.value, detail ?? '');
-  }
-
   function handleLvarValueChanged(payload: LvarValueEvent) {
     const routes = lvarRouteByName.get(payload.name);
-    if (!routes || routes.length === 0) {
-      if (IS_DEV) traceLvarDrop(payload, 'no route: LVar not in the active assignment set');
-      return;
-    }
+    if (!routes || routes.length === 0) return;
 
     // A sim function may be shared, so one update can drive several channels.
     for (const route of routes) {
@@ -1636,36 +1627,20 @@
   /** Apply one inbound LVar update to a single application channel. */
   function applyLvarToRoute(payload: LvarValueEvent, route: LvarRoute) {
     const session = audioSessions.find(s => s.process_name === route.processName);
-    if (!session) {
-      if (IS_DEV) traceLvarDrop(payload, 'app not running', { processName: route.processName });
-      return;
-    }
+    if (!session) return; // App not running: nothing to drive
 
     const def = simFunctionByProcess.get(route.processName);
-    if (!def) {
-      if (IS_DEV) traceLvarDrop(payload, 'no function definition', { processName: route.processName });
-      return;
-    }
+    if (!def) return;
 
     // Local input owns the channel: while a gesture is in progress every other
     // source is ignored. Checked once for the whole route rather than per kind,
     // so mute is covered too: an inbound mute forces displayVolume to 0, which
     // would tear the slider out from under the cursor mid-drag.
-    if (manuallyControlledSessions.has(session.session_id)) {
-      if (IS_DEV) {
-        traceLvarDrop(payload, 'session under local control', {
-          claimId: manualControlClaims.get(session.session_id),
-        });
-      }
-      return;
-    }
+    if (manuallyControlledSessions.has(session.session_id)) return;
 
     // One source at a time: while a gesture is driving this sim function, no
     // channel bound to it reads the LVar.
-    if (isSimFunctionLocallyDriven(def)) {
-      if (IS_DEV) traceLvarDrop(payload, 'sim function is under local input');
-      return;
-    }
+    if (isSimFunctionLocallyDriven(def)) return;
 
     if (route.kind === 'volume') {
       // See lvarsSeenNonZero: a bare 0 before the aircraft has initialised is
@@ -1673,7 +1648,6 @@
       if (payload.value !== 0) {
         lvarsSeenNonZero.add(payload.name);
       } else if (!lvarsSeenNonZero.has(payload.name)) {
-        if (IS_DEV) traceLvarDrop(payload, 'LVar has not reported a non-zero value yet');
         return;
       }
 
@@ -1681,31 +1655,21 @@
       const epsilon = (def.volume.max - def.volume.min) * LVAR_ECHO_EPSILON_RATIO;
 
       // Already where the cockpit is asking us to be: nothing to apply.
-      // Compared in the shared orientation so a reversed channel is not read as
-      // permanently out of step with the LVar.
       const currentValue = denormaliseVolume(session.volume, def.volume);
-      if (Math.abs(currentValue - payload.value) < epsilon) {
-        if (IS_DEV) traceLvarDrop(payload, 'already at this value', { currentValue, epsilon });
-        return;
-      }
+      if (Math.abs(currentValue - payload.value) < epsilon) return;
 
-      if (IS_DEV) console.log('[Sim] LVar applied', payload.name, payload.value);
       applyLvarVolume(session.session_id, normaliseVolume(payload.value, def.volume));
     } else if (def.mute) {
       // Whichever of the two states the reading is nearer to. Exact equality
       // against mutedValue/unmutedValue looked safe for a two-state latch, but
-      // any f32 round-trip noise: or a switch that animates through
-      // intermediate values: matched neither and was discarded in silence.
+      // f32 round-trip noise (or a switch that animates through intermediate
+      // values) matched neither and was discarded in silence.
       const toMuted = Math.abs(payload.value - def.mute.mutedValue);
       const toUnmuted = Math.abs(payload.value - def.mute.unmutedValue);
       const muted = toMuted <= toUnmuted;
 
-      if (muted === session.is_muted) {
-        if (IS_DEV) traceLvarDrop(payload, 'already in this mute state', { muted });
-        return;
-      }
+      if (muted === session.is_muted) return;
 
-      if (IS_DEV) console.log('[Sim] LVar mute applied', payload.name, payload.value, muted);
       applyLvarMute(session.session_id, muted);
     }
   }
