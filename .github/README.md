@@ -4,7 +4,7 @@
 </p>
 
 ## What’s this all about?
-Optimised for performance, **ClearComms** is a lightweight companion application for **Microsoft Flight Simulator**, built with **Tauri** and **Svelte**, and powered by **Rust**. The application allows you to control the volume of audio applications (such as vPilot or GSX Pro) using dedicated hardware and in-simulator flightdeck controls, syncronised through ClearComms.
+Optimised for performance, **ClearComms** is a lightweight companion application for **Microsoft Flight Simulator**, built with **Tauri** and **Svelte**, and powered by **Rust**. The application allows you to control the volume of audio applications (such as vPilot or GSX Pro) using dedicated hardware and in-simulator flightdeck controls, synchronised through ClearComms.
 
 The goal is to keep you in the flightdeck environment and not fiddling with volume mixer menus, allowing you to stay focused on that final approach and not on the ongoing podcast of a departure clearance on the Tower frequency.
 
@@ -13,19 +13,35 @@ The goal is to keep you in the flightdeck environment and not fiddling with volu
 - **Hardware-Based Volume Control**  
   Utilise dedicated flight simulator hardware to adjust application volume levels, using axes for volume control and buttons for mute.
 
-- **Microsoft Flight Simulator Integration**  *(In Development)*
-  Map flightdeck controls (e.g. VHF1/INT/CAB volume) directly to application audio levels such as **vPilot** or **GSX Pro**.
+- **Microsoft Flight Simulator Integration**  
+  Assign an application to a flightdeck radio channel — COM1–3, HF1–2, CAB, PA or INT — and its volume and mute state stay synchronised with the aircraft's audio control panel **in both directions**. Turn the VHF1 knob in the flightdeck and vPilot follows; move the ClearComms slider and the flightdeck knob follows. Pull the receive switch and the application mutes.
 
 - **Performance that Flies**  
-  Zero drag. Built with Tauri, Svelte, and Rust for negligible memory usage and performance impact.
+  Zero drag. Built with Tauri, Svelte, and Rust for negligible memory usage and performance impact. The simulator integration is entirely event-driven — nothing is polled, so while connected and idle it costs no CPU time that MSFS could otherwise be using.
 
 - **Intuitive Design in Motion**  
   Marrying a clean user interface with purposeful animations to craft a seamless, intuitive user experience.
 
 - **Stretch Goals**
+  - First officer audio panel support.
   - ACARS integration for aircraft without native support.
   - Automated in-flight announcements on PA channel.
   - Custom-built WASM bridge.
+
+## Supported Aircraft
+
+Simulator channel assignment requires a profile for the loaded aircraft. ClearComms matches the aircraft automatically and the feature becomes available once a match is found.
+
+| Aircraft | Channels | Mute (receive switch) |
+|----------|----------|-----------------------|
+| Fenix A320 family | COM1–3, HF1–2, CAB, PA, INT | Yes |
+| iniBuilds A350 | COM1–3, HF1–2, CAB, PA, INT | Yes |
+| FlyByWire A380X | COM1–3, HF1–2, CAB, PA, INT | COM1–3 only |
+
+Hardware axis and button bindings work with any aircraft — they are independent of simulator integration.
+
+> [!NOTE]
+> Simulator channels currently follow the **captain's** audio control panel. Support for the first officer's panel is planned.
 
 ## Installation
 
@@ -47,23 +63,40 @@ The goal is to keep you in the flightdeck environment and not fiddling with volu
 
 2. With the ClearComms window open, you will be first presented with the onboarding view. Click on the **+** button to reveal a list of available audio sessions and add your first audio application (e.g. vPilot, GSX Pro) to the mixer.
 
-3. Once an application has been added, a column of controls will appear in the following order:
+3. Once an application has been added, a column of controls will appear:
   - The **volume slider** represents the application volume level. The user may use the mouse buttons or scrollwheel to make manual adjustments.
+  - The **mute bind button** may be used to invoke mute button binding mode to assign a hardware button for the mute toggle. (A button may be reused for multiple applications.)
+  - The **mute button** toggles the application's mute state.
   - The **gamepad button** may be used to invoke axis binding mode. Once active, move a hardware axis to assign it to the application. (An axis may be reused for multiple applications.)
-  - The **mute button** may be used to invoke mute button binding mode to assign a hardware button for the mute toggle. (A button may be reused for multiple applications.)
+  - The **simulator function button** assigns the application to a flightdeck radio channel (COM1–3, HF1–2, CAB, PA, INT). Selecting the channel already assigned clears it. See [Simulator Channels](#simulator-channels) below.
   - The **vertical arrow button** is used to swap axis travel direction.
   - The **red litter bin icon** may be used to remove the pinned application completely.
 
 4. Hover the mouse over the handle at the bottom of the window to open the dock. You will find the following buttons:
   - The **settings button** which may be used to open the settings menu. Inside you will find the following options:
     - A link to the user guide (you're reading it!).
-    - A link to the GitHub repo.
     - A toggle to pin the application above other windows. Losing window focus will not minimise the application.
-  - The **edit button** is used to toggle edit mode. Exiting edit mode will hide the axis bind button, mute bind button, reverse axis button and delete button.
+    - **Nerd Zone**, which reveals the **SimConnect** and **WASM** status indicators along with additional debugging information.
+    - Reboot (Restart the application).
+  - The **edit button** is used to toggle edit mode. Exiting edit mode will hide the axis bind button, mute bind button, simulator function button, reverse axis button and delete button.
   - The **close button**, used to open the close menu with the following options inside:
     - Return (Exit the close menu).
-    - Minimise (Return the application to the system tray).
     - Quit (Completely exit the application).
+    - Minimise (Return the application to the system tray).
+
+## Simulator Channels
+
+Assigning an application to a flightdeck radio channel links the two together in both directions, for as long as the assignment remains in place.
+
+1. Launch Microsoft Flight Simulator (2020 or 2024) and load a [supported aircraft](#supported-aircraft). ClearComms detects the simulator automatically — there is nothing to start or connect, and the two applications may be launched in either order.
+
+2. Open the settings menu and expand **Nerd Zone** to confirm both status lights are green. **SimConnect** green means ClearComms is talking to the simulator; **WASM** green means the MobiFlight Event Module answered. An orange WASM light means the module is not installed.
+
+3. Enter edit mode, then use an application's **simulator function button** to pick a channel. The assignment is remembered between sessions.
+
+4. From that point onward the application volume and the flightdeck knob track one another. Moving either moves the other, and the receive switch on the audio panel mutes and unmutes the application.
+
+Several applications may share one channel — assign both vPilot and your ATC client to COM1 and the single flightdeck knob drives them together. Assignments persist across aircraft changes; the feature simply goes quiet whilst an unsupported aircraft is loaded and resumes when a supported one is loaded again.
 
 ## Tech Stack
 
@@ -75,7 +108,8 @@ The following tech stack balances **performance, functionality, and user experie
 - **Integrations:**  
   - Windows Core Audio API  
   - Windows Joystick API + HID API  
-  - MobiFlight WASM Event Module *(In Development)* 
+  - SimConnect (Microsoft Flight Simulator 2020 / 2024)  
+  - MobiFlight WASM Event Module  
 
 ### Justifications
 
@@ -104,8 +138,13 @@ The Windows Core Audio API provides direct, low-latency control over per-applica
 #### **Windows Joystick API + HID API**
 The Windows Joystick API is used to read axis and button values from connected controllers, providing low-latency input polling. The HID API is used to resolve device metadata (manufacturer, product name, VID/PID) so the UI can present accurate device identification for bindings. This combination supports a broad range of flight simulation peripherals and general-purpose devices without relying on legacy or vendor-specific drivers.
 
+#### **SimConnect**
+SimConnect is the simulator's official client interface, used here to detect the connection, identify the loaded aircraft, and carry the MobiFlight client data traffic. It is driven entirely through Win32 event handles rather than a polling loop: the connection thread sleeps at the OS level and is woken only when the simulator actually has something to say. Because ClearComms runs alongside one of the most CPU-hungry applications on the system, every cycle it does not spend is a cycle returned to the simulator.
+
 #### **MobiFlight WASM Event Module**
 The MobiFlight Event Module is used as an in-sim WASM bridge to access aircraft-specific **LVars and HVars**, enabling reliable interaction with complex third-party aircraft systems. This approach avoids aircraft-specific DLLs or reverse-engineered interfaces while remaining compatible with a wide range of aircraft.
+
+ClearComms registers its own named MobiFlight client, so its subscriptions are isolated from the MobiFlight Connector application and the two may be run side by side without interfering with one another. Aircraft knowledge lives in a curated profile registry in the frontend rather than in the backend, so supporting a new aircraft is a data change rather than a code change.
 
 # Documentation
 
