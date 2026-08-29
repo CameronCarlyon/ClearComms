@@ -44,7 +44,7 @@ Svelte 5 frontend  →  Tauri 2.x IPC (invoke/emit, JSON)  →  Rust backend (Wi
   - `hardware_input/` — Joystick API + HID API axis/button polling
   - `simconnect/` — SimConnect connection lifecycle + MobiFlight LVar bridge (`mod.rs` = lifecycle/commands, `connection.rs` = dispatch loop + FFI, `state.rs` = shared state types)
   - `sim_detection/` — Toolhelp32-based MSFS process watcher that drives the SimConnect lifecycle
-  - `native_menu.rs`, `theme.rs`, `toast_manager.rs`, `window_utils.rs` — tray/menu, theme detection, toast notifications, DPI-aware window positioning
+  - `native_menu.rs`, `theme.rs`, `notification.rs`, `window_utils.rs` — tray/menu, theme detection, native Windows toast notifications, DPI-aware window positioning
 
 ### Threading model
 
@@ -66,7 +66,7 @@ Resource cleanup follows RAII throughout: `Drop` impls close COM objects/handles
 
 ### IPC command surface
 
-~30 commands registered in `main.rs`'s `invoke_handler!`, grouped by owning module (`hardware_input::*`, `audio_management::*`, `simconnect::*`, `theme::*`, `toast_manager::*`, plus window/config utility commands defined in `main.rs` itself). Every command returns `Result<T, String>`; the frontend wraps every `invoke()` in try/catch. Hardware axis/button data is **pushed** to the frontend via the `input-axis-data` Tauri event rather than polled via `invoke()` — same pattern for `sim-status-changed`.
+~30 commands registered in `main.rs`'s `invoke_handler!`, grouped by owning module (`hardware_input::*`, `audio_management::*`, `simconnect::*`, `theme::*`, plus window/config utility commands defined in `main.rs` itself). Every command returns `Result<T, String>`; the frontend wraps every `invoke()` in try/catch. Hardware axis/button data is **pushed** to the frontend via the `input-axis-data` Tauri event rather than polled via `invoke()` — same pattern for `sim-status-changed`. Toast notifications (`notification.rs`) are called directly from Rust and expose no commands — the frontend never triggers one.
 
 ### Persistence
 

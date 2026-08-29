@@ -36,7 +36,7 @@ mod audio_management;
 mod hardware_input;
 mod native_menu;
 mod window_utils;
-mod toast_manager;
+mod notification;
 mod theme;
 mod simconnect;
 mod sim_detection;
@@ -430,9 +430,6 @@ fn animate_window_resize(
 pub fn show_main_window_internal(app: &tauri::AppHandle) -> Result<(), String> {
     if let Some(window) = app.get_webview_window("main") {
         position_window_bottom_right(&window);
-        if let Some(toast) = app.get_webview_window("toast") {
-            let _ = toast.close();
-        }
         let _ = window.show();
         let _ = window.set_focus();
         Ok(())
@@ -478,9 +475,6 @@ fn hide_main_window(app: tauri::AppHandle) -> Result<(), String> {
 /// Returns the new pin state after toggling
 pub fn perform_pin_toggle(window: &tauri::WebviewWindow) -> Result<bool, String> {
     position_window_bottom_right(window);
-    if let Some(toast) = window.app_handle().get_webview_window("toast") {
-        let _ = toast.close();
-    }
     let _ = window.show();
     let _ = window.set_focus();
     
@@ -637,11 +631,8 @@ pub fn perform_graceful_quit(app: &tauri::AppHandle) {
     app.exit(0);
 }
 
-fn queue_launch_toast(app: &tauri::AppHandle) {
-    let _ = toast_manager::show_toast(
-        app,
-        toast_manager::ToastPayload::new("ClearComms", "Running in your system tray."),
-    );
+fn show_launch_notification(app: &tauri::AppHandle) {
+    notification::show(app, "ClearComms", "Running in your system tray.");
 }
 
 pub fn restart_application_internal(app: &tauri::AppHandle) -> Result<(), String> {
@@ -663,10 +654,6 @@ pub fn restart_application_internal(app: &tauri::AppHandle) -> Result<(), String
             }
         }
 
-        if let Some(toast) = app.get_webview_window("toast") {
-            let _ = toast.close();
-        }
-
         let Some(window) = app.get_webview_window("main") else {
             return Err("Main window not found".to_string());
         };
@@ -678,7 +665,7 @@ pub fn restart_application_internal(app: &tauri::AppHandle) -> Result<(), String
             .reload()
             .map_err(|e| format!("Failed to reload main window: {}", e))?;
 
-        queue_launch_toast(app);
+        show_launch_notification(app);
         return Ok(());
     }
 
@@ -801,8 +788,9 @@ fn main() {
 
     tauri::Builder::default()
         .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
-            // When a second instance is launched, show the launch toast in the existing instance
-            queue_launch_toast(app);
+            // The second launch hands off to this instance and exits, so
+            // without this the user gets no feedback at all.
+            notification::show(app, "ClearComms", "Already running in your system tray.");
         }))
         .manage(sim_state)
         .manage(lvar_command_handle)
@@ -898,11 +886,11 @@ fn main() {
                 })
                 .build(app)?;
            
-           // Initialise theme before toast to avoid registry read delay
            theme::update_resolved_theme();
-           
-           // Show launch toast (theme already initialised, no registry read needed)
-           queue_launch_toast(app.handle());
+
+           // The window starts hidden, so without this the app appears not to
+           // have launched at all.
+           show_launch_notification(app.handle());
             
             // Spawn a background thread to monitor Windows theme changes
             // and update the tray icon accordingly
@@ -1007,8 +995,6 @@ fn main() {
             load_config_value,
             quit_application,
             open_url,
-            toast_manager::trigger_toast,
-            toast_manager::close_toast_window,
             theme::get_theme_mode_command,
             theme::set_theme_mode_command,
             theme::get_resolved_theme_name_command,
