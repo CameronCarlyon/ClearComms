@@ -193,6 +193,12 @@
     border-radius: 2rem;
   }
 
+  /* The shadow paints the filled part of the track below the thumb, so it only
+     has to be taller than the track. The window is fixed at 700px, leaving well
+     under 500px of track once padding and controls are subtracted, so 500px
+     covers it at any size the app can produce while halving the area the hover
+     filter below has to rasterise. These three values encode the same
+     assumption and have to move together. */
   .volume-slider::-webkit-slider-thumb {
     -webkit-appearance: none;
     appearance: none;
@@ -201,8 +207,8 @@
     border-radius: 2rem;
     background: var(--text-primary);
     border: none;
-    box-shadow: 0 1000px 0 1000px var(--text-primary);
-    clip-path: inset(0 0 -1000px 0 round 2rem);
+    box-shadow: 0 500px 0 500px var(--text-primary);
+    clip-path: inset(0 0 -500px 0 round 2rem);
   }
 
   .volume-slider:hover:not(:disabled) {
