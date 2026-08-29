@@ -51,14 +51,32 @@ where
     }
 }
 
+/// Owns an `HMENU` so it is destroyed however the function exits.
+///
+/// Building the menu has several fallible steps, and each early return used to
+/// leak the menu. The paths are unlikely, but the rest of the codebase does not
+/// rely on that either.
+#[cfg(windows)]
+struct PopupMenu(windows::Win32::UI::WindowsAndMessaging::HMENU);
+
+#[cfg(windows)]
+impl Drop for PopupMenu {
+    fn drop(&mut self) {
+        unsafe {
+            let _ = DestroyMenu(self.0);
+        }
+    }
+}
+
 #[cfg(windows)]
 pub fn show_native_context_menu(app: &tauri::AppHandle, x: i32, y: i32) -> Result<(), String> {
     use windows::core::PCWSTR;
-    
+
     unsafe {
         // Create the popup menu
-        let hmenu = CreatePopupMenu().map_err(|e| format!("Failed to create menu: {}", e))?;
-        
+        let menu = PopupMenu(CreatePopupMenu().map_err(|e| format!("Failed to create menu: {}", e))?);
+        let hmenu = menu.0;
+
         // Add menu items
         let show_text: Vec<u16> = "Open\0".encode_utf16().collect();
         AppendMenuW(hmenu, MF_STRING, MENU_SHOW, PCWSTR(show_text.as_ptr()))
@@ -115,9 +133,10 @@ pub fn show_native_context_menu(app: &tauri::AppHandle, x: i32, y: i32) -> Resul
             let _ = PostMessageW(hwnd, WM_NULL, None, None);
         }
         
-        // Clean up
-        let _ = DestroyMenu(hmenu);
-        
+        // Destroyed here rather than at end of scope, so the menu is gone before
+        // any of the handlers below show a window.
+        drop(menu);
+
         // Handle the selected menu item (cmd is the menu item ID)
         match cmd.0 as usize {
             MENU_SHOW => {

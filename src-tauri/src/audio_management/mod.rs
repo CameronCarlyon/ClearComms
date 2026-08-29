@@ -33,9 +33,6 @@ use std::os::windows::ffi::OsStrExt;
 /// Maximum path length for Windows process names (MAX_PATH)
 const MAX_PATH_LENGTH: usize = 260;
 
-/// Maximum number of cached audio sessions before pruning
-const MAX_SESSION_CACHE_SIZE: usize = 1000;
-
 /// Initial capacity for session vectors (reasonable estimate for typical systems)
 const INITIAL_SESSION_CAPACITY: usize = 64;
 
@@ -766,23 +763,41 @@ impl AudioManager {
                                 continue;
                             }
 
+                            // The fallback is keyed on the device and process
+                            // rather than the loop index. An index shifts as
+                            // sessions come and go, so it was not stable between
+                            // enumerations, and two devices both produced
+                            // "session_0" — merging unrelated applications in
+                            // the cache and in anything mapped to them.
                             let session_id = match session_control2.GetSessionInstanceIdentifier() {
                                 Ok(pwstr) => {
                                     let s = pwstr.to_string()
-                                        .unwrap_or_else(|_| format!("session_{}", i));
+                                        .unwrap_or_else(|_| format!("device{}_pid{}", device_index, process_id));
                                     // Free COM-allocated PWSTR to prevent memory leak
                                     CoTaskMemFree(Some(pwstr.0 as *const core::ffi::c_void));
                                     s
                                 }
-                                Err(_) => format!("session_{}", i),
+                                Err(_) => format!("device{}_pid{}", device_index, process_id),
                             };
 
                             // If this session was already resolved in a previous enumeration,
                             // reuse the cached names and skip the expensive per-process I/O:
                             // QueryFullProcessImageNameW, GetFileVersionInfoW, and EnumWindows.
                             // These are one-time costs per session lifetime, not per-poll.
-                            let (process_name, friendly_display_name) = if let Some(cached) = self.sessions.get(&session_id) {
-                                (cached.process_name.clone(), cached.display_name.clone())
+                            //
+                            // An empty display name does not count as resolved.
+                            // Applications commonly create their audio session
+                            // before their main window exists, and caching that
+                            // first failed lookup left them nameless for the
+                            // rest of the session's life.
+                            let cached_names = self
+                                .sessions
+                                .get(&session_id)
+                                .filter(|cached| !cached.display_name.is_empty())
+                                .map(|cached| (cached.process_name.clone(), cached.display_name.clone()));
+
+                            let (process_name, friendly_display_name) = if let Some(names) = cached_names {
+                                names
                             } else {
                                 // New session: resolve names via the full lookup chain.
                                 let display_name = match session_control2.GetDisplayName() {
@@ -883,17 +898,10 @@ impl AudioManager {
 
             self.volume_cache = volume_cache;
 
-            // Remove sessions that are no longer active to prevent cache growth
+            // Drop everything that is no longer live. This is the real bound on
+            // the cache: it can never hold more than the machine currently has
+            // open, so there is nothing further to prune.
             self.sessions.retain(|id, _| live_session_ids.contains(id));
-            
-            // Prevent unbounded memory growth by limiting cache size
-            if self.sessions.len() > MAX_SESSION_CACHE_SIZE {
-                // Keep only the most recent entries
-                let mut session_keys: Vec<String> = self.sessions.keys().cloned().collect();
-                session_keys.truncate(MAX_SESSION_CACHE_SIZE / 2); // Remove oldest half
-                self.sessions.retain(|k, _| session_keys.contains(k));
-                tracing::warn!("[Audio] Cache size limit reached, pruned to {} entries", self.sessions.len());
-            }
 
             self.enumerate_calls = self.enumerate_calls.wrapping_add(1);
             let active_count = live_session_ids.len();

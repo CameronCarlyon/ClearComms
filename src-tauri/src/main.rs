@@ -693,12 +693,21 @@ pub fn restart_application_internal(app: &tauri::AppHandle) -> Result<(), String
     Ok(())
 }
 
-/// Open a URL in the default browser and bring it to the foreground
+/// Open a URL in the default browser and bring it to the foreground.
+///
+/// Restricted to https. `ShellExecuteW` with the "open" verb will act on
+/// anything the shell knows how to launch, local executables included, so the
+/// scheme is checked before the string crosses into it. Every caller passes a
+/// documentation or repository link.
 #[tauri::command]
 async fn open_url(url: String) -> Result<(), String> {
     use std::os::windows::ffi::OsStrExt;
     use std::ffi::OsStr;
-    
+
+    if !url.starts_with("https://") {
+        return Err(format!("Refusing to open non-https URL: {}", url));
+    }
+
     // Use ShellExecuteW with SW_SHOWNORMAL to ensure the browser window is shown and focused
     let url_wide: Vec<u16> = OsStr::new(&url)
         .encode_wide()
