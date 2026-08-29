@@ -99,7 +99,7 @@ ClearComms employs a three-tier architecture optimised for low-latency native sy
 │                                                                      │
 │  Tauri 2.x IPC                                                       │
 │  ┌────────────────────────────────────────────────────────────────┐  │
-│  │  30 registered commands via invoke_handler                     │  │
+│  │  31 registered commands via invoke_handler                     │  │
 │  │  ├── invoke() — Frontend → Backend (JSON serialisation)        │  │
 │  │  ├── emit()   — Backend → Frontend (event bus)                 │  │
 │  │  └── Result<T, String> — Typed error propagation               │  │
@@ -118,7 +118,7 @@ ClearComms employs a three-tier architecture optimised for low-latency native sy
 │  │                      ClientDataArea LVar transport             │  │
 │  │  native_menu         Win32 popup menu (TrackPopupMenu)         │  │
 │  │  theme               Registry-driven light/dark resolution     │  │
-│  │  toast_manager       Transient notification windows            │  │
+│  │  notification        Native Windows toast (WinRT ToastNotif.)  │  │
 │  │  window_utils        DPI-aware positioning                     │  │
 │  │  main                Tray, layout, resize animation, config    │  │
 │  │                                                                │  │
@@ -137,7 +137,7 @@ ClearComms employs a three-tier architecture optimised for low-latency native sy
 | **Blocking Wait Loop** | `WaitForMultipleObjects` in the SimConnect dispatch loop | Zero CPU while idle; every reason to wake is a kernel event |
 | **Observer / Event Bus** | `tauri::Emitter` for `audio-state-updated`, `input-axis-data`, `lvar-value-changed`, `sim-status-changed`, `window-pin-changed` | Push-based backend-to-frontend synchronisation, replacing frontend polling |
 | **Lifecycle Controller** | `simconnect-ctrl` thread consuming `SimDetectionEvent` | Spawns and tears down the SimConnect connection in response to simulator process transitions |
-| **Command** | 30 `#[tauri::command]` functions | Decoupled IPC interface with typed parameters and returns |
+| **Command** | 31 `#[tauri::command]` functions | Decoupled IPC interface with typed parameters and returns |
 | **Throttle** | `scheduleLiveVolumeUpdate` (40ms), `writeSimVolume` (120ms trailing) | Rate-limited backend and simulator writes during slider interaction |
 | **Bounded Cache** | `MAX_SESSION_CACHE_SIZE: 1000`, `MAX_CACHE_SIZE: 1000`, `MAX_LVAR_SUBSCRIPTIONS: 64` | Memory leak prevention with automatic eviction and bounded ID ranges |
 | **Adapter** | `HidInputManager` combining Joystick API + HID API | Unified device abstraction merging data from two distinct APIs |
@@ -145,6 +145,7 @@ ClearComms employs a three-tier architecture optimised for low-latency native sy
 | **Guard / Activation** | `axisActivated` Map (5% threshold), `lvarsSeenNonZero` | Prevents a mapping or LVar from applying until it has proven itself deliberate |
 | **Echo Suppression** | `simVolumeWrites` window, `isSimFunctionLocallyDriven` | Distinguishes an inbound value that is our own write returning from a genuine cockpit movement |
 | **Exponential Backoff** | `next_retry_delay_ms` (5s → 60s), LVar subscription retry | Prevents repeated failure from churning inside the simulator process |
+| **Event-Driven Cleanup** | `notification::show`'s `on_dismissed`/`on_activated` handlers | Removes the toast from the Action Centre when its popup ends, with no polling timer |
 
 ### 2.3 Data Flow
 
@@ -792,7 +793,7 @@ Note that the simulator rows describe **ceilings and guard windows, not work per
 
 ## 6. Security and Reliability
 
-**Capability Model:** The application uses Tauri's capability-based permission system. The `default` capability applies to the `main` and `toast` windows and grants `core:default`, `core:event:default`, and a narrow set of explicit `core:window:*` permissions (show, hide, close, focus, position, size, always-on-top, scale factor) rather than a blanket window permission. All 30 backend commands are exposed through the `invoke_handler` and accessed via Tauri's IPC channel rather than through web-accessible endpoints.
+**Capability Model:** The application uses Tauri's capability-based permission system. The `default` capability applies to the `main` window and grants `core:default`, `core:event:default`, and a narrow set of explicit `core:window:*` permissions (show, hide, close, focus, position, size, always-on-top, scale factor) rather than a blanket window permission. All 31 backend commands are exposed through the `invoke_handler` and accessed via Tauri's IPC channel rather than through web-accessible endpoints.
 
 **Input Validation at FFI Boundaries:** Two boundaries accept frontend-supplied data that reaches native APIs, and both validate before crossing:
 
@@ -1274,15 +1275,6 @@ fn get_theme_state_command() -> Result<(String, String), String>
 ```
 
 Get and set the theme mode (the user's preference, which may be "system"), and read the resolved concrete theme. `get_theme_state_command` returns both in one call as `(mode, resolved)`, avoiding a second IPC round trip when the frontend needs the pair.
-
-#### Toast Commands
-
-```rust
-fn trigger_toast(app: AppHandle, title: String, body: String, …) -> Result<(), String>
-fn close_toast_window(app: AppHandle) -> Result<(), String>
-```
-
-Show and dismiss the transient notification window (`static/toast-launch.html`), used among other things to signal that a second launch surfaced the already-running instance.
 
 ### 10.6 Tauri Events
 
