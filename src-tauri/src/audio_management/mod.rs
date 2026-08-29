@@ -201,6 +201,18 @@ struct AudioManager {
     cached_device: Option<IMMDevice>,
     #[cfg(windows)]
     cached_endpoint_volume: Option<IAudioEndpointVolume>,
+    /// Volume interfaces per process ID, rebuilt by every `enumerate_sessions`.
+    ///
+    /// Without this, each volume or mute write had to walk every render endpoint
+    /// and every session on it to find the handful belonging to one process.
+    /// That runs up to 25 times a second while a slider is held, which is the
+    /// worst possible moment to be making thousands of COM calls: the simulator
+    /// is competing for the same cores.
+    ///
+    /// A process gets several entries when it opens sessions on more than one
+    /// endpoint, which is why the value is a list.
+    #[cfg(windows)]
+    volume_cache: HashMap<u32, Vec<ISimpleAudioVolume>>,
     /// Tauri app handle for emitting push events to the frontend.
     app_handle: tauri::AppHandle,
     /// Last session list emitted to the frontend; used for change detection.
@@ -530,6 +542,7 @@ impl AudioManager {
             cached_enumerator: None,
             cached_device: None,
             cached_endpoint_volume: None,
+            volume_cache: HashMap::new(),
             app_handle,
             last_emitted_sessions: Vec::new(),
         };
@@ -630,6 +643,9 @@ impl AudioManager {
             self.cached_enumerator = None;
             self.cached_device = None;
             self.cached_endpoint_volume = None;
+            // Interfaces obtained from the old endpoint are invalidated by the
+            // switch; the next enumeration repopulates them.
+            self.volume_cache.clear();
             self.rebuild_com_cache()?;
             Ok(true)
         } else {
@@ -707,6 +723,10 @@ impl AudioManager {
 
             let mut sessions = Vec::with_capacity(INITIAL_SESSION_CAPACITY); // Pre-allocate reasonable capacity
             let mut live_session_ids: HashSet<String> = HashSet::with_capacity(INITIAL_SESSION_CAPACITY);
+
+            // Rebuilt from scratch so interfaces for ended sessions are dropped
+            // rather than accumulating.
+            let mut volume_cache: HashMap<u32, Vec<ISimpleAudioVolume>> = HashMap::new();
 
             // Iterate through all audio devices
             for device_index in 0..device_count {
@@ -812,6 +832,11 @@ impl AudioManager {
                                 let volume = simple_volume.GetMasterVolume().unwrap_or(1.0);
                                 let is_muted = simple_volume.GetMute().unwrap_or(BOOL(0)).as_bool();
 
+                                volume_cache
+                                    .entry(process_id)
+                                    .or_default()
+                                    .push(simple_volume);
+
                                 let session = AudioSession {
                                     session_id: session_id.clone(),
                                     display_name: friendly_display_name,
@@ -856,6 +881,8 @@ impl AudioManager {
                 }
             }
 
+            self.volume_cache = volume_cache;
+
             // Remove sessions that are no longer active to prevent cache growth
             self.sessions.retain(|id, _| live_session_ids.contains(id));
             
@@ -891,183 +918,87 @@ impl AudioManager {
         }
     }
 
-    /// Set volume for all audio sessions belonging to the same process as the target session.
-    /// Games like MSFS2024 create multiple sessions; controlling only one leaves others unaffected.
-    fn set_session_volume(&mut self, session_id: &str, volume: f32) -> std::result::Result<(), String> {
-        let volume = volume.clamp(0.0, 1.0);
+    /// Run `call` against every cached volume interface owned by the same
+    /// process as `session_id`, returning how many succeeded.
+    ///
+    /// Games like MSFS create several sessions; controlling only one of them
+    /// leaves the rest at their old level, so every interface for the process
+    /// is driven together.
+    fn apply_to_process<F>(&self, session_id: &str, mut call: F) -> usize
+    where
+        F: FnMut(&ISimpleAudioVolume) -> windows::core::Result<()>,
+    {
+        let Some(process_id) = self.sessions.get(session_id).map(|s| s.process_id) else {
+            return 0;
+        };
+        let Some(interfaces) = self.volume_cache.get(&process_id) else {
+            return 0;
+        };
 
-        // Look up the target process ID from the session cache so we can update
-        // every session belonging to the same application (not just one instance)
-        let target_process_id = self.sessions.get(session_id).map(|s| s.process_id);
-        
-        unsafe {
-            let enumerator = self.get_enumerator()?;
-
-            let device_collection = enumerator
-                .EnumAudioEndpoints(eRender, DEVICE_STATE_ACTIVE)
-                .map_err(|e: Error| format!("Failed to enumerate audio endpoints: {}", e))?;
-
-            let device_count = device_collection.GetCount().unwrap_or(0);
-            let mut updated_count: u32 = 0;
-
-            for device_index in 0..device_count {
-                let device = match device_collection.Item(device_index) {
-                    Ok(dev) => dev,
-                    Err(_) => continue,
-                };
-
-                let session_manager: IAudioSessionManager2 = match device.Activate(CLSCTX_ALL, None) {
-                    Ok(mgr) => mgr,
-                    Err(_) => continue,
-                };
-
-                let session_enum = match session_manager.GetSessionEnumerator() {
-                    Ok(enumerator) => enumerator,
-                    Err(_) => continue,
-                };
-
-                let count = session_enum.GetCount().unwrap_or(0);
-
-                for i in 0..count {
-                    if let Ok(session_control) = session_enum.GetSession(i) {
-                        if let Ok(session_control2) = session_control.cast::<IAudioSessionControl2>() {
-                            // Determine whether this session belongs to the target application
-                            let should_update = if let Some(target_pid) = target_process_id {
-                                // Match by process ID to capture ALL sessions of the app
-                                let pid = session_control2.GetProcessId().unwrap_or(0);
-                                pid == target_pid
-                            } else {
-                                // Fallback: match by exact session ID if not in cache
-                                let current_session_id = match session_control2.GetSessionInstanceIdentifier() {
-                                    Ok(pwstr) => {
-                                        let s = pwstr.to_string()
-                                            .unwrap_or_else(|_| format!("session_{}", i));
-                                        CoTaskMemFree(Some(pwstr.0 as *const core::ffi::c_void));
-                                        s
-                                    }
-                                    Err(_) => format!("session_{}", i),
-                                };
-                                current_session_id == session_id
-                            };
-
-                            if should_update {
-                                if let Ok(simple_volume) = session_control.cast::<ISimpleAudioVolume>() {
-                                    match simple_volume.SetMasterVolume(volume, std::ptr::null()) {
-                                        Ok(()) => { updated_count += 1; }
-                                        Err(e) => {
-                                            tracing::warn!("[Audio] SetMasterVolume failed: {}", e);
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-            } // End device loop
-
-            if updated_count > 0 {
-                // Update all cached sessions for this process
-                if let Some(target_pid) = target_process_id {
-                    for session in self.sessions.values_mut() {
-                        if session.process_id == target_pid {
-                            session.volume = volume;
-                        }
-                    }
-                } else if let Some(session) = self.sessions.get_mut(session_id) {
-                    session.volume = volume;
-                }
-                Ok(())
-            } else {
-                Err(format!("No sessions updated for: {}", session_id))
+        let mut updated = 0;
+        for interface in interfaces {
+            match call(interface) {
+                Ok(()) => updated += 1,
+                // A session that has ended since the last enumeration fails
+                // here. The caller re-enumerates and retries rather than
+                // treating one dead interface as a failed write.
+                Err(error) => tracing::debug!("[Audio] Session call failed: {}", error),
             }
         }
+        updated
+    }
+
+    /// Set volume for all audio sessions belonging to the same process as the target session.
+    fn set_session_volume(&mut self, session_id: &str, volume: f32) -> std::result::Result<(), String> {
+        let volume = volume.clamp(0.0, 1.0);
+        let apply = |v: &ISimpleAudioVolume| unsafe { v.SetMasterVolume(volume, std::ptr::null()) };
+
+        let mut updated = self.apply_to_process(session_id, apply);
+        if updated == 0 {
+            // Either the session appeared after the last enumeration, or its
+            // interfaces were invalidated by a device change.
+            self.enumerate_sessions()?;
+            updated = self.apply_to_process(session_id, apply);
+        }
+
+        if updated == 0 {
+            return Err(format!("No sessions updated for: {}", session_id));
+        }
+
+        if let Some(process_id) = self.sessions.get(session_id).map(|s| s.process_id) {
+            for session in self.sessions.values_mut() {
+                if session.process_id == process_id {
+                    session.volume = volume;
+                }
+            }
+        }
+        Ok(())
     }
 
     /// Mute or unmute all audio sessions belonging to the same process as the target session.
     fn set_session_mute(&mut self, session_id: &str, muted: bool) -> std::result::Result<(), String> {
-        // Look up the target process ID from the session cache
-        let target_process_id = self.sessions.get(session_id).map(|s| s.process_id);
+        let apply = |v: &ISimpleAudioVolume| unsafe { v.SetMute(BOOL(muted as i32), std::ptr::null()) };
 
-        unsafe {
-            let enumerator = self.get_enumerator()?;
+        let mut updated = self.apply_to_process(session_id, apply);
+        if updated == 0 {
+            self.enumerate_sessions()?;
+            updated = self.apply_to_process(session_id, apply);
+        }
 
-            let device_collection = enumerator
-                .EnumAudioEndpoints(eRender, DEVICE_STATE_ACTIVE)
-                .map_err(|e: Error| format!("Failed to enumerate audio endpoints: {}", e))?;
+        if updated == 0 {
+            return Err(format!("No sessions updated for: {}", session_id));
+        }
 
-            let device_count = device_collection.GetCount().unwrap_or(0);
-            let mut updated_count: u32 = 0;
-
-            for device_index in 0..device_count {
-                let device = match device_collection.Item(device_index) {
-                    Ok(dev) => dev,
-                    Err(_) => continue,
-                };
-
-                let session_manager: IAudioSessionManager2 = match device.Activate(CLSCTX_ALL, None) {
-                    Ok(mgr) => mgr,
-                    Err(_) => continue,
-                };
-
-                let session_enum = match session_manager.GetSessionEnumerator() {
-                    Ok(enumerator) => enumerator,
-                    Err(_) => continue,
-                };
-
-                let count = session_enum.GetCount().unwrap_or(0);
-
-                for i in 0..count {
-                    if let Ok(session_control) = session_enum.GetSession(i) {
-                        if let Ok(session_control2) = session_control.cast::<IAudioSessionControl2>() {
-                            // Determine whether this session belongs to the target application
-                            let should_update = if let Some(target_pid) = target_process_id {
-                                let pid = session_control2.GetProcessId().unwrap_or(0);
-                                pid == target_pid
-                            } else {
-                                let current_session_id = match session_control2.GetSessionInstanceIdentifier() {
-                                    Ok(pwstr) => {
-                                        let s = pwstr.to_string()
-                                            .unwrap_or_else(|_| format!("session_{}", i));
-                                        CoTaskMemFree(Some(pwstr.0 as *const core::ffi::c_void));
-                                        s
-                                    }
-                                    Err(_) => format!("session_{}", i),
-                                };
-                                current_session_id == session_id
-                            };
-
-                            if should_update {
-                                if let Ok(simple_volume) = session_control.cast::<ISimpleAudioVolume>() {
-                                    match simple_volume.SetMute(BOOL(muted as i32), std::ptr::null()) {
-                                        Ok(()) => { updated_count += 1; }
-                                        Err(e) => {
-                                            tracing::warn!("[Audio] SetMute failed: {}", e);
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-            } // End device loop
-
-            if updated_count > 0 {
-                // Update all cached sessions for this process
-                if let Some(target_pid) = target_process_id {
-                    for session in self.sessions.values_mut() {
-                        if session.process_id == target_pid {
-                            session.is_muted = muted;
-                        }
-                    }
-                } else if let Some(session) = self.sessions.get_mut(session_id) {
+        if let Some(process_id) = self.sessions.get(session_id).map(|s| s.process_id) {
+            for session in self.sessions.values_mut() {
+                if session.process_id == process_id {
                     session.is_muted = muted;
                 }
-                Ok(())
-            } else {
-                Err(format!("No sessions updated for: {}", session_id))
             }
         }
+        Ok(())
     }
+
 
     /// Enumerates active audio sessions and emits an `audio-state-updated` Tauri event
     /// to the frontend only when the session list has changed since the last emission.
@@ -1106,6 +1037,8 @@ impl AudioManager {
         // Clear internal caches
         self.sessions.clear();
         self.sessions.shrink_to_fit();
+        self.volume_cache.clear();
+        self.volume_cache.shrink_to_fit();
 
         self.enumerate_calls = 0;
         self.last_logged_counts = None;

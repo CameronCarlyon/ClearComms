@@ -1216,10 +1216,20 @@
 
       const volumeToSend = queued;
 
+      // Mute follows volume across zero, so during an ordinary drag the desired
+      // state is unchanged on every tick. Writing it anyway doubled the calls on
+      // this path, and each one walks the audio graph on the Rust side.
+      const desiredMute = volumeToSend === 0;
+      const muteNeedsWrite = currentState.lastSentMute !== desiredMute;
+
       (async () => {
         try {
           await invokeSetVolume(sessionId, volumeToSend);
-          await invokeSetMute(sessionId, volumeToSend === 0);
+          if (muteNeedsWrite) {
+            await invokeSetMute(sessionId, desiredMute);
+            const stateAfterWrite = liveVolumeState.get(sessionId);
+            if (stateAfterWrite) stateAfterWrite.lastSentMute = desiredMute;
+          }
         } catch (error) {
           console.error(`Error applying live volume for ${sessionId}:`, error);
         } finally {
@@ -1489,6 +1499,12 @@
     // Cancel any ongoing volume animation (e.g. hardware input) before toggling mute
     cancelVolumeAnimation(sessionId);
     cancelMuteAnimation(sessionId);
+
+    // Mute is about to change from outside the live-volume path, so what that
+    // path last wrote no longer describes Windows and must not be matched
+    // against.
+    const liveState = liveVolumeState.get(sessionId);
+    if (liveState) liveState.lastSentMute = undefined;
 
     try {
       // Two-way sim sync: local mute gestures write through to the function's
@@ -1883,6 +1899,12 @@
     if (session.is_muted === shouldMute) return false;
 
     session.is_muted = shouldMute;
+
+    // This write and the live-volume path target the same Windows state, so the
+    // latter's record of what it last sent is now out of date.
+    const liveState = liveVolumeState.get(session.session_id);
+    if (liveState) liveState.lastSentMute = shouldMute;
+
     invokeSetMute(session.session_id, shouldMute).catch(e =>
       console.error("Error applying auto-mute:", e));
     return true;
