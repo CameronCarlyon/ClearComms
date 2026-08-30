@@ -909,7 +909,20 @@ fn main() {
 
            // The window starts hidden, so without this the app appears not to
            // have launched at all.
-           show_launch_notification(app.handle());
+           //
+           // Raised off the setup path. The first toast in a process pays a
+           // one-time activation of the Windows notification platform, measured
+           // at around 55ms, and setup() has to return before the event loop
+           // starts and anything paints. Nothing waits on the notification, so
+           // it can take its time on its own thread.
+           let app_for_notification = app.handle().clone();
+           if let Err(error) = std::thread::Builder::new()
+               .name("launch-notify".to_string())
+               .stack_size(128 * 1024)
+               .spawn(move || show_launch_notification(&app_for_notification))
+           {
+               tracing::warn!("[Notify] Could not spawn launch notification thread: {}", error);
+           }
             
             // Follow Windows theme changes so the tray icon keeps contrast
             // against the notification area.

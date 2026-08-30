@@ -432,8 +432,19 @@ struct InputThread {
 /// Global handle to the input polling thread.
 static INPUT_THREAD: Mutex<Option<InputThread>> = Mutex::new(None);
 
-/// Initialise input system, enumerate devices, and start the dedicated polling thread.
-/// The polling thread emits "input-axis-data" Tauri events at ~50ms intervals.
+/// Start the dedicated input polling thread, which emits "input-axis-data"
+/// Tauri events as hardware moves.
+///
+/// Opening the HID API and enumerating devices costs around 260ms: a scan of
+/// the whole HID bus plus a probe of all sixteen joystick slots. That used to
+/// happen here, with the frontend awaiting it, which put it squarely on the
+/// boot path for something nothing on screen depends on. It now happens on the
+/// polling thread instead, so this returns as soon as the thread is spawned and
+/// the first axis event simply arrives a fraction of a second later.
+///
+/// The consequence is that a HID failure no longer fails startup. It is logged
+/// and the thread exits, leaving the application running without hardware
+/// input, which is a better outcome than refusing to start the mixer.
 #[tauri::command]
 pub fn init_input(app: tauri::AppHandle) -> Result<String, String> {
     // Stop any thread from a previous init (e.g. a dev-mode reload) before
@@ -449,21 +460,6 @@ pub fn init_input(app: tauri::AppHandle) -> Result<String, String> {
         shutdown_input_thread();
     }
 
-    tracing::info!("[Input] Initialising HID input manager...");
-    let mut manager = HidInputManager::new()?;
-
-    tracing::info!("[Input] Enumerating devices...");
-    manager.enumerate_devices()?;
-
-    let device_count = manager.get_devices().len();
-    tracing::info!("[Input] Found {} joystick device(s)", device_count);
-
-    if device_count > 0 {
-        for device in manager.get_devices() {
-            tracing::info!("[Input]   - {}", device.to_display_string());
-        }
-    }
-
     // Create shutdown flag
     let shutdown = Arc::new(AtomicBool::new(false));
     let (done_tx, done_rx) = mpsc::channel::<()>();
@@ -473,6 +469,29 @@ pub fn init_input(app: tauri::AppHandle) -> Result<String, String> {
     let join_handle = std::thread::Builder::new()
         .name("input-poll".to_string())
         .spawn(move || {
+            tracing::info!("[Input] Initialising HID input manager...");
+            let mut manager = match HidInputManager::new() {
+                Ok(manager) => manager,
+                Err(error) => {
+                    tracing::error!("[Input] HID API unavailable, hardware input disabled: {}", error);
+                    let _ = done_tx.send(());
+                    return;
+                }
+            };
+
+            tracing::info!("[Input] Enumerating devices...");
+            if let Err(error) = manager.enumerate_devices() {
+                tracing::error!("[Input] Device enumeration failed, hardware input disabled: {}", error);
+                let _ = done_tx.send(());
+                return;
+            }
+
+            let device_count = manager.get_devices().len();
+            tracing::info!("[Input] Found {} joystick device(s)", device_count);
+            for device in manager.get_devices() {
+                tracing::info!("[Input]   - {}", device.to_display_string());
+            }
+
             tracing::info!("[Input] Dedicated input polling thread running");
 
             loop {
@@ -535,7 +554,9 @@ pub fn init_input(app: tauri::AppHandle) -> Result<String, String> {
         });
     }
 
-    Ok(format!("Input initialised successfully ({} controllers found)", device_count))
+    // No device count to report: enumeration happens on the thread now, and the
+    // caller only checks whether this failed.
+    Ok("Input polling thread started".to_string())
 }
 
 /// Get the current status of input system

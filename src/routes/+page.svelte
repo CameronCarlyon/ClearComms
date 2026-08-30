@@ -606,10 +606,16 @@
         return;
       }
 
-      // Normal initialisation path
-      await initTheme();
-
+      // Normal initialisation path.
+      //
+      // The theme call is independent of the stored configuration, so it runs
+      // alongside it rather than in front of it.
+      //
+      // Window pin state is deliberately not fetched here. It starts false on
+      // both sides, and the backend pushes window-pin-changed on every change,
+      // so a fetch at boot can only confirm what is already true.
       await Promise.all([
+        initTheme(),
         loadMappings(),
         loadButtonMappings(),
         loadPinnedApps(),
@@ -617,7 +623,6 @@
         loadSimAssignments()
       ]);
 
-      await fetchWindowPinnedState();
       await autoInitialise();
 
       // Measure layout dimensions once on mount
@@ -744,6 +749,14 @@
     try {
       initStatus = "Initialising subsystems...";
 
+      // Listeners go up before the subsystems that feed them. The audio thread
+      // enumerates and emits as its first act, and that first enumeration is
+      // the expensive one: every session it has not seen before needs its
+      // executable path, version resource and sometimes a window title
+      // resolved. Registering afterwards threw that result away and paid for a
+      // second full walk to get it back.
+      await startPolling();
+
       // Input and audio are independent: start both immediately
       const [inputResult, audioResult] = await Promise.allSettled([
         invoke<string>("init_input"),
@@ -756,17 +769,12 @@
 
       if (audioResult.status === "fulfilled") {
         audioInitialised = true;
-        // The audio thread emits the initial session list immediately after init,
-        // but fetch once here as a guarantee in case the event arrives before the
-        // listener is registered below.
-        await refreshAudioSessions();
       } else {
         console.warn("Audio manager failed (non-critical):", audioResult.reason);
       }
 
       initStatus = "Starting real-time monitoring...";
-      startPolling();
-      
+
       // Start listening for simulator status change events
       stopSimStatusListenerFn = await startSimStatusListener();
 
@@ -791,34 +799,42 @@
     applyButtonMappings();
   }
   
-  function startPolling() {
+  async function startPolling() {
     if (pollingInterval) return;
-    
+
     isPolling = true;
 
-    // Listen for axis data events emitted by the dedicated Rust input thread.
-    // The Rust thread only emits when values have changed, so this fires at
-    // most at the poll cadence and only when hardware is being moved.
-    listen<AxisData[]>('input-axis-data', (event) => {
-      handleAxisData(event.payload);
-    }).then((unlisten) => {
-      unlistenInputAxis = unlisten;
-    });
+    // Awaited, not fired and forgotten. These go up before the subsystems that
+    // emit into them, and registration is only complete when the promise
+    // settles: returning early would leave the same gap that moving this call
+    // earlier was meant to close.
+    await Promise.all([
+      // Axis data from the dedicated Rust input thread. That thread only emits
+      // when a value has changed, so this fires at most at the poll cadence and
+      // only while hardware is being moved.
+      listen<AxisData[]>('input-axis-data', (event) => {
+        handleAxisData(event.payload);
+      }).then((unlisten) => {
+        unlistenInputAxis = unlisten;
+      }).catch((e) => {
+        console.error("Failed to subscribe to input-axis-data:", e);
+      }),
 
-    // Listen for LVar value changes pushed by the SimConnect thread whenever a
-    // subscribed simulator function's LVar changes in the simulator.
-    listen<LvarValueEvent>('lvar-value-changed', (event) => {
-      handleLvarValueChanged(event.payload);
-    }).then((unlisten) => {
-      unlistenLvarValue = unlisten;
-    }).catch((e) => {
-      console.error("Failed to subscribe to lvar-value-changed:", e);
-    });
+      // LVar changes pushed by the SimConnect thread whenever a subscribed
+      // simulator function moves.
+      listen<LvarValueEvent>('lvar-value-changed', (event) => {
+        handleLvarValueChanged(event.payload);
+      }).then((unlisten) => {
+        unlistenLvarValue = unlisten;
+      }).catch((e) => {
+        console.error("Failed to subscribe to lvar-value-changed:", e);
+      }),
 
-    // Listen for audio session push events from the Rust audio COM thread.
-    // The backend emits this when it detects topology changes (device add/remove,
-    // session start/stop, external volume change): no frontend polling required.
-    startAudioMonitoring();
+      // Audio session pushes from the Rust audio COM thread, sent on topology
+      // changes and on the thread's own first enumeration.
+      startAudioMonitoring(),
+    ]);
+
     startMemoryProfiler();
   }
 
@@ -847,37 +863,22 @@
    * COM thread whenever the session topology or volumes change. Replaces the
    * previous setInterval-based approach which polled every 1 second.
    */
-  function startAudioMonitoring() {
+  async function startAudioMonitoring() {
     if (unlistenAudioState) return;
 
-    listen<AudioSession[]>('audio-state-updated', async (event) => {
-      await handleAudioStateUpdate(event.payload);
-    }).then((unlisten) => {
-      unlistenAudioState = unlisten;
-    }).catch((e) => {
+    try {
+      unlistenAudioState = await listen<AudioSession[]>('audio-state-updated', async (event) => {
+        await handleAudioStateUpdate(event.payload);
+      });
+    } catch (e) {
       console.error("Failed to subscribe to audio-state-updated:", e);
-    });
+    }
   }
 
   function stopAudioMonitoring() {
     if (unlistenAudioState) {
       unlistenAudioState();
       unlistenAudioState = null;
-    }
-  }
-
-  /**
-   * Fetch the latest audio sessions from the backend and apply them.
-   * Used on startup and as a manual force-refresh. Ongoing updates arrive
-   * via the `audio-state-updated` push event handled by `handleAudioStateUpdate`.
-   */
-  async function refreshAudioSessions() {
-    try {
-      const sessions = await invoke<AudioSession[]>("get_audio_sessions");
-      await handleAudioStateUpdate(sessions);
-    } catch (error) {
-      console.error("Error getting audio sessions:", error);
-      errorMsg = `Audio error: ${error}`;
     }
   }
 
