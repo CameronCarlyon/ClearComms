@@ -677,7 +677,7 @@ where
 {
     match state.lock() {
         Ok(mut guard) => {
-            f(&mut *guard);
+            f(&mut guard);
         }
         Err(e) => {
             tracing::error!("[SimConnect] SimState mutex poisoned: {}", e);
@@ -695,7 +695,7 @@ where
 {
     let response = match state.lock() {
         Ok(mut guard) => {
-            f(&mut *guard);
+            f(&mut guard);
 
             SimStatusResponse {
                 connected: matches!(guard.connection, ConnectionState::Connected),

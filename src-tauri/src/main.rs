@@ -881,7 +881,7 @@ fn main() {
                                 } else {
                                     // Window is hidden and wasn't just hidden - show it
                                     tracing::debug!("[Tray] Showing window");
-                                    let _ = show_main_window_internal(&app);
+                                    let _ = show_main_window_internal(app);
                                 }
                             }
                         }
@@ -980,7 +980,7 @@ fn main() {
                     } else if !focused {
                         // Window not pinned and lost focus - hide it and record timestamp
                         tracing::debug!("[Window] Lost focus, hiding");
-                        let _ = hide_main_window_internal(&window.app_handle(), Some(&last_hidden_for_events));
+                        let _ = hide_main_window_internal(window.app_handle(), Some(&last_hidden_for_events));
                     }
                 }
                 _ => {}
