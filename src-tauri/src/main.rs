@@ -747,9 +747,17 @@ fn main() {
     //
     // Verbosity comes from RUST_LOG when set, e.g.
     //   RUST_LOG=ClearComms=debug,ClearComms::simconnect=info
+    //
+    // The buffer is sized explicitly. tracing-appender defaults to 128,000
+    // lines and allocates the whole bounded channel upfront, which costs about
+    // 4MB whether or not anything is ever logged. This application produces
+    // nowhere near that volume, and 1,000 lines is more than enough to absorb a
+    // burst without the writer thread falling behind.
     #[cfg(debug_assertions)]
     let _log_guard = {
-        let (writer, guard) = tracing_appender::non_blocking(std::io::stdout());
+        let (writer, guard) = tracing_appender::non_blocking::NonBlockingBuilder::default()
+            .buffered_lines_limit(1_000)
+            .finish(std::io::stdout());
         tracing_subscriber::fmt()
             .with_env_filter(
                 tracing_subscriber::EnvFilter::try_from_default_env().unwrap_or_else(|_| {
