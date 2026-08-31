@@ -54,9 +54,11 @@ use window_utils::{position_window_bottom_right, get_display_info_for_window, se
 /// focus-change handler.
 static PIN_STATE: AtomicBool = AtomicBool::new(false);
 
-/// Shutdown signal for the theme monitor thread.
-/// Set to `true` during app shutdown so the thread exits cleanly.
-static THEME_MONITOR_SHUTDOWN: AtomicBool = AtomicBool::new(false);
+/// Win32 event handle (as isize) that wakes the theme monitor for shutdown.
+static THEME_MONITOR_SHUTDOWN_EVENT: AtomicIsize = AtomicIsize::new(0);
+
+/// JoinHandle for the theme monitor, so shutdown can wait for it.
+static THEME_MONITOR_THREAD: Mutex<Option<std::thread::JoinHandle<()>>> = Mutex::new(None);
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Sim Detection Shutdown Handles
@@ -605,29 +607,57 @@ fn quit_application(app: tauri::AppHandle) {
     perform_graceful_quit(&app);
 }
 
-/// Signal all background threads to shut down cleanly, then exit the process.
-pub fn perform_graceful_quit(app: &tauri::AppHandle) {
-    THEME_MONITOR_SHUTDOWN.store(true, Ordering::Relaxed);
+/// Stop the subsystems that own blocking OS resources.
+///
+/// Joining matters because `app.exit(0)` calls `ExitProcess`, which suspends
+/// every other thread wherever it happens to be, including inside a COM or FFI
+/// call.
+fn shutdown_core_subsystems(app: &tauri::AppHandle) {
     audio_management::shutdown_audio_thread();
     hardware_input::shutdown_input_thread();
-    
-    // Signal the SimConnect lifecycle controller to shut down the thread.
+
     if let Some(session) = app.try_state::<std::sync::Arc<std::sync::Mutex<Option<simconnect::SimConnectSession>>>>() {
         simconnect::shutdown_simconnect_thread(&session);
     }
-    
-    // Signal the sim detection thread to shut down and join it.
-    // This is critical: without joining, the thread may become orphaned
-    // when app.exit(0) terminates the process.
+}
+
+/// Stop the simulator detection thread.
+///
+/// `join` is false only for the dev-mode reload, which keeps the process alive
+/// and so has nothing to protect the thread from.
+fn shutdown_sim_detection(join: bool) {
     let shutdown_event = SIM_DETECTION_SHUTDOWN_EVENT.load(Ordering::Relaxed);
-    if shutdown_event != 0 {
-        if let Ok(mut thread_guard) = SIM_DETECTION_THREAD.lock() {
-            if let Some(thread) = thread_guard.take() {
-                sim_detection::shutdown_sim_detection_thread(shutdown_event, Some(thread));
-            }
-        }
+    if shutdown_event == 0 {
+        return;
     }
-    
+
+    let Ok(mut thread_guard) = SIM_DETECTION_THREAD.lock() else {
+        return;
+    };
+    let Some(thread) = thread_guard.take() else {
+        return;
+    };
+
+    if join {
+        sim_detection::shutdown_sim_detection_thread(shutdown_event, Some(thread));
+    } else {
+        sim_detection::signal_shutdown(shutdown_event);
+    }
+}
+
+/// Stop the theme monitor and wait for it.
+fn shutdown_theme_monitor() {
+    let shutdown_event = THEME_MONITOR_SHUTDOWN_EVENT.swap(0, Ordering::Relaxed);
+    let thread = THEME_MONITOR_THREAD.lock().ok().and_then(|mut guard| guard.take());
+    theme::shutdown_theme_monitor(shutdown_event, thread);
+}
+
+/// Signal all background threads to shut down cleanly, then exit the process.
+pub fn perform_graceful_quit(app: &tauri::AppHandle) {
+    shutdown_theme_monitor();
+    shutdown_core_subsystems(app);
+    shutdown_sim_detection(true);
+
     app.exit(0);
 }
 
@@ -637,22 +667,8 @@ fn show_launch_notification(app: &tauri::AppHandle) {
 
 pub fn restart_application_internal(app: &tauri::AppHandle) -> Result<(), String> {
     if tauri::is_dev() {
-        audio_management::shutdown_audio_thread();
-        hardware_input::shutdown_input_thread();
-        // Signal the SimConnect lifecycle controller to shut down the thread.
-        if let Some(session) = app.try_state::<std::sync::Arc<std::sync::Mutex<Option<simconnect::SimConnectSession>>>>() {
-            simconnect::shutdown_simconnect_thread(&session);
-        }
-
-        // Signal the sim detection thread to shut down (dev mode: no join, as restart continues)
-        let shutdown_event = SIM_DETECTION_SHUTDOWN_EVENT.load(Ordering::Relaxed);
-        if shutdown_event != 0 {
-            if let Ok(mut thread_guard) = SIM_DETECTION_THREAD.lock() {
-                if let Some(_thread) = thread_guard.take() {
-                    sim_detection::signal_shutdown(shutdown_event);
-                }
-            }
-        }
+        shutdown_core_subsystems(app);
+        shutdown_sim_detection(false);
 
         let Some(window) = app.get_webview_window("main") else {
             return Err("Main window not found".to_string());
@@ -669,34 +685,29 @@ pub fn restart_application_internal(app: &tauri::AppHandle) -> Result<(), String
         return Ok(());
     }
 
-    THEME_MONITOR_SHUTDOWN.store(true, Ordering::Relaxed);
-    audio_management::shutdown_audio_thread();
-    hardware_input::shutdown_input_thread();
-    // Signal the SimConnect lifecycle controller to shut down the thread.
-    if let Some(session) = app.try_state::<std::sync::Arc<std::sync::Mutex<Option<simconnect::SimConnectSession>>>>() {
-        simconnect::shutdown_simconnect_thread(&session);
-    }
-
-    // Signal the sim detection thread to shut down and join it (release mode: clean restart)
-    let shutdown_event = SIM_DETECTION_SHUTDOWN_EVENT.load(Ordering::Relaxed);
-    if shutdown_event != 0 {
-        if let Ok(mut thread_guard) = SIM_DETECTION_THREAD.lock() {
-            if let Some(thread) = thread_guard.take() {
-                sim_detection::shutdown_sim_detection_thread(shutdown_event, Some(thread));
-            }
-        }
-    }
+    shutdown_theme_monitor();
+    shutdown_core_subsystems(app);
+    shutdown_sim_detection(true);
 
     app.request_restart();
     Ok(())
 }
 
-/// Open a URL in the default browser and bring it to the foreground
+/// Open a URL in the default browser and bring it to the foreground.
+///
+/// Restricted to https. `ShellExecuteW` with the "open" verb will act on
+/// anything the shell knows how to launch, local executables included, so the
+/// scheme is checked before the string crosses into it. Every caller passes a
+/// documentation or repository link.
 #[tauri::command]
 async fn open_url(url: String) -> Result<(), String> {
     use std::os::windows::ffi::OsStrExt;
     use std::ffi::OsStr;
-    
+
+    if !url.starts_with("https://") {
+        return Err(format!("Refusing to open non-https URL: {}", url));
+    }
+
     // Use ShellExecuteW with SW_SHOWNORMAL to ensure the browser window is shown and focused
     let url_wide: Vec<u16> = OsStr::new(&url)
         .encode_wide()
@@ -736,9 +747,17 @@ fn main() {
     //
     // Verbosity comes from RUST_LOG when set, e.g.
     //   RUST_LOG=ClearComms=debug,ClearComms::simconnect=info
+    //
+    // The buffer is sized explicitly. tracing-appender defaults to 128,000
+    // lines and allocates the whole bounded channel upfront, which costs about
+    // 4MB whether or not anything is ever logged. This application produces
+    // nowhere near that volume, and 1,000 lines is more than enough to absorb a
+    // burst without the writer thread falling behind.
     #[cfg(debug_assertions)]
     let _log_guard = {
-        let (writer, guard) = tracing_appender::non_blocking(std::io::stdout());
+        let (writer, guard) = tracing_appender::non_blocking::NonBlockingBuilder::default()
+            .buffered_lines_limit(1_000)
+            .finish(std::io::stdout());
         tracing_subscriber::fmt()
             .with_env_filter(
                 tracing_subscriber::EnvFilter::try_from_default_env().unwrap_or_else(|_| {
@@ -862,7 +881,7 @@ fn main() {
                                 } else {
                                     // Window is hidden and wasn't just hidden - show it
                                     tracing::debug!("[Tray] Showing window");
-                                    let _ = show_main_window_internal(&app);
+                                    let _ = show_main_window_internal(app);
                                 }
                             }
                         }
@@ -890,47 +909,47 @@ fn main() {
 
            // The window starts hidden, so without this the app appears not to
            // have launched at all.
-           show_launch_notification(app.handle());
+           //
+           // Raised off the setup path. The first toast in a process pays a
+           // one-time activation of the Windows notification platform, measured
+           // at around 55ms, and setup() has to return before the event loop
+           // starts and anything paints. Nothing waits on the notification, so
+           // it can take its time on its own thread.
+           let app_for_notification = app.handle().clone();
+           if let Err(error) = std::thread::Builder::new()
+               .name("launch-notify".to_string())
+               .stack_size(128 * 1024)
+               .spawn(move || show_launch_notification(&app_for_notification))
+           {
+               tracing::warn!("[Notify] Could not spawn launch notification thread: {}", error);
+           }
             
-            // Spawn a background thread to monitor Windows theme changes
-            // and update the tray icon accordingly
+            // Follow Windows theme changes so the tray icon keeps contrast
+            // against the notification area.
             let app_handle = app.handle().clone();
-            std::thread::Builder::new()
-                .name("theme-monitor".to_string())
-                .spawn(move || {
-                loop {
-                    std::thread::sleep(Duration::from_secs(2));
-
-                    // Check shutdown flag each iteration so the thread exits
-                    // cleanly when the app is closed
-                    if THEME_MONITOR_SHUTDOWN.load(Ordering::Relaxed) {
-                        tracing::info!("[Theme] Shutdown signal received, exiting theme monitor");
-                        break;
-                    }
-                    
-                    // Only update if in Automatic mode and system theme changed
-                    if theme::get_theme_mode() == theme::ThemeMode::Automatic {
-                        if theme::update_resolved_theme() {
-                            // Theme changed - update tray icon on the main thread
-                            let app_for_tray = app_handle.clone();
-                            let _ = app_handle.run_on_main_thread(move || {
-                                match app_for_tray.tray_by_id(TRAY_ICON_ID) {
-                                    Some(tray) => {
-                                        let new_icon = load_theme_appropriate_icon();
-                                        if let Err(e) = tray.set_icon(Some(new_icon)) {
-                                            tracing::error!("[Theme] Failed to update tray icon: {}", e);
-                                        }
-                                    }
-                                    None => {
-                                        tracing::warn!("[Theme] Could not find tray icon with id '{}'", TRAY_ICON_ID);
-                                    }
-                                }
-                            });
+            if let Some((shutdown_event, thread)) = theme::spawn_theme_monitor(move || {
+                // The notification fires on the registry's own thread; tray
+                // updates belong on the main one.
+                let app_for_tray = app_handle.clone();
+                let _ = app_handle.run_on_main_thread(move || {
+                    match app_for_tray.tray_by_id(TRAY_ICON_ID) {
+                        Some(tray) => {
+                            if let Err(e) = tray.set_icon(Some(load_theme_appropriate_icon())) {
+                                tracing::error!("[Theme] Failed to update tray icon: {}", e);
+                            }
+                        }
+                        None => {
+                            tracing::warn!("[Theme] Could not find tray icon with id '{}'", TRAY_ICON_ID);
                         }
                     }
+                });
+            }) {
+                THEME_MONITOR_SHUTDOWN_EVENT.store(shutdown_event, Ordering::Relaxed);
+                if let Ok(mut guard) = THEME_MONITOR_THREAD.lock() {
+                    *guard = Some(thread);
                 }
-            }).expect("Failed to spawn theme monitor thread");
-            
+            }
+
             Ok(())
         })
         .on_window_event(move |window, event| {
@@ -961,7 +980,7 @@ fn main() {
                     } else if !focused {
                         // Window not pinned and lost focus - hide it and record timestamp
                         tracing::debug!("[Window] Lost focus, hiding");
-                        let _ = hide_main_window_internal(&window.app_handle(), Some(&last_hidden_for_events));
+                        let _ = hide_main_window_internal(window.app_handle(), Some(&last_hidden_for_events));
                     }
                 }
                 _ => {}

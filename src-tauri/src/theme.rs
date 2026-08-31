@@ -216,6 +216,168 @@ fn is_windows_light_mode_raw() -> bool {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// System Theme Monitor
+// ─────────────────────────────────────────────────────────────────────────────
+
+// Raw FFI for CreateEventW, matching the other subsystems: the windows crate
+// path for it varies by version.
+#[cfg(target_os = "windows")]
+extern "system" {
+    fn CreateEventW(
+        lpEventAttributes: *mut std::ffi::c_void,
+        bManualReset: i32,
+        bInitialState: i32,
+        lpName: *const u16,
+    ) -> *mut std::ffi::c_void;
+}
+
+/// Watch the Windows theme setting, calling `on_change` when the resolved theme
+/// actually changes.
+///
+/// The thread blocks on a registry change notification, so it costs nothing
+/// until the user changes their theme. It previously opened the key, read a
+/// value and closed it every two seconds for the life of the process, to detect
+/// something that changes perhaps twice a day.
+///
+/// Returns the shutdown event handle, stored as `isize` so it is `Send`, and
+/// the thread handle. Both are owned by the caller until it calls
+/// [`shutdown_theme_monitor`].
+#[cfg(target_os = "windows")]
+pub fn spawn_theme_monitor<F>(on_change: F) -> Option<(isize, std::thread::JoinHandle<()>)>
+where
+    F: Fn() + Send + 'static,
+{
+    use windows::core::w;
+    use windows::Win32::Foundation::{CloseHandle, HANDLE, WAIT_OBJECT_0};
+    use windows::Win32::System::Registry::{
+        RegCloseKey, RegNotifyChangeKeyValue, RegOpenKeyExW, HKEY, HKEY_CURRENT_USER, KEY_NOTIFY,
+        KEY_READ, REG_NOTIFY_CHANGE_LAST_SET,
+    };
+    use windows::Win32::System::Threading::WaitForMultipleObjects;
+
+    // Manual reset: shutdown is a latch, not a pulse.
+    let shutdown_event = unsafe { CreateEventW(std::ptr::null_mut(), 1, 0, std::ptr::null()) };
+    if shutdown_event.is_null() {
+        tracing::error!("[Theme] Failed to create shutdown event");
+        return None;
+    }
+
+    // Auto reset: each notification is consumed by the wait that observes it.
+    let change_event = unsafe { CreateEventW(std::ptr::null_mut(), 0, 0, std::ptr::null()) };
+    if change_event.is_null() {
+        tracing::error!("[Theme] Failed to create change event");
+        unsafe {
+            CloseHandle(HANDLE(shutdown_event)).ok();
+        }
+        return None;
+    }
+
+    let shutdown_int = shutdown_event as isize;
+    let change_int = change_event as isize;
+
+    let spawned = std::thread::Builder::new()
+        .name("theme-monitor".to_string())
+        // A registry wait and a value read; the default reserve is far more
+        // address space than this can use.
+        .stack_size(128 * 1024)
+        .spawn(move || {
+            let shutdown = HANDLE(shutdown_int as *mut std::ffi::c_void);
+            let change = HANDLE(change_int as *mut std::ffi::c_void);
+
+            let mut key = HKEY::default();
+            let opened = unsafe {
+                RegOpenKeyExW(
+                    HKEY_CURRENT_USER,
+                    w!("Software\\Microsoft\\Windows\\CurrentVersion\\Themes\\Personalize"),
+                    0,
+                    KEY_READ | KEY_NOTIFY,
+                    &mut key,
+                )
+            };
+
+            if opened.is_err() {
+                tracing::error!("[Theme] Could not open the Personalize key: theme changes will not be followed");
+                unsafe {
+                    CloseHandle(change).ok();
+                    CloseHandle(shutdown).ok();
+                }
+                return;
+            }
+
+            let handles = [change, shutdown];
+
+            loop {
+                // Re-armed every pass: an asynchronous notification fires once
+                // and must then be requested again.
+                let armed = unsafe {
+                    RegNotifyChangeKeyValue(key, false, REG_NOTIFY_CHANGE_LAST_SET, change, true)
+                };
+                if armed.is_err() {
+                    tracing::error!("[Theme] Failed to arm registry notification: {:?}", armed);
+                    break;
+                }
+
+                let result = unsafe { WaitForMultipleObjects(&handles, false, u32::MAX) };
+
+                if result.0 == WAIT_OBJECT_0.0 + 1 {
+                    break;
+                }
+                if result.0 != WAIT_OBJECT_0.0 {
+                    tracing::warn!("[Theme] Unexpected wait result: {:#010x}", result.0);
+                    break;
+                }
+
+                // The value is read after the notification rather than carried
+                // with it, so a change that lands while this is running is
+                // picked up by this same read.
+                if get_theme_mode() == ThemeMode::Automatic && update_resolved_theme() {
+                    on_change();
+                }
+            }
+
+            unsafe {
+                let _ = RegCloseKey(key);
+                CloseHandle(change).ok();
+                CloseHandle(shutdown).ok();
+            }
+            tracing::info!("[Theme] Theme monitor exited");
+        });
+
+    match spawned {
+        Ok(handle) => Some((shutdown_int, handle)),
+        Err(error) => {
+            tracing::error!("[Theme] Failed to spawn theme monitor: {}", error);
+            unsafe {
+                CloseHandle(HANDLE(change_int as *mut std::ffi::c_void)).ok();
+                CloseHandle(HANDLE(shutdown_int as *mut std::ffi::c_void)).ok();
+            }
+            None
+        }
+    }
+}
+
+/// Signal the theme monitor to exit and wait for it.
+///
+/// The thread closes both event handles itself, so nothing is closed here.
+#[cfg(target_os = "windows")]
+pub fn shutdown_theme_monitor(shutdown_event: isize, thread: Option<std::thread::JoinHandle<()>>) {
+    use windows::Win32::Foundation::HANDLE;
+    use windows::Win32::System::Threading::SetEvent;
+
+    if shutdown_event == 0 {
+        return;
+    }
+
+    unsafe {
+        SetEvent(HANDLE(shutdown_event as *mut std::ffi::c_void)).ok();
+    }
+
+    if let Some(thread) = thread {
+        let _ = thread.join();
+    }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // Tauri Commands
 // ─────────────────────────────────────────────────────────────────────────────
 

@@ -139,7 +139,7 @@ ClearComms employs a three-tier architecture optimised for low-latency native sy
 | **Lifecycle Controller** | `simconnect-ctrl` thread consuming `SimDetectionEvent` | Spawns and tears down the SimConnect connection in response to simulator process transitions |
 | **Command** | 31 `#[tauri::command]` functions | Decoupled IPC interface with typed parameters and returns |
 | **Throttle** | `scheduleLiveVolumeUpdate` (40ms), `writeSimVolume` (120ms trailing) | Rate-limited backend and simulator writes during slider interaction |
-| **Bounded Cache** | `MAX_SESSION_CACHE_SIZE: 1000`, `MAX_CACHE_SIZE: 1000`, `MAX_LVAR_SUBSCRIPTIONS: 64` | Memory leak prevention with automatic eviction and bounded ID ranges |
+| **Bounded Cache** | `MAX_LVAR_SUBSCRIPTIONS: 64`, session and tracking caches bounded by what is live | Bounded ID ranges, and state that cannot outlive the sessions or devices it describes |
 | **Adapter** | `HidInputManager` combining Joystick API + HID API | Unified device abstraction merging data from two distinct APIs |
 | **Interpolation / Easing** | `animateVolumeTo`, `animate_window_resize` | Cubic ease-out transitions for volume and window animations |
 | **Guard / Activation** | `axisActivated` Map (5% threshold), `lvarsSeenNonZero` | Prevents a mapping or LVar from applying until it has proven itself deliberate |
@@ -399,7 +399,9 @@ impl Drop for ProcessHandle {
 
 The `AudioManager` itself implements `Drop` to clear internal caches and release cached COM objects. The COM library (`CoUninitialize`) is called by the `audio-com` thread after the manager is dropped, ensuring proper cleanup on the same thread that called `CoInitializeEx`.
 
-**Session Cache:** Active sessions are maintained in a `HashMap<String, AudioSession>` bounded at `MAX_SESSION_CACHE_SIZE` (1,000 entries). When the cache exceeds this limit, it is pruned to 500 entries. Initial capacity is pre-allocated at 64 entries (`INITIAL_SESSION_CAPACITY`) to avoid early reallocations.
+**Session Cache:** Active sessions are maintained in a `HashMap<String, AudioSession>`, pruned on every enumeration to exactly those still live. That is the bound: the cache can never hold more than the machine currently has open. Initial capacity is pre-allocated at 64 entries (`INITIAL_SESSION_CAPACITY`) to avoid early reallocations.
+
+**Volume Interface Cache:** Enumeration also retains the `ISimpleAudioVolume` interface for every session, keyed by process ID. Volume and mute writes are a map lookup and one call per interface, rather than a walk over every endpoint and session to find the handful that match. The cache is rebuilt by each enumeration, so interfaces for ended sessions are dropped, and cleared on device change, where the old endpoint's interfaces stop being valid. A write that updates nothing re-enumerates once and retries, covering a session that appeared since the last enumeration.
 
 **Device Change Detection:** The `check_device_changed` method compares the current default audio endpoint's device ID against the stored ID. When a device change is detected, the cached COM objects are invalidated and rebuilt via `rebuild_com_cache()`.
 
@@ -639,7 +641,7 @@ Performance-critical tracking state is stored in plain `Map` and `Set` instances
 | `liveVolumeState` | `Map<string, LiveVolumeState>` | Throttle state for live volume updates |
 | `memorySnapshots` | `Array<{timestamp, heapUsed, heapTotal}>` | Dev-mode memory profiler data |
 
-All caches are bounded at `MAX_CACHE_SIZE` (1,000 entries) with enforcement checked every 30 seconds. Caches exceeding the limit are cleared entirely.
+These caches are keyed by device handle, mapping, or live session, so each is bounded by something the machine already limits. Entries for sessions that have ended are pruned when `audio-state-updated` arrives, which is the only moment a session can disappear.
 
 **Persistence Layer:**
 
@@ -732,7 +734,7 @@ This configuration produces smaller binaries at the cost of longer compile times
 
 - Pre-allocated collections with `Vec::with_capacity()` at known initial sizes (`INITIAL_SESSION_CAPACITY: 64`, `INITIAL_DEVICE_CAPACITY: 16`, `INITIAL_HID_DEVICE_CAPACITY: 32`)
 - `HashMap::shrink_to_fit()` called in cleanup methods to release excess capacity
-- Session cache bounded at `MAX_SESSION_CACHE_SIZE: 1,000` with pruning to 500 when exceeded
+- Session and volume interface caches rebuilt from the live session list on every enumeration
 - LVar subscriptions bounded at `MAX_LVAR_SUBSCRIPTIONS: 64`, which also bounds the client data definition and request ID ranges
 - Reduced stack reservations on the two SimConnect threads (256KB / 512KB against the default reserve)
 - `LvarValueEvent` borrows the LVar name from the subscription list rather than cloning it, avoiding an allocation per delivered value
@@ -740,7 +742,7 @@ This configuration produces smaller binaries at the cost of longer compile times
 
 **Frontend:**
 
-- 30-second memory monitor checks all Map/Set cache sizes against `MAX_CACHE_SIZE` (1,000)
+- Tracking state for ended sessions pruned from the `audio-state-updated` handler
 - 5-minute periodic cleanup removes entries for sessions that no longer exist
 - Full cleanup on component destroy: `stopPolling()`, `cleanupAllAnimations()`, `cleanupAllLiveVolumeStates()`, `cleanupAllCaches()`
 - Dev-mode memory profiler samples `performance.memory` every 60 seconds (up to 120 snapshots), warning on >50% heap growth
@@ -757,7 +759,7 @@ This configuration produces smaller binaries at the cost of longer compile times
 | `simconnect-ctrl` | Lifecycle controller; spawns/tears down the connection thread | Blocking `mpsc::recv` | Application |
 | `simconnect` | SimConnect dispatch loop, MobiFlight handshake, LVar I/O | `WaitForMultipleObjects` (4 handles) | Per connection |
 | `window-anim` | Window resize easing; 500ms cubic ease-out at ~240fps | Channel receive | Lazily spawned, then persistent |
-| `theme-monitor` | Windows theme registry polling | 2s interval; `AtomicBool` shutdown | Application |
+| `theme-monitor` | Windows theme registry watch | `WaitForMultipleObjects` on a registry change notification | Application |
 | `menu-defer` | Native tray/context menu display | One-shot | Per menu |
 | Frontend (JS) | Single-threaded event loop; `listen()` for all backend data | Event-driven | Application |
 
@@ -765,7 +767,7 @@ The long-lived threads are spawned during initialisation. Tauri commands are thi
 
 Two stack sizes are reduced from the default reserve: `simconnect-ctrl` to 256KB (it only blocks on a receive and spawns) and `simconnect` to 512KB (generous for the dispatch loop and FFI). These are reservations rather than commitments, so the saving is in virtual address space rather than working set.
 
-**Shutdown ordering.** Every thread exits by explicit signal rather than process termination: Win32 events for `sim-detection`, `simconnect` and `audio-notify`; an `AtomicBool` for `theme-monitor`; a `Shutdown` command variant for `audio-com`. Threads that own COM apartments call `CoUninitialize` on the same thread that initialised them, and the audio thread announces completion only after that teardown has genuinely finished. Handles are closed inside the same mutex that guards their use, so a signal can never target a handle that has just been closed and potentially recycled by Windows for an unrelated kernel object.
+**Shutdown ordering.** Every thread exits by explicit signal rather than process termination: Win32 events for `sim-detection`, `simconnect`, `audio-notify` and `theme-monitor`; a `Shutdown` command variant for `audio-com`. Threads that own COM apartments call `CoUninitialize` on the same thread that initialised them, and the audio thread announces completion only after that teardown has genuinely finished. Handles are closed inside the same mutex that guards their use, so a signal can never target a handle that has just been closed and potentially recycled by Windows for an unrelated kernel object.
 
 ### 5.4 Latency Budget
 
@@ -781,9 +783,8 @@ Two stack sizes are reduced from the default reserve: `simconnect-ctrl` to 256KB
 | Volume animation frame | ~16ms | `requestAnimationFrame` (monitor refresh rate) |
 | Window resize frame | ~4.2ms (~240fps) | Singleton Rust thread, oversamples for smooth animation |
 | Periodic cache cleanup | 300,000ms (5 min) | Removes stale session entries from all caches |
-| Memory monitor | 30,000ms (30s) | Checks cache bounds, enforces MAX_CACHE_SIZE |
 | Simulator process detection | 2,000ms | Toolhelp32 snapshot; sleeps in `WaitForSingleObject` |
-| Theme detection | 2,000ms | Windows registry poll for `AppsUseLightTheme` |
+| Theme detection | Event-driven | `RegNotifyChangeKeyValue` on the Personalize key |
 | SimConnect dispatch wake | Event-driven | 60s backstop timeout whilst the process handle is watched |
 | SimConnect reconnect delay | 5s, doubling to 60s | Reset once a connection is established |
 
@@ -859,7 +860,7 @@ The codebase maintains a zero-warnings policy across both toolchains. The Rust b
 | Module boundaries | One public API per module directory (`mod.rs` with `pub fn`) |
 | Error messages | Human-readable format strings: `"Failed to {action}: {cause}"` |
 
-**Suppressed Lints:** A single `#[allow(dead_code)]` annotation exists on `DeviceInfo::num_axes` — the field is populated for completeness but not currently read by any consumer. The release build suppresses the Windows console window via `#![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]`.
+**Suppressed Lints:** None. The release build suppresses the Windows console window via `#![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]`.
 
 **Logging:**
 
@@ -1015,7 +1016,7 @@ Width values are in logical pixels, converted to physical pixels using the displ
 
 **Rounded Corners:** DWM window attributes are set to `DWMWCP_ROUND` via `DwmSetWindowAttribute`, giving the frameless window rounded corners matching the Windows 11 visual style.
 
-**Theme-Adaptive Tray Icon:** A background thread polls the Windows registry key `Software\Microsoft\Windows\CurrentVersion\Themes\Personalize\AppsUseLightTheme` every 2 seconds. When the theme changes, the tray icon is updated on the main thread via `app_handle.run_on_main_thread()`.
+**Theme-Adaptive Tray Icon:** A background thread blocks on a `RegNotifyChangeKeyValue` notification for `Software\Microsoft\Windows\CurrentVersion\Themes\Personalize`. When the resolved theme changes, the tray icon is updated on the main thread via `app_handle.run_on_main_thread()`.
 
 **Instant Show/Hide:** Window transition animations are disabled via `DWMWA_TRANSITIONS_FORCEDISABLED`, ensuring the window appears and disappears instantly when toggled via the system tray.
 
@@ -1506,18 +1507,25 @@ pub struct DeviceInfo {
     pub manufacturer: String,
     pub vendor_id: u16,
     pub product_id: u16,
-    pub num_axes: u32,
-    pub num_buttons: u32,
 }
 
 /// Hardware input subsystem manager — lives exclusively on the dedicated input-poll thread
 pub struct HidInputManager {
     devices: Vec<DeviceInfo>,
-    axis_cache: HashMap<u32, HashMap<String, f32>>,
-    button_cache: HashMap<u32, HashMap<String, bool>>,
+    /// Last raw reading per device: both the change detector and the
+    /// fallback when a read fails
+    raw_cache: HashMap<u32, JoySnapshot>,
     hid_api: HidApi,
     known_joy_ids: Vec<u32>,
     last_hotplug_check: Option<Instant>,
+}
+
+/// The parts of JOYINFOEX the application reads, small and Copy so a tick can
+/// be compared against the previous one without building any maps
+struct JoySnapshot {
+    x: u32, y: u32, z: u32, r: u32, u: u32, v: u32,
+    buttons: u32,
+    pov: u32,
 }
 
 /// Detected simulator version, from SIMCONNECT_RECV_OPEN or process detection

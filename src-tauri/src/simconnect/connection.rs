@@ -163,17 +163,11 @@ struct LvarValueEvent<'a> {
 
 /// Tracks whether we are awaiting a pong response.
 #[derive(Debug)]
+#[derive(Default)]
 pub struct PingState {
     pub awaiting_pong: bool,
 }
 
-impl Default for PingState {
-    fn default() -> Self {
-        Self {
-            awaiting_pong: false,
-        }
-    }
-}
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Defensive message validation
@@ -311,8 +305,8 @@ unsafe fn setup_mobiflight_client_data(handle: *mut std::ffi::c_void) -> Result<
         CLIENT_DATA_ID_RESPONSE,
         REQUEST_ID_PONG,
         DEFINE_ID_PONG,
-        SIMCONNECT_CLIENT_DATA_PERIOD_ON_SET as i32,
-        SIMCONNECT_CLIENT_DATA_REQUEST_FLAG_DEFAULT as u32,
+        SIMCONNECT_CLIENT_DATA_PERIOD_ON_SET,
+        SIMCONNECT_CLIENT_DATA_REQUEST_FLAG_DEFAULT,
         0, // origin
         0, // interval
         0, // limit
@@ -350,7 +344,7 @@ unsafe fn send_ping(
         handle,
         CLIENT_DATA_ID_COMMAND,
         DEFINE_ID_PING,
-        SIMCONNECT_CLIENT_DATA_SET_FLAG_DEFAULT as u32,
+        SIMCONNECT_CLIENT_DATA_SET_FLAG_DEFAULT,
         0,   // reserved
         256, // size
         buffer.as_mut_ptr() as *mut std::ffi::c_void,
@@ -414,7 +408,7 @@ unsafe fn write_mf_buffer(
         handle,
         area_id,
         define_id,
-        SIMCONNECT_CLIENT_DATA_SET_FLAG_DEFAULT as u32,
+        SIMCONNECT_CLIENT_DATA_SET_FLAG_DEFAULT,
         0,
         MF_COMMAND_BUFFER_SIZE as u32,
         buffer.as_mut_ptr() as *mut std::ffi::c_void,
@@ -530,8 +524,8 @@ unsafe fn setup_clearcomms_client_data(handle: *mut std::ffi::c_void) -> Result<
         CLIENT_DATA_ID_CC_RESPONSE,
         REQUEST_ID_CC_RESPONSE,
         DEFINE_ID_CC_RESPONSE,
-        SIMCONNECT_CLIENT_DATA_PERIOD_ON_SET as i32,
-        SIMCONNECT_CLIENT_DATA_REQUEST_FLAG_DEFAULT as u32,
+        SIMCONNECT_CLIENT_DATA_PERIOD_ON_SET,
+        SIMCONNECT_CLIENT_DATA_REQUEST_FLAG_DEFAULT,
         0, // origin
         0, // interval
         0, // limit
@@ -628,8 +622,8 @@ unsafe fn apply_lvar_subscriptions(
             CLIENT_DATA_ID_CC_LVARS,
             REQUEST_ID_LVAR_BASE + i as u32,
             DEFINE_ID_LVAR_BASE + i as u32,
-            SIMCONNECT_CLIENT_DATA_PERIOD_NEVER as i32,
-            SIMCONNECT_CLIENT_DATA_REQUEST_FLAG_DEFAULT as u32,
+            SIMCONNECT_CLIENT_DATA_PERIOD_NEVER,
+            SIMCONNECT_CLIENT_DATA_REQUEST_FLAG_DEFAULT,
             0,
             0,
             0,
@@ -665,8 +659,8 @@ unsafe fn apply_lvar_subscriptions(
             CLIENT_DATA_ID_CC_LVARS,
             REQUEST_ID_LVAR_BASE + i as u32,
             DEFINE_ID_LVAR_BASE + i as u32,
-            SIMCONNECT_CLIENT_DATA_PERIOD_ON_SET as i32,
-            SIMCONNECT_CLIENT_DATA_REQUEST_FLAG_CHANGED as u32,
+            SIMCONNECT_CLIENT_DATA_PERIOD_ON_SET,
+            SIMCONNECT_CLIENT_DATA_REQUEST_FLAG_CHANGED,
             0,
             0,
             0,
@@ -710,8 +704,8 @@ unsafe fn apply_lvar_subscriptions(
             CLIENT_DATA_ID_CC_LVARS,
             REQUEST_ID_LVAR_ONCE_BASE + i as u32,
             DEFINE_ID_LVAR_BASE + i as u32,
-            SIMCONNECT_CLIENT_DATA_PERIOD_ONCE as i32,
-            SIMCONNECT_CLIENT_DATA_REQUEST_FLAG_DEFAULT as u32,
+            SIMCONNECT_CLIENT_DATA_PERIOD_ONCE,
+            SIMCONNECT_CLIENT_DATA_REQUEST_FLAG_DEFAULT,
             0,
             0,
             0,
@@ -759,8 +753,8 @@ unsafe fn request_response_once(handle: *mut std::ffi::c_void) -> Result<(), Str
         CLIENT_DATA_ID_RESPONSE,
         REQUEST_ID_PONG_ONCE,
         DEFINE_ID_PONG,
-        SIMCONNECT_CLIENT_DATA_PERIOD_ONCE as i32,
-        SIMCONNECT_CLIENT_DATA_REQUEST_FLAG_DEFAULT as u32,
+        SIMCONNECT_CLIENT_DATA_PERIOD_ONCE,
+        SIMCONNECT_CLIENT_DATA_REQUEST_FLAG_DEFAULT,
         0, // origin
         0, // interval
         0, // limit
@@ -799,8 +793,7 @@ unsafe fn handle_pong_response(
     data_ptr: *const std::ffi::c_void,
     data_bytes: usize,
     once_read: bool,
-    ping_state: &mut PingState,
-    lvar_state: &mut LvarClientState,
+    dispatch: &mut DispatchState,
     state: &std::sync::Arc<SimStateHandle>,
 ) {
     // Guard against empty or null payloads: SimConnect should never deliver
@@ -837,14 +830,14 @@ unsafe fn handle_pong_response(
 
     if response.starts_with("MF.Pong") {
         tracing::info!("[SimConnect] MobiFlight WASM module responded to ping");
-        ping_state.awaiting_pong = false;
+        dispatch.ping.awaiting_pong = false;
         crate::simconnect::update_state_and_emit(app, state, |s| s.wasm = WasmState::Present);
 
         // Register our dedicated client so LVar subscriptions are isolated
         // from other MobiFlight clients. The module confirms on this channel.
-        if !lvar_state.register_sent {
+        if !dispatch.lvar.register_sent {
             match send_mf_command(handle, MF_CLIENT_REGISTER_CMD) {
-                Ok(()) => lvar_state.register_sent = true,
+                Ok(()) => dispatch.lvar.register_sent = true,
                 Err(e) => tracing::warn!("[SimConnect] Failed to register ClearComms client: {}", e),
             }
         }
@@ -854,7 +847,7 @@ unsafe fn handle_pong_response(
         // MapClientDataNameToID / AddToClientDataDefinition calls, each of which
         // raises SIMCONNECT_EXCEPTION_DUPLICATE_ID: the mappings are per
         // connection, so a repeat can only ever be a duplicate.
-        if !lvar_state.register_sent || lvar_state.client_ready {
+        if !dispatch.lvar.register_sent || dispatch.lvar.client_ready {
             tracing::debug!(
                 "[SimConnect] Ignoring unsolicited ClearComms registration confirmation"
             );
@@ -862,10 +855,10 @@ unsafe fn handle_pong_response(
         }
         match setup_clearcomms_client_data(handle) {
             Ok(()) => {
-                lvar_state.client_ready = true;
+                dispatch.lvar.client_ready = true;
                 // Flush any subscription that arrived before we were ready.
-                if let Some(pending) = lvar_state.pending.take() {
-                    apply_lvar_subscriptions(handle, lvar_state, pending);
+                if let Some(pending) = dispatch.lvar.pending.take() {
+                    apply_lvar_subscriptions(handle, &mut dispatch.lvar, pending);
                 }
             }
             Err(e) => tracing::error!("[SimConnect] ClearComms client setup failed: {}", e),
@@ -905,7 +898,7 @@ unsafe fn register_simvars_and_client_data(
         DEFINE_ID_TITLE,
         title_name.as_ptr(),
         std::ptr::null(), // UnitsName: null for string SimVars (no units)
-        SIMCONNECT_DATATYPE_STRING256 as i32,
+        SIMCONNECT_DATATYPE_STRING256,
         0.0, // epsilon (unused for strings)
         0,   // datum_id
     );
@@ -925,8 +918,8 @@ unsafe fn register_simvars_and_client_data(
         REQUEST_ID_TITLE,
         DEFINE_ID_TITLE,
         0, // object_id = 0 (user aircraft)
-        SIMCONNECT_PERIOD_SECOND as i32,
-        SIMCONNECT_DATA_REQUEST_FLAG_CHANGED as u32,
+        SIMCONNECT_PERIOD_SECOND,
+        SIMCONNECT_DATA_REQUEST_FLAG_CHANGED,
         0, // origin
         0, // interval
         0, // limit
@@ -1014,12 +1007,9 @@ pub fn run_simconnect_loop(
     });
 
     // Check shutdown before attempting connection
-    match unsafe { WaitForSingleObject(shutdown_handle, 0) } {
-        WAIT_OBJECT_0 => {
-            tracing::info!("[SimConnect] Shutdown signal received before connection attempt");
-            return;
-        }
-        _ => {}
+    if unsafe { WaitForSingleObject(shutdown_handle, 0) } == WAIT_OBJECT_0 {
+        tracing::info!("[SimConnect] Shutdown signal received before connection attempt");
+        return;
     }
 
     update_state(&state, |s| {
@@ -1093,7 +1083,7 @@ fn try_connect_and_run(
             app_name.as_ptr(),
             std::ptr::null_mut(), // hWnd (optional)
             0,                    // user event Win32 ID
-            simconnect_event.0 as *mut std::ffi::c_void, // config event handle
+            simconnect_event.0, // config event handle
             0,                    // config index
         )
     };
@@ -1485,8 +1475,7 @@ unsafe fn handle_message(
                     payload_ptr as *const std::ffi::c_void,
                     payload_size,
                     request_id == REQUEST_ID_PONG_ONCE,
-                    &mut dispatch_state.ping,
-                    &mut dispatch_state.lvar,
+                    dispatch_state,
                     state,
                 );
             } else if request_id == REQUEST_ID_CC_RESPONSE {

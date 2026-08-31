@@ -48,7 +48,13 @@
   // STATE
   // ─────────────────────────────────────────────────────────────────────────────
   
-  let axisData = $state<AxisData[]>([]);
+  /**
+   * Latest hardware reading. Deliberately not `$state`: every reader is an
+   * imperative function (binding detection and mapping application) and none of
+   * it reaches the template, so making it reactive built a proxy and notified
+   * subscribers up to twenty times a second to drive nothing.
+   */
+  let axisData: AxisData[] = [];
   let audioSessions = $state<AudioSession[]>([]);
   let axisMappings = $state<AxisMapping[]>([]);
   let buttonMappings = $state<ButtonMapping[]>([]);
@@ -273,23 +279,13 @@
   // CONSTANTS
   // ─────────────────────────────────────────────────────────────────────────────
 
-  const POLL_LOG_INTERVAL = 200;
-  const BUTTON_CACHE_LOG_INTERVAL = 200;
   const LIVE_UPDATE_MIN_INTERVAL_MS = 40;
   const HARDWARE_VOLUME_SMOOTHING = 0.3;
-  let pollInFlight = false;
-  let pollIterations = 0;
-  let skippedPolls = 0;
-  let buttonCachePruneCounter = 0;
 
   const hardwareVolumeTargets = new Map<string, number>();
   const hardwareVolumeAnimations = new Map<string, number>();
   const liveVolumeState = new Map<string, LiveVolumeState>();
   
-  let memoryMonitorInterval: number | null = null;
-  let lastMemoryCleanup = Date.now();
-  const MEMORY_CLEANUP_INTERVAL = 300000;
-  const MAX_CACHE_SIZE = 1000;
 
   // ─────────────────────────────────────────────────────────────────────────────
   // MEMORY PROFILING (Dev Mode)
@@ -383,7 +379,7 @@
       logCaches: logDetailedCacheStats,
       getSnapshots: () => memorySnapshots,
       forceCleanup: () => {
-        performPeriodicCleanup();
+        pruneStateForEndedSessions();
         logMemorySnapshot();
       },
       forceGC: () => {
@@ -610,10 +606,16 @@
         return;
       }
 
-      // Normal initialisation path
-      await initTheme();
-
+      // Normal initialisation path.
+      //
+      // The theme call is independent of the stored configuration, so it runs
+      // alongside it rather than in front of it.
+      //
+      // Window pin state is deliberately not fetched here. It starts false on
+      // both sides, and the backend pushes window-pin-changed on every change,
+      // so a fetch at boot can only confirm what is already true.
       await Promise.all([
+        initTheme(),
         loadMappings(),
         loadButtonMappings(),
         loadPinnedApps(),
@@ -621,7 +623,6 @@
         loadSimAssignments()
       ]);
 
-      await fetchWindowPinnedState();
       await autoInitialise();
 
       // Measure layout dimensions once on mount
@@ -638,10 +639,10 @@
     });
 
 
-    const handleBlur = async () => {
-      // Fetch current pinned state to ensure we have the latest value
-      await fetchWindowPinnedState();
-      
+    // Both handlers read windowPinned directly rather than fetching it. The
+    // backend pushes window-pin-changed on every toggle, so the local value is
+    // already current, and the round trip delayed the menu close behind IPC.
+    const handleBlur = () => {
       // Only close menus and disable edit mode if window is NOT pinned on top
       if (!windowPinned) {
         if (isEditMode) {
@@ -659,10 +660,7 @@
       }
     };
 
-    const handleFocus = async () => {
-      // Fetch current pinned state to ensure we have the latest value
-      await fetchWindowPinnedState();
-      
+    const handleFocus = () => {
       // Close menus when window regains focus (dock may be opened by focus events)
       // But only if window is not pinned on top
       if (!windowPinned) {
@@ -751,6 +749,14 @@
     try {
       initStatus = "Initialising subsystems...";
 
+      // Listeners go up before the subsystems that feed them. The audio thread
+      // enumerates and emits as its first act, and that first enumeration is
+      // the expensive one: every session it has not seen before needs its
+      // executable path, version resource and sometimes a window title
+      // resolved. Registering afterwards threw that result away and paid for a
+      // second full walk to get it back.
+      await startPolling();
+
       // Input and audio are independent: start both immediately
       const [inputResult, audioResult] = await Promise.allSettled([
         invoke<string>("init_input"),
@@ -763,17 +769,12 @@
 
       if (audioResult.status === "fulfilled") {
         audioInitialised = true;
-        // The audio thread emits the initial session list immediately after init,
-        // but fetch once here as a guarantee in case the event arrives before the
-        // listener is registered below.
-        await refreshAudioSessions();
       } else {
         console.warn("Audio manager failed (non-critical):", audioResult.reason);
       }
 
       initStatus = "Starting real-time monitoring...";
-      startPolling();
-      
+
       // Start listening for simulator status change events
       stopSimStatusListenerFn = await startSimStatusListener();
 
@@ -796,41 +797,44 @@
     // Apply mappings synchronously since data arrives at the polling thread's cadence
     applyAxisMappings();
     applyButtonMappings();
-    pollIterations += 1;
-    if (pollIterations > 1000000) {
-      pollIterations = 0;
-    }
   }
   
-  function startPolling() {
+  async function startPolling() {
     if (pollingInterval) return;
-    
+
     isPolling = true;
 
-    // Listen for axis data events emitted by the dedicated Rust input thread.
-    // The Rust thread only emits when values have changed, so this fires at
-    // most at the poll cadence and only when hardware is being moved.
-    listen<AxisData[]>('input-axis-data', (event) => {
-      handleAxisData(event.payload);
-    }).then((unlisten) => {
-      unlistenInputAxis = unlisten;
-    });
+    // Awaited, not fired and forgotten. These go up before the subsystems that
+    // emit into them, and registration is only complete when the promise
+    // settles: returning early would leave the same gap that moving this call
+    // earlier was meant to close.
+    await Promise.all([
+      // Axis data from the dedicated Rust input thread. That thread only emits
+      // when a value has changed, so this fires at most at the poll cadence and
+      // only while hardware is being moved.
+      listen<AxisData[]>('input-axis-data', (event) => {
+        handleAxisData(event.payload);
+      }).then((unlisten) => {
+        unlistenInputAxis = unlisten;
+      }).catch((e) => {
+        console.error("Failed to subscribe to input-axis-data:", e);
+      }),
 
-    // Listen for LVar value changes pushed by the SimConnect thread whenever a
-    // subscribed simulator function's LVar changes in the simulator.
-    listen<LvarValueEvent>('lvar-value-changed', (event) => {
-      handleLvarValueChanged(event.payload);
-    }).then((unlisten) => {
-      unlistenLvarValue = unlisten;
-    }).catch((e) => {
-      console.error("Failed to subscribe to lvar-value-changed:", e);
-    });
+      // LVar changes pushed by the SimConnect thread whenever a subscribed
+      // simulator function moves.
+      listen<LvarValueEvent>('lvar-value-changed', (event) => {
+        handleLvarValueChanged(event.payload);
+      }).then((unlisten) => {
+        unlistenLvarValue = unlisten;
+      }).catch((e) => {
+        console.error("Failed to subscribe to lvar-value-changed:", e);
+      }),
 
-    // Listen for audio session push events from the Rust audio COM thread.
-    // The backend emits this when it detects topology changes (device add/remove,
-    // session start/stop, external volume change): no frontend polling required.
-    startAudioMonitoring();
-    startMemoryMonitoring();
+      // Audio session pushes from the Rust audio COM thread, sent on topology
+      // changes and on the thread's own first enumeration.
+      startAudioMonitoring(),
+    ]);
+
     startMemoryProfiler();
   }
 
@@ -850,9 +854,7 @@
       unlistenLvarValue = null;
     }
     isPolling = false;
-    pollInFlight = false;
     stopAudioMonitoring();
-    stopMemoryMonitoring();
     stopMemoryProfiler();
   }
 
@@ -861,37 +863,22 @@
    * COM thread whenever the session topology or volumes change. Replaces the
    * previous setInterval-based approach which polled every 1 second.
    */
-  function startAudioMonitoring() {
+  async function startAudioMonitoring() {
     if (unlistenAudioState) return;
 
-    listen<AudioSession[]>('audio-state-updated', async (event) => {
-      await handleAudioStateUpdate(event.payload);
-    }).then((unlisten) => {
-      unlistenAudioState = unlisten;
-    }).catch((e) => {
+    try {
+      unlistenAudioState = await listen<AudioSession[]>('audio-state-updated', async (event) => {
+        await handleAudioStateUpdate(event.payload);
+      });
+    } catch (e) {
       console.error("Failed to subscribe to audio-state-updated:", e);
-    });
+    }
   }
 
   function stopAudioMonitoring() {
     if (unlistenAudioState) {
       unlistenAudioState();
       unlistenAudioState = null;
-    }
-  }
-
-  /**
-   * Fetch the latest audio sessions from the backend and apply them.
-   * Used on startup and as a manual force-refresh. Ongoing updates arrive
-   * via the `audio-state-updated` push event handled by `handleAudioStateUpdate`.
-   */
-  async function refreshAudioSessions() {
-    try {
-      const sessions = await invoke<AudioSession[]>("get_audio_sessions");
-      await handleAudioStateUpdate(sessions);
-    } catch (error) {
-      console.error("Error getting audio sessions:", error);
-      errorMsg = `Audio error: ${error}`;
     }
   }
 
@@ -915,9 +902,13 @@
       
       if (hasSystemVolume) {
         try {
-          const systemVolume = await invoke<number>("get_system_volume");
-          const systemMuted = await invoke<boolean>("get_system_mute");
-          
+          // Issued together: these are independent reads and awaiting them in
+          // turn cost two serial IPC round trips on every audio update.
+          const [systemVolume, systemMuted] = await Promise.all([
+            invoke<number>("get_system_volume"),
+            invoke<boolean>("get_system_mute"),
+          ]);
+
           const systemSession: AudioSession = {
             session_id: SYSTEM_VOLUME_ID,
             display_name: SYSTEM_VOLUME_DISPLAY_NAME,
@@ -1020,12 +1011,9 @@
         });
       }
       
-      cleanupStaleMappings();
-  }
-
-  function cleanupStaleMappings() {
-    // Intentionally kept empty - we preserve mappings for inactive apps
-    return;
+      // The session list has just changed, which is the only way a session can
+      // end, so this is the moment its tracking state becomes stale.
+      pruneStateForEndedSessions();
   }
 
   async function measureLayoutDimensions() {
@@ -1216,10 +1204,20 @@
 
       const volumeToSend = queued;
 
+      // Mute follows volume across zero, so during an ordinary drag the desired
+      // state is unchanged on every tick. Writing it anyway doubled the calls on
+      // this path, and each one walks the audio graph on the Rust side.
+      const desiredMute = volumeToSend === 0;
+      const muteNeedsWrite = currentState.lastSentMute !== desiredMute;
+
       (async () => {
         try {
           await invokeSetVolume(sessionId, volumeToSend);
-          await invokeSetMute(sessionId, volumeToSend === 0);
+          if (muteNeedsWrite) {
+            await invokeSetMute(sessionId, desiredMute);
+            const stateAfterWrite = liveVolumeState.get(sessionId);
+            if (stateAfterWrite) stateAfterWrite.lastSentMute = desiredMute;
+          }
         } catch (error) {
           console.error(`Error applying live volume for ${sessionId}:`, error);
         } finally {
@@ -1350,57 +1348,15 @@
     }
   }
 
-  function startMemoryMonitoring() {
-    if (memoryMonitorInterval) return;
-    
-    memoryMonitorInterval = setInterval(() => {
-      const now = Date.now();
-      
-      if (now - lastMemoryCleanup > MEMORY_CLEANUP_INTERVAL) {
-        performPeriodicCleanup();
-        lastMemoryCleanup = now;
-      }
-      
-      if (previousAxisValues.size > MAX_CACHE_SIZE) {
-        console.warn("[ClearComms] Axis cache size exceeded limit, clearing");
-        previousAxisValues.clear();
-      }
-      
-      if (previousButtonStates.size > MAX_CACHE_SIZE) {
-        console.warn("[ClearComms] Button cache size exceeded limit, clearing");
-        previousButtonStates.clear();
-      }
-      
-      if (lastHardwareAxisValues.size > MAX_CACHE_SIZE) {
-        console.warn("[ClearComms] Hardware axis cache size exceeded limit, clearing");
-        lastHardwareAxisValues.clear();
-        axisActivated.clear();
-      }
-
-      if (liveVolumeState.size > MAX_CACHE_SIZE) {
-        console.warn("[ClearComms] Live volume state cache size exceeded limit, clearing");
-        cleanupAllLiveVolumeStates();
-      }
-      
-      if (hardwareVolumeTargets.size > MAX_CACHE_SIZE) {
-        console.warn("[ClearComms] Hardware volume targets cache size exceeded limit, clearing");
-        for (const [_, frameId] of hardwareVolumeAnimations) {
-          cancelAnimationFrame(frameId);
-        }
-        hardwareVolumeAnimations.clear();
-        hardwareVolumeTargets.clear();
-      }
-    }, 30000);
-  }
-  
-  function stopMemoryMonitoring() {
-    if (memoryMonitorInterval) {
-      clearInterval(memoryMonitorInterval);
-      memoryMonitorInterval = null;
-    }
-  }
-  
-  function performPeriodicCleanup() {
+  /**
+   * Drop tracking state for sessions that have gone away.
+   *
+   * Driven by `audio-state-updated` rather than a timer: a session can only
+   * disappear when that event says so, and the previous 30-second interval woke
+   * the renderer for the life of the process to check caches that are bounded by
+   * device count or mapping count and could never have overflowed.
+   */
+  function pruneStateForEndedSessions() {
     const activeSessionIds = new Set(audioSessions.map(s => s.session_id));
     
     for (const sessionId of animatingSliders) {
@@ -1466,7 +1422,9 @@
       // Only called from local gestures, so always write the final value to the sim
       writeSimVolumeFinal(sessionId, volume);
       syncSimFunctionSiblings(sessionId, volume);
-      await refreshAudioSessions();
+      // No refresh here: the audio thread emits audio-state-updated whenever
+      // anything changes, so forcing a read at the end of every gesture only
+      // duplicated work the push had already done.
     } catch (error) {
       console.error("Error setting volume:", error);
       errorMsg = `Audio error: ${error}`;
@@ -1489,6 +1447,12 @@
     // Cancel any ongoing volume animation (e.g. hardware input) before toggling mute
     cancelVolumeAnimation(sessionId);
     cancelMuteAnimation(sessionId);
+
+    // Mute is about to change from outside the live-volume path, so what that
+    // path last wrote no longer describes Windows and must not be matched
+    // against.
+    const liveState = liveVolumeState.get(sessionId);
+    if (liveState) liveState.lastSentMute = undefined;
 
     try {
       // Two-way sim sync: local mute gestures write through to the function's
@@ -1883,6 +1847,12 @@
     if (session.is_muted === shouldMute) return false;
 
     session.is_muted = shouldMute;
+
+    // This write and the live-volume path target the same Windows state, so the
+    // latter's record of what it last sent is now out of date.
+    const liveState = liveVolumeState.get(session.session_id);
+    if (liveState) liveState.lastSentMute = shouldMute;
+
     invokeSetMute(session.session_id, shouldMute).catch(e =>
       console.error("Error applying auto-mute:", e));
     return true;
@@ -2225,7 +2195,32 @@
     }
   }
 
-  async function applyButtonMappings() {
+  /**
+   * Snapshot the buttons named by a mapping, so the next tick can spot a rising
+   * edge. Only bound buttons are copied: the payload carries every button on
+   * every device, and cloning all of them was the bulk of this function's work
+   * for a set that is typically one or two entries.
+   */
+  function snapshotBoundButtons() {
+    for (const device of axisData) {
+      const previous = previousButtonStates.get(device.device_handle) ?? {};
+      for (const mapping of buttonMappings) {
+        if (mapping.deviceHandle !== device.device_handle) continue;
+        const state = device.buttons[mapping.buttonName];
+        if (state !== undefined) previous[mapping.buttonName] = state;
+      }
+      previousButtonStates.set(device.device_handle, previous);
+    }
+  }
+
+  /** Binding mode compares against every button, since any of them may be chosen. */
+  function snapshotAllButtons() {
+    for (const device of axisData) {
+      previousButtonStates.set(device.device_handle, { ...device.buttons });
+    }
+  }
+
+  function applyButtonMappings() {
     if (isButtonBindingMode && pendingButtonBinding) {
       const buttonPress = detectButtonPress();
       if (buttonPress) {
@@ -2241,52 +2236,39 @@
         isButtonBindingMode = false;
         pendingButtonBinding = null;
       }
-      for (const device of axisData) {
-        previousButtonStates.set(device.device_handle, { ...device.buttons });
-      }
+      snapshotAllButtons();
       return;
     }
 
-    if (!audioInitialised) return;
+    // Nothing to detect and nothing that could read the snapshot.
+    if (!audioInitialised || buttonMappings.length === 0) return;
 
     const activeHandles = new Set(axisData.map(d => d.device_handle));
 
-    if (buttonMappings.length > 0) {
-      for (const mapping of buttonMappings) {
-        const device = axisData.find(d => d.device_handle === mapping.deviceHandle);
-        if (device && device.buttons[mapping.buttonName] !== undefined) {
-          const currentState = device.buttons[mapping.buttonName];
-          const previousState = previousButtonStates.get(device.device_handle)?.[mapping.buttonName];
-          
-          if (!previousState && currentState) {
-            const session = audioSessions.find(s => s.process_name === mapping.processName);
-            // Same rule as the axis path below: a pointer gesture owns the
-            // channel, and the sim function it belongs to.
-            if (session && !isHeldByPointer(session.session_id)) {
-              const newMuteState = !session.is_muted;
-              setSessionMute(session.session_id, newMuteState);
-            }
+    for (const mapping of buttonMappings) {
+      const device = axisData.find(d => d.device_handle === mapping.deviceHandle);
+      if (device && device.buttons[mapping.buttonName] !== undefined) {
+        const currentState = device.buttons[mapping.buttonName];
+        const previousState = previousButtonStates.get(device.device_handle)?.[mapping.buttonName];
+
+        if (!previousState && currentState) {
+          const session = audioSessions.find(s => s.process_name === mapping.processName);
+          // Same rule as the axis path below: a pointer gesture owns the
+          // channel, and the sim function it belongs to.
+          if (session && !isHeldByPointer(session.session_id)) {
+            const newMuteState = !session.is_muted;
+            setSessionMute(session.session_id, newMuteState);
           }
         }
       }
     }
 
-    for (const device of axisData) {
-      previousButtonStates.set(device.device_handle, { ...device.buttons });
-    }
+    snapshotBoundButtons();
 
     for (const handle of Array.from(previousButtonStates.keys())) {
       if (!activeHandles.has(handle)) {
         previousButtonStates.delete(handle);
       }
-    }
-
-    buttonCachePruneCounter += 1;
-    if (buttonCachePruneCounter > 1000000) {
-      buttonCachePruneCounter = 0;
-    }
-    if (buttonCachePruneCounter % BUTTON_CACHE_LOG_INTERVAL === 0) {
-      console.debug(`[ClearComms] Button state cache size ${previousButtonStates.size}; active handles ${activeHandles.size}`);
     }
   }
 

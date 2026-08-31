@@ -59,10 +59,12 @@ Every subsystem that touches a blocking OS/COM/FFI API gets its own dedicated OS
 | `simconnect-ctrl` | Lifecycle controller: spawns/tears down the connection thread on `SimDetectionEvent` | blocking `mpsc::recv` |
 | `simconnect` | SimConnect dispatch loop + MobiFlight LVar I/O | `WaitForMultipleObjects` on the SimConnect event handle + a wake event |
 | `window-anim` | Window resize easing (singleton, lazily spawned) | channel-driven, ~240fps while animating |
-| `theme-monitor` | Windows theme registry key polling | `WaitForSingleObject`, 2s poll |
+| `theme-monitor` | Windows theme registry key watch | `WaitForMultipleObjects` on a `RegNotifyChangeKeyValue` notification |
 | `menu-defer` | Native tray/context menu display | one-shot spawn |
 
-Resource cleanup follows RAII throughout: `Drop` impls close COM objects/handles (`ProcessHandle`, `AudioManager`, `HidInputManager`); all long-lived threads shut down via an `AtomicBool` or Win32 event signal on `quit_application`/`restart_application`, not by killing the process.
+Resource cleanup follows RAII throughout: `Drop` impls close COM objects/handles (`ProcessHandle`, `AudioManager`, `HidInputManager`, `PopupMenu`); all long-lived threads shut down via an `AtomicBool` or Win32 event signal on `quit_application`/`restart_application`, not by killing the process. `main.rs` routes that through `shutdown_core_subsystems`, `shutdown_sim_detection` and `shutdown_theme_monitor` rather than repeating the sequence per exit path.
+
+Two hot paths are deliberately allocation-free when idle, and should stay that way: `hardware_input` compares raw `JOYINFOEX` readings before building any payload, and `audio_management` caches `ISimpleAudioVolume` per process ID so a volume write is a map lookup rather than a walk over every endpoint and session.
 
 ### IPC command surface
 

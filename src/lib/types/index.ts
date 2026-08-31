@@ -71,6 +71,8 @@ export interface LiveVolumeState {
   lastSent: number;
   queuedVolume?: number;
   timerId?: number;
+  /** Last mute state written by this path, so unchanged values are not resent */
+  lastSentMute?: boolean;
 }
 
 /** Animation signal for volume animations */

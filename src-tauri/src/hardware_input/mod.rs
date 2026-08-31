@@ -53,9 +53,6 @@ pub struct DeviceInfo {
     pub manufacturer: String,
     pub vendor_id: u16,
     pub product_id: u16,
-    #[allow(dead_code)]
-    pub num_axes: u32,
-    pub num_buttons: u32,
 }
 
 impl DeviceInfo {
@@ -71,11 +68,42 @@ impl DeviceInfo {
     }
 }
 
+/// The parts of `JOYINFOEX` the application reads, small and `Copy` so a tick
+/// can be compared against the previous one without building any maps.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct JoySnapshot {
+    x: u32,
+    y: u32,
+    z: u32,
+    r: u32,
+    u: u32,
+    v: u32,
+    buttons: u32,
+    pov: u32,
+}
+
+#[cfg(windows)]
+impl JoySnapshot {
+    fn from_info(info: &JOYINFOEX) -> Self {
+        Self {
+            x: info.dwXpos,
+            y: info.dwYpos,
+            z: info.dwZpos,
+            r: info.dwRpos,
+            u: info.dwUpos,
+            v: info.dwVpos,
+            buttons: info.dwButtons,
+            pov: info.dwPOV,
+        }
+    }
+}
+
 /// Manages game controller input using Windows Joystick API + HID for device names
 pub struct HidInputManager {
     devices: Vec<DeviceInfo>,
-    axis_cache: HashMap<u32, HashMap<String, f32>>,
-    button_cache: HashMap<u32, HashMap<String, bool>>,
+    /// Last raw reading per device. Doubles as the change detector and as the
+    /// fallback when a read fails.
+    raw_cache: HashMap<u32, JoySnapshot>,
     hid_api: HidApi,
     /// Snapshot of connected joystick IDs from the last enumeration, used to
     /// detect hot-plug changes cheaply without a full HID bus scan.
@@ -92,8 +120,7 @@ impl HidInputManager {
         
         Ok(Self {
             devices: Vec::with_capacity(INITIAL_DEVICE_CAPACITY), // Pre-allocate for typical device count
-            axis_cache: HashMap::with_capacity(INITIAL_DEVICE_CAPACITY),
-            button_cache: HashMap::with_capacity(INITIAL_DEVICE_CAPACITY),
+            raw_cache: HashMap::with_capacity(INITIAL_DEVICE_CAPACITY),
             hid_api,
             known_joy_ids: Vec::with_capacity(INITIAL_DEVICE_CAPACITY),
             last_hotplug_check: None,
@@ -106,13 +133,11 @@ impl HidInputManager {
         
         // Clear all caches
         self.devices.clear();
-        self.axis_cache.clear();
-        self.button_cache.clear();
-        
+        self.raw_cache.clear();
+
         // Release allocated memory back to the system
         self.devices.shrink_to_fit();
-        self.axis_cache.shrink_to_fit();
-        self.button_cache.shrink_to_fit();
+        self.raw_cache.shrink_to_fit();
         
         tracing::info!("[Input] HID input manager cleanup complete");
     }
@@ -175,8 +200,6 @@ impl HidInputManager {
                         manufacturer,
                         vendor_id,
                         product_id,
-                        num_axes: caps.wNumAxes as u32,
-                        num_buttons: caps.wNumButtons as u32,
                     });
                 }
             }
@@ -184,8 +207,7 @@ impl HidInputManager {
 
         // Clear stale cache entries for devices that are no longer present
         let active_ids: std::collections::HashSet<u32> = self.devices.iter().map(|d| d.id).collect();
-        self.axis_cache.retain(|id, _| active_ids.contains(id));
-        self.button_cache.retain(|id, _| active_ids.contains(id));
+        self.raw_cache.retain(|id, _| active_ids.contains(id));
 
         // Update the known-device snapshot for future lightweight hot-plug checks
         self.known_joy_ids = self.devices.iter().map(|d| d.id).collect();
@@ -244,97 +266,111 @@ impl HidInputManager {
         &self.devices
     }
 
-    /// Read axis values from all devices with memory management
-    pub fn read_all_axes(&mut self) -> Result<Vec<AxisData>, String> {
-        let mut all_axes = Vec::with_capacity(self.devices.len());
-        
+    /// Build the wire payload for one device from a raw reading.
+    fn axis_data_from(device: &DeviceInfo, snapshot: &JoySnapshot) -> AxisData {
+        let normalise = |raw: u32| (raw as f32 / MAX_AXIS_VALUE).clamp(0.0, 1.0);
+
+        let mut axes = HashMap::with_capacity(7);
+        axes.insert("X".to_string(), normalise(snapshot.x));
+        axes.insert("Y".to_string(), normalise(snapshot.y));
+        axes.insert("Z".to_string(), normalise(snapshot.z));
+        axes.insert("R".to_string(), normalise(snapshot.r));
+        axes.insert("U".to_string(), normalise(snapshot.u));
+        axes.insert("V".to_string(), normalise(snapshot.v));
+
+        // Every button is reported every time, whether or not the device claims
+        // to have it. Emitting a key only while it is held made the key set a
+        // function of the state, so a release removed the entry rather than
+        // setting it false, and a device that under-reports its button count
+        // had buttons that could never be bound.
+        let mut buttons = HashMap::with_capacity(MAX_BUTTONS_PER_DEVICE as usize + 5);
+        for button in 0..MAX_BUTTONS_PER_DEVICE {
+            let pressed = (snapshot.buttons & (1 << button)) != 0;
+            buttons.insert(format!("Button{}", button + 1), pressed);
+        }
+
+        // POV hat: hundredths of a degree, or 0xFFFF when centred.
+        let centred = snapshot.pov == 0xFFFF;
+        let angle = snapshot.pov as f32 / 100.0;
+
+        // Upper bounds are exclusive. Inclusive ranges overlapped at 45, 135,
+        // 225 and 315, where a hat resting exactly on a diagonal reported two
+        // directions at once and fired both bound actions.
+        buttons.insert("POV_Up".to_string(), !centred && !(45.0..315.0).contains(&angle));
+        buttons.insert("POV_Right".to_string(), !centred && (45.0..135.0).contains(&angle));
+        buttons.insert("POV_Down".to_string(), !centred && (135.0..225.0).contains(&angle));
+        buttons.insert("POV_Left".to_string(), !centred && (225.0..315.0).contains(&angle));
+        buttons.insert("POV_Centered".to_string(), centred);
+
+        // The POV axis is deliberately absent when centred: there is no angle to
+        // report, and the frontend skips an axis it cannot read rather than
+        // driving a bound volume to zero.
+        if !centred {
+            axes.insert("POV".to_string(), angle / 360.0);
+        }
+
+        AxisData {
+            device_handle: device.id.to_string(),
+            device_name: device.name.clone(),
+            manufacturer: device.manufacturer.clone(),
+            product_id: device.product_id,
+            vendor_id: device.vendor_id,
+            axes,
+            buttons,
+        }
+    }
+
+    /// Read every device, returning a payload only when something moved.
+    ///
+    /// Building that payload allocates a string per axis and per button, plus
+    /// two maps, for every device on every tick. At the polling rate that is
+    /// thousands of allocations a second spent describing hardware that is
+    /// sitting still. The raw readings are compared first, so an idle tick costs
+    /// one Win32 call per device and nothing else.
+    pub fn read_all_axes(&mut self) -> Option<Vec<AxisData>> {
+        let mut readings: Vec<Option<JoySnapshot>> = Vec::with_capacity(self.devices.len());
+        let mut changed = false;
+
         for device in &self.devices {
-            unsafe {
+            let reading = unsafe {
                 let mut joy_info: JOYINFOEX = std::mem::zeroed();
                 joy_info.dwSize = std::mem::size_of::<JOYINFOEX>() as u32;
                 joy_info.dwFlags = 0xFFu32 | (JOY_USEDEADZONE as u32); // Request all axes
-                
-                let result = joyGetPosEx(device.id, &mut joy_info as *mut JOYINFOEX);
-                
-                if result == JOYERR_NOERROR {
-                    let mut axes = HashMap::new();
-                    let mut buttons = HashMap::new();
-                    
-                    // Windows Joystick API provides raw values (typically 0-65535)
-                    // Normalise to 0.0-1.0
-                    
-                    // X axis
-                    axes.insert("X".to_string(), (joy_info.dwXpos as f32 / MAX_AXIS_VALUE).clamp(0.0, 1.0));
-                    
-                    // Y axis
-                    axes.insert("Y".to_string(), (joy_info.dwYpos as f32 / MAX_AXIS_VALUE).clamp(0.0, 1.0));
-                    
-                    // Z axis (throttle on many devices)
-                    axes.insert("Z".to_string(), (joy_info.dwZpos as f32 / MAX_AXIS_VALUE).clamp(0.0, 1.0));
-                    
-                    // R axis (rudder/twist)
-                    axes.insert("R".to_string(), (joy_info.dwRpos as f32 / MAX_AXIS_VALUE).clamp(0.0, 1.0));
-                    
-                    // U axis
-                    axes.insert("U".to_string(), (joy_info.dwUpos as f32 / MAX_AXIS_VALUE).clamp(0.0, 1.0));
-                    
-                    // V axis
-                    axes.insert("V".to_string(), (joy_info.dwVpos as f32 / MAX_AXIS_VALUE).clamp(0.0, 1.0));
-                    
-                    // Read button states (up to MAX_BUTTONS_PER_DEVICE buttons)
-                    let button_mask = joy_info.dwButtons;
-                    for btn_num in 0..MAX_BUTTONS_PER_DEVICE {
-                        let is_pressed = (button_mask & (1 << btn_num)) != 0;
-                        if is_pressed || btn_num < device.num_buttons {
-                            // Only include buttons that exist or are currently pressed
-                            buttons.insert(format!("Button{}", btn_num + 1), is_pressed);
-                        }
-                    }
-                    
-                    // POV Hat switch (returns angle in hundredths of degrees, 0-35900, or 0xFFFF for centered)
-                    if joy_info.dwPOV != 0xFFFF {
-                        let pov_angle = joy_info.dwPOV as f32 / 100.0; // Convert to degrees
-                        axes.insert("POV".to_string(), pov_angle / 360.0); // Normalize to 0.0-1.0
-                        
-                        // Also provide discrete POV directions as buttons for convenience
-                        buttons.insert("POV_Up".to_string(), pov_angle >= 315.0 || pov_angle <= 45.0);
-                        buttons.insert("POV_Right".to_string(), (45.0..=135.0).contains(&pov_angle));
-                        buttons.insert("POV_Down".to_string(), (135.0..=225.0).contains(&pov_angle));
-                        buttons.insert("POV_Left".to_string(), (225.0..=315.0).contains(&pov_angle));
-                    } else {
-                        buttons.insert("POV_Centered".to_string(), true);
-                    }
-                    
-                    // Cache and add to results
-                    self.axis_cache.insert(device.id, axes.clone());
-                    self.button_cache.insert(device.id, buttons.clone());
-                    
-                    all_axes.push(AxisData {
-                        device_handle: device.id.to_string(),
-                        device_name: device.name.clone(),
-                        manufacturer: device.manufacturer.clone(),
-                        product_id: device.product_id,
-                        vendor_id: device.vendor_id,
-                        axes,
-                        buttons,
-                    });
-                } else if let Some(cached_axes) = self.axis_cache.get(&device.id) {
-                    // Use cached values if read failed
-                    let cached_buttons = self.button_cache.get(&device.id).cloned().unwrap_or_default();
-                    all_axes.push(AxisData {
-                        device_handle: device.id.to_string(),
-                        device_name: device.name.clone(),
-                        manufacturer: device.manufacturer.clone(),
-                        product_id: device.product_id,
-                        vendor_id: device.vendor_id,
-                        axes: cached_axes.clone(),
-                        buttons: cached_buttons,
-                    });
+
+                if joyGetPosEx(device.id, &mut joy_info as *mut JOYINFOEX) == JOYERR_NOERROR {
+                    Some(JoySnapshot::from_info(&joy_info))
+                } else {
+                    None
                 }
+            };
+
+            let previous = self.raw_cache.get(&device.id).copied();
+
+            // A failed read holds the last known values rather than dropping the
+            // device out of the payload entirely.
+            let effective = reading.or(previous);
+
+            if effective != previous {
+                changed = true;
             }
+            readings.push(effective);
         }
-        
-        Ok(all_axes)
+
+        if !changed {
+            return None;
+        }
+
+        let mut updated_cache = HashMap::with_capacity(readings.len());
+        let mut all_axes = Vec::with_capacity(readings.len());
+
+        for (device, reading) in self.devices.iter().zip(readings.iter()) {
+            let Some(snapshot) = reading else { continue };
+            updated_cache.insert(device.id, *snapshot);
+            all_axes.push(Self::axis_data_from(device, snapshot));
+        }
+
+        self.raw_cache = updated_cache;
+        Some(all_axes)
     }
 }
 
@@ -361,8 +397,8 @@ impl HidInputManager {
         &[]
     }
     
-    pub fn read_all_axes(&mut self) -> Result<Vec<AxisData>, String> {
-        Err("Input manager only supported on Windows".to_string())
+    pub fn read_all_axes(&mut self) -> Option<Vec<AxisData>> {
+        None
     }
 }
 
@@ -396,8 +432,19 @@ struct InputThread {
 /// Global handle to the input polling thread.
 static INPUT_THREAD: Mutex<Option<InputThread>> = Mutex::new(None);
 
-/// Initialise input system, enumerate devices, and start the dedicated polling thread.
-/// The polling thread emits "input-axis-data" Tauri events at ~50ms intervals.
+/// Start the dedicated input polling thread, which emits "input-axis-data"
+/// Tauri events as hardware moves.
+///
+/// Opening the HID API and enumerating devices costs around 260ms: a scan of
+/// the whole HID bus plus a probe of all sixteen joystick slots. That used to
+/// happen here, with the frontend awaiting it, which put it squarely on the
+/// boot path for something nothing on screen depends on. It now happens on the
+/// polling thread instead, so this returns as soon as the thread is spawned and
+/// the first axis event simply arrives a fraction of a second later.
+///
+/// The consequence is that a HID failure no longer fails startup. It is logged
+/// and the thread exits, leaving the application running without hardware
+/// input, which is a better outcome than refusing to start the mixer.
 #[tauri::command]
 pub fn init_input(app: tauri::AppHandle) -> Result<String, String> {
     // Stop any thread from a previous init (e.g. a dev-mode reload) before
@@ -413,21 +460,6 @@ pub fn init_input(app: tauri::AppHandle) -> Result<String, String> {
         shutdown_input_thread();
     }
 
-    tracing::info!("[Input] Initialising HID input manager...");
-    let mut manager = HidInputManager::new()?;
-
-    tracing::info!("[Input] Enumerating devices...");
-    manager.enumerate_devices()?;
-
-    let device_count = manager.get_devices().len();
-    tracing::info!("[Input] Found {} joystick device(s)", device_count);
-
-    if device_count > 0 {
-        for device in manager.get_devices() {
-            tracing::info!("[Input]   - {}", device.to_display_string());
-        }
-    }
-
     // Create shutdown flag
     let shutdown = Arc::new(AtomicBool::new(false));
     let (done_tx, done_rx) = mpsc::channel::<()>();
@@ -437,11 +469,30 @@ pub fn init_input(app: tauri::AppHandle) -> Result<String, String> {
     let join_handle = std::thread::Builder::new()
         .name("input-poll".to_string())
         .spawn(move || {
-            tracing::info!("[Input] Dedicated input polling thread running");
+            tracing::info!("[Input] Initialising HID input manager...");
+            let mut manager = match HidInputManager::new() {
+                Ok(manager) => manager,
+                Err(error) => {
+                    tracing::error!("[Input] HID API unavailable, hardware input disabled: {}", error);
+                    let _ = done_tx.send(());
+                    return;
+                }
+            };
 
-            // Last axis/button values emitted to the frontend. Only emit when data has
-            // changed to avoid flooding the JS event queue when no controls are moving.
-            let mut last_emitted_data: Vec<AxisData> = Vec::new();
+            tracing::info!("[Input] Enumerating devices...");
+            if let Err(error) = manager.enumerate_devices() {
+                tracing::error!("[Input] Device enumeration failed, hardware input disabled: {}", error);
+                let _ = done_tx.send(());
+                return;
+            }
+
+            let device_count = manager.get_devices().len();
+            tracing::info!("[Input] Found {} joystick device(s)", device_count);
+            for device in manager.get_devices() {
+                tracing::info!("[Input]   - {}", device.to_display_string());
+            }
+
+            tracing::info!("[Input] Dedicated input polling thread running");
 
             loop {
                 if shutdown_flag.load(Ordering::Relaxed) {
@@ -454,21 +505,11 @@ pub fn init_input(app: tauri::AppHandle) -> Result<String, String> {
                     tracing::warn!("[Input] Device hot-plug refresh failed: {}", error);
                 }
 
-                // Read all axis/button values
-                match manager.read_all_axes() {
-                    Ok(data) => {
-                        // Only emit when values have actually changed — avoids sending a
-                        // Tauri event (and triggering JS processing) on every tick when
-                        // the user is not interacting with any hardware control.
-                        if data != last_emitted_data {
-                            if let Err(e) = app.emit("input-axis-data", &data) {
-                                tracing::warn!("[Input] Failed to emit axis data: {}", e);
-                            }
-                            last_emitted_data = data;
-                        }
-                    }
-                    Err(e) => {
-                        tracing::warn!("[Input] read_all_axes failed: {}", e);
+                // Returns a payload only when a value actually moved, so an idle
+                // tick sends no Tauri event and wakes no JS.
+                if let Some(data) = manager.read_all_axes() {
+                    if let Err(e) = app.emit("input-axis-data", &data) {
+                        tracing::warn!("[Input] Failed to emit axis data: {}", e);
                     }
                 }
 
@@ -513,7 +554,9 @@ pub fn init_input(app: tauri::AppHandle) -> Result<String, String> {
         });
     }
 
-    Ok(format!("Input initialised successfully ({} controllers found)", device_count))
+    // No device count to report: enumeration happens on the thread now, and the
+    // caller only checks whether this failed.
+    Ok("Input polling thread started".to_string())
 }
 
 /// Get the current status of input system
